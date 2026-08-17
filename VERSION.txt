@@ -1,0 +1,40 @@
+Stratum SDK 0.21.0 (Windows x64, MSVC 2022)
+============================================
+FDM Structural Printability Analyzer
+
+Build:  cmake -B build_msvc -DSTRATUM_BUILD_SHARED=ON
+        cmake --build build_msvc --config Release
+        cmake --install build_msvc --prefix stratum-sdk-0.21.0
+
+Contents (see docs/sdk/MANIFEST.md for the canonical capability list):
+  include/stratum/                - public C++ headers (umbrella: stratum.h)
+  include/stratum/stratum_physics/ - 5 lightweight physics headers
+  bin/
+    stratum.exe                   - CLI: stratum <model> --phase-c --json report.json
+                                    (UI / scripts subprocess this for the JSON v2 report)
+    stratum_shared.dll            - full C++ API + C API (shared, ~3300+ exports)
+  lib/
+    stratum_core.lib              - core engine (static)
+    stratum_thirdparty.lib        - vendored deps (static)
+    stratum_physics.lib           - physics models (static)
+    stratum_shared.lib            - import library
+  lib/cmake/Stratum/              - CMake package config (find_package)
+  examples/minimal/               - minimal SDK consumer
+
+Usage (CLI / subprocess):
+  stratum.exe <model.stl|3mf> --phase-c --json report.json
+  stratum.exe <model.3mf> --compare-profiles --json report.json
+  stratum.exe <model.3mf> --optimize-3mf balanced --out opt.3mf
+
+Usage (static):
+  find_package(Stratum REQUIRED)
+  target_link_libraries(myapp PRIVATE Stratum::stratum_core Stratum::stratum_physics)
+
+Usage (shared / DLL):
+  find_package(Stratum REQUIRED)
+  target_link_libraries(myapp PRIVATE Stratum::stratum_shared)
+  Copy stratum_shared.dll next to the executable at runtime
+
+Runtime version query (C API):
+  stratum_version_major() / stratum_version_minor() / stratum_version_patch()
+  stratum_version_string()

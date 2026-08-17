@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stratum WebUI · 工艺参数调参台</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel2: #1c2330;
+    --line: #2a3342;
+    --text: #e6edf3;
+    --muted: #9aa7b8;
+    --cyan: #38bdf8;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --red: #f87171;
+    --violet: #a78bfa;
+    --mono: "Cascadia Code", Consolas, "JetBrains Mono", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    line-height: 1.5; padding: 20px;
+  }
+  .wrap { max-width: 1320px; margin: 0 auto; }
+  header {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding-bottom: 14px; border-bottom: 1px solid var(--line); margin-bottom: 18px;
+  }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; font-family: var(--mono); }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+  .badge.ok { color: var(--green); border-color: var(--green); }
+  .badge.err { color: var(--red); border-color: var(--red); }
+  .grid { display: grid; grid-template-columns: 460px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 14px; font-weight: 600; color: var(--cyan);
+    margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .panel h2 .tag { font-size: 11px; color: var(--muted); font-weight: 400; font-family: var(--mono); }
+  .kv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 14px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: var(--mono); text-align: right; }
+  .kv .v.warn { color: var(--amber); }
+  input[type=file] { width: 100%; font-size: 13px; margin-bottom: 8px; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  button:hover { border-color: var(--cyan); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1e3a5f; border-color: var(--cyan); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .err { color: var(--red); font-size: 12px; margin-top: 8px; white-space: pre-wrap; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 8px; }
+  .param-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 0;
+    border-bottom: 1px dashed var(--line); font-size: 13px;
+  }
+  .param-row:last-child { border-bottom: none; }
+  .param-row .lbl { width: 88px; color: var(--text); }
+  .param-row input[type=range] { flex: 1; accent-color: var(--cyan); }
+  .param-row .val { width: 74px; font-family: var(--mono); text-align: right; color: var(--cyan); }
+  .param-row input[type=checkbox] { accent-color: var(--amber); transform: scale(1.1); }
+  .lock-cb { color: var(--amber); font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  select { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-family: var(--mono); }
+  th, td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { color: var(--text); }
+  tr.infeasible td { color: var(--muted); }
+  .goal-tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line); }
+  .goal-strength { color: var(--red); border-color: var(--red); }
+  .goal-speed { color: var(--green); border-color: var(--green); }
+  .goal-quality { color: var(--violet); border-color: var(--violet); }
+  .goal-balanced { color: var(--cyan); border-color: var(--cyan); }
+  .risk-item { padding: 6px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .risk-item:last-child { border-bottom: none; }
+  .sev { display: inline-block; width: 46px; text-align: center; border-radius: 8px;
+         font-size: 11px; padding: 1px 0; margin-right: 8px; }
+  .sev-3 { background: #3b1f1f; color: var(--red); }
+  .sev-2 { background: #3b2f1a; color: var(--amber); }
+  .sev-1 { background: #1d3b2a; color: var(--green); }
+  .rec-line { color: var(--green); font-size: 13px; margin-top: 10px; font-family: var(--mono); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .scroll { max-height: 420px; overflow: auto; }
+  ul { list-style: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Stratum WebUI</h1>
+    <span class="sub">工艺参数调参台 · 引擎版本 <span id="engine-ver">…</span></span>
+    <span id="bin-badge" class="badge">引擎未就绪</span>
+    <span id="model-badge" class="badge" style="display:none"></span>
+  </header>
+
+  <div class="grid">
+    <!-- ================= left column ================= -->
+    <div>
+      <div class="panel">
+        <h2>① 模型上传</h2>
+        <input type="file" id="model-file" accept=".stl,.obj,.ply,.3mf,.amf">
+        <div class="actions">
+          <button id="btn-analyze" class="primary" disabled>分析</button>
+          <button id="btn-compare" disabled>优化对比</button>
+        </div>
+        <div id="upload-msg" class="ok"></div>
+      </div>
+
+      <div class="panel">
+        <h2>② 当前参数 <span class="tag">来自引擎 JSON 报告</span></h2>
+        <div class="kv" id="current-params">
+          <span class="k">材料</span><span class="v" id="cp-material">—</span>
+          <span class="k">喷嘴</span><span class="v" id="cp-nozzle">—</span>
+          <span class="k">壁数</span><span class="v" id="cp-walls">—</span>
+          <span class="k">填充率</span><span class="v" id="cp-infill">—</span>
+          <span class="k">填充图案</span><span class="v" id="cp-pattern">—</span>
+          <span class="k">层高</span><span class="v" id="cp-lh">—</span>
+          <span class="k">喷嘴温度</span><span class="v" id="cp-nozzle-temp">—</span>
+          <span class="k">热床温度</span><span class="v" id="cp-bed-temp">—</span>
+          <span class="k">打印速度</span><span class="v" id="cp-speed">—</span>
+          <span class="k">冷却风扇</span><span class="v" id="cp-fan">—</span>
+        </div>
+        <div id="cp-locked" class="hint"></div>
+      </div>
+
+      <div class="panel">
+        <h2>③ 调参 <span class="tag">滑杆 + 锁定（--lock）</span></h2>
+        <div id="tuning-panel"><p class="muted">先上传模型并分析。</p></div>
+        <div class="hint">层高不可直接调（CLI 无 --layer-height；通过 safe/balanced/fast/appearance 档位体现）。</div>
+      </div>
+    </div>
+
+    <!-- ================= right column ================= -->
+    <div>
+      <div class="panel">
+        <h2>④ 分析结果</h2>
+        <div class="kv" id="structural-summary" style="margin-bottom:8px">
+          <span class="k">安全系数</span><span class="v" id="res-sf">—</span>
+          <span class="k">最大应力</span><span class="v" id="res-stress">—</span>
+          <span class="k">载荷判定</span><span class="v" id="res-load">—</span>
+          <span class="k">总体评分</span><span class="v" id="res-overall">—</span>
+        </div>
+        <div id="risk-list"><p class="muted">分析后显示几何风险。</p></div>
+        <div id="rec-items"><p class="muted">分析后显示参数建议。</p></div>
+        <div class="rec-line" id="engine-recommendation" style="display:none"></div>
+      </div>
+
+      <div class="panel">
+        <h2>⑤ 候选档位对比</h2>
+        <div class="scroll">
+          <table id="cand-table">
+            <thead><tr>
+              <th>Profile</th><th>Goal</th><th>状态</th><th>填充</th><th>壁</th><th>速度</th>
+              <th>Overall</th><th>Strength</th><th>Time</th><th>Material</th><th>Reliability</th>
+              <th>EstSF</th><th>EstTime</th><th>EstMat</th><th>Quality</th>
+            </tr></thead>
+            <tbody id="cand-body"><tr><td colspan="15" class="muted">分析后显示。</td></tr></tbody>
+          </table>
+        </div>
+        <div class="actions" id="export-row">
+          <select id="export-profile">
+            <option value="safe">safe</option>
+            <option value="balanced" selected>balanced</option>
+            <option value="fast">fast</option>
+            <option value="appearance">appearance</option>
+          </select>
+          <button id="btn-export">写回下载 3MF</button>
+          <span class="hint" id="export-hint"></span>
+        </div>
+        <div id="export-msg"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------- state ----------
+var state = { token: null, name: null, is3mf: false, params: [], materials: [] };
+
+function $(id) { return document.getElementById(id); }
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function num(v, d) { return (v === null || v === undefined) ? "—" : Number(v).toFixed(d); }
+
+// ---------- init ----------
+Promise.all([
+  fetch("/api/status").then(function (r) { return r.json(); }),
+  fetch("/api/params").then(function (r) { return r.json(); }),
+]).then(function (arr) {
+  var st = arr[0], pm = arr[1];
+  $("engine-ver").textContent = st.engine_version;
+  var badge = $("bin-badge");
+  if (st.binary_found) { badge.textContent = "引擎就绪"; badge.className = "badge ok"; }
+  else { badge.textContent = "引擎缺失"; badge.className = "badge err"; }
+  state.params = pm.params || [];
+  state.materials = pm.materials || [];
+  buildTuningPanel();
+}).catch(function (e) {
+  $("bin-badge").textContent = "服务异常";
+  $("bin-badge").className = "badge err";
+  console.error(e);
+});
+
+// ---------- tuning panel ----------
+function buildTuningPanel() {
+  var box = $("tuning-panel");
+  box.innerHTML = "";
+  state.params.forEach(function (m) {
+    var row = el("div", "param-row");
+    var lbl = el("span", "lbl", m.label);
+    var input, val;
+    if (m.kind === "select") {
+      input = document.createElement("select");
+      (m.options || []).forEach(function (o) {
+        var opt = el("option", null, o);
+        opt.value = o;
+        input.appendChild(opt);
+      });
+      input.dataset.param = m.name;
+      input.addEventListener("change", function () {
+        markChanged(m.name);
+      });
+      val = el("span", "val", input.value);
+    } else {
+      input = document.createElement("input");
+      input.type = "range";
+      input.min = m.min; input.max = m.max; input.step = m.step;
+      input.dataset.param = m.name;
+      input.addEventListener("input", function () {
+        val.textContent = fmtRange(m, parseFloat(input.value));
+        markChanged(m.name);
+      });
+      val = el("span", "val", "");
+    }
+    var lock = el("label", "lock-cb");
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.dataset.lock = m.name;
+    lock.appendChild(cb);
+    lock.appendChild(document.createTextNode("锁定"));
+    row.appendChild(lbl);
+    row.appendChild(input);
+    row.appendChild(val);
+    row.appendChild(lock);
+    box.appendChild(row);
+  });
+}
+
+function fmtRange(m, v) {
+  if (m.unit === "%") return v.toFixed(0) + "%";
+  if (m.unit === "°C") return v.toFixed(0) + "°C";
+  return (m.kind === "int" ? Math.round(v) : v.toFixed(2)) + (m.unit ? " " + m.unit : "");
+}
+
+function setParamValue(name, value) {
+  var input = document.querySelector('[data-param="' + name + '"]');
+  var val = document.querySelector('.param-row input[data-param="' + name + '"] ~ .val');
+  if (!input) return;
+  var meta = state.params.find(function (m) { return m.name === name; });
+  if (input.tagName === "SELECT") {
+    if (meta && meta.options.indexOf(String(value)) >= 0) {
+      input.value = String(value);
+      if (val) val.textContent = value;
+    }
+  } else {
+    input.value = value;
+    if (val) val.textContent = fmtRange(meta, parseFloat(value));
+  }
+}
+
+// values/locks collectors (JS only reads widget state; the engine validates)
+function collectParams() {
+  var out = {};
+  state.params.forEach(function (m) {
+    var input = document.querySelector('[data-param="' + m.name + '"]');
+    if (input && input.value !== "") out[m.name] = input.value;
+  });
+  return out;
+}
+function collectLocks() {
+  return Array.prototype.map.call(
+    document.querySelectorAll('input[data-lock]:checked'),
+    function (cb) { return cb.dataset.lock; });
+}
+
+// ---------- upload / analyze / export ----------
+function onFile() {
+  var f = $("model-file").files[0];
+  if (!f) return;
+  $("upload-msg").textContent = "上传中…";
+  fetch("/api/upload?name=" + encodeURIComponent(f.name), { method: "POST", body: f })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) throw new Error(j.error || "上传失败");
+      state.token = j.token; state.name = j.name; state.is3mf = j.is_3mf;
+      $("upload-msg").textContent = "已上传 " + j.name + " (" + (j.size / 1024).toFixed(1) + " KB)";
+      var mb = $("model-badge");
+      mb.style.display = "";
+      mb.textContent = j.is_3mf ? "3MF（可写回）" : "STL（只读分析）";
+      $("btn-analyze").disabled = false;
+      $("btn-compare").disabled = false;
+      $("export-hint").textContent = j.is_3mf ? "" : "写回需要 .3mf 输入";
+      $("btn-export").disabled = !j.is_3mf;
+      $("export-msg").textContent = "";
+      return analyze(false);
+    })
+    .catch(function (e) { $("upload-msg").className = "err"; $("upload-msg").textContent = String(e); });
+}
+
+function analyze(compare) {
+  if (!state.token) return Promise.resolve();
+  $("btn-analyze").disabled = true;
+  $("btn-compare").disabled = true;
+  var btn = compare ? $("btn-compare") : $("btn-analyze");
+  var prev = btn.textContent;
+  btn.textContent = "计算中…";
+  var body = { token: state.token, params: collectParams(), locks: collectLocks(), compare: !!compare };
+  return fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) throw new Error(j.error || "分析失败");
+    renderReport(j.report, j.console || "");
+  }).catch(function (e) {
+    var box = compare ? $("export-msg") : $("upload-msg");
+    box.className = "err";
+    box.textContent = String(e);
+  }).finally(function () {
+    btn.textContent = prev;
+    $("btn-analyze").disabled = false;
+    $("btn-compare").disabled = false;
+  });
+}
+
+// ---------- render ----------
+function renderReport(d, consoleText) {
+  var inp = d.input || {};
+  var po = d.process_optimization || {};
+  var base = po.baseline || {};
+  // current params (values the engine actually used)
+  $("cp-material").textContent = inp.material || "—";
+  $("cp-nozzle").textContent = inp.nozzle_mm !== undefined ? num(inp.nozzle_mm, 2) + " mm" : "—";
+  $("cp-walls").textContent = inp.walls !== undefined ? inp.walls : "—";
+  $("cp-infill").textContent = inp.infill_density !== undefined ? (inp.infill_density * 100).toFixed(0) + "%" : "—";
+  $("cp-pattern").textContent = inp.infill_pattern || "—";
+  var lh = null;
+  (po.candidates || []).some(function (c) {
+    if (!c.diff || !c.diff.length) return false;
+    c.diff.forEach(function (chg) {
+      if (chg.key === "layer_height") lh = chg.before;
+    });
+    return lh !== null;
+  });
+  $("cp-lh").textContent = lh !== null ? lh + " mm" : "—";
+  $("cp-nozzle-temp").textContent = inp.nozzle_temperature_c !== null && inp.nozzle_temperature_c !== undefined
+    ? inp.nozzle_temperature_c + " °C" : "—";
+  $("cp-bed-temp").textContent = inp.bed_temperature_c !== undefined ? inp.bed_temperature_c + " °C" : "—";
+  $("cp-speed").textContent = inp.print_speed_mms !== null && inp.print_speed_mms !== undefined
+    ? inp.print_speed_mms + " mm/s" : "—";
+  $("cp-fan").textContent = inp.cooling_fan_pct !== null && inp.cooling_fan_pct !== undefined
+    ? inp.cooling_fan_pct + "%" : "—";
+  var locks = inp.locked_parameters || [];
+  $("cp-locked").textContent = locks.length ? "锁定参数: " + locks.join(", ") : "";
+
+  // structural summary
+  var pb = d.phase_b || {};
+  $("res-sf").textContent = pb.safety_factor !== undefined ? num(pb.safety_factor, 1) : "—";
+  $("res-stress").textContent = pb.max_stress_mpa !== undefined ? num(pb.max_stress_mpa, 2) + " MPa" : "—";
+  $("res-load").textContent = pb.load_adequacy || "—";
+  var rec = d.recommendations || {};
+  $("res-overall").textContent = rec.overall_score !== null && rec.overall_score !== undefined
+    ? rec.overall_score : "—";
+
+  // risks
+  var riskBox = $("risk-list");
+  riskBox.innerHTML = "";
+  var risks = ((d.phase_a || {}).risks) || [];
+  if (!risks.length) { riskBox.appendChild(el("p", "muted", "未检测到几何风险。")); }
+  risks.forEach(function (r) {
+    var item = el("div", "risk-item");
+    var sev = Math.max(1, Math.min(3, Math.round(r.severity || 1)));
+    item.appendChild(el("span", "sev sev-" + sev, "S" + sev));
+    item.appendChild(el("strong", null, r.type + " · "));
+    item.appendChild(document.createTextNode(r.description || ""));
+    if (r.suggestion) {
+      item.appendChild(el("div", "hint", "建议: " + r.suggestion));
+    }
+    riskBox.appendChild(item);
+  });
+
+  // recommendations
+  var recBox = $("rec-items");
+  recBox.innerHTML = "";
+  var items = rec.items || [];
+  if (!items.length) { recBox.appendChild(el("p", "muted", "无参数建议。")); }
+  items.forEach(function (it) {
+    var li = el("div", "risk-item");
+    li.appendChild(el("strong", null, "[" + it.action + "] " + it.parameter));
+    li.appendChild(document.createTextNode(" — " + (it.reason || "")));
+    if (it.recommended_value !== null && it.recommended_value !== undefined) {
+      li.appendChild(el("div", "hint",
+        "当前 " + it.current_value + " → 建议 " + it.recommended_value +
+        (it.effect_note ? "；" + it.effect_note : "")));
+    }
+    recBox.appendChild(li);
+  });
+
+  // engine recommendation line (verbatim from CLI stdout — no JS logic)
+  var er = $("engine-recommendation");
+  var m = /Recommended:.*/.exec(consoleText || "");
+  if (m) { er.style.display = ""; er.textContent = m[0]; }
+  else { er.style.display = "none"; }
+
+  // candidates table
+  var body = $("cand-body");
+  body.innerHTML = "";
+  var cands = po.candidates || [];
+  if (!cands.length) {
+    body.appendChild(el("tr", null, "").appendChild(
+      el("td", "muted", "无候选（报告缺少 process_optimization 数据）").parentNode));
+  }
+  cands.forEach(function (c) {
+    var tr = el("tr", c.feasible ? "" : "infeasible");
+    var goal = c.goal || "balanced";
+    var goalTag = el("span", "goal-tag goal-" + goal, goal);
+    var est = c.estimate || {};
+    var s = c.scores || {};
+    function td(v) { var x = el("td", "num", v === null || v === undefined ? "—" : v); tr.appendChild(x); return x; }
+    tr.appendChild(el("td", null, c.name));
+    var gtd = el("td", null, ""); gtd.appendChild(goalTag); tr.appendChild(gtd);
+    tr.appendChild(el("td", null, c.feasible ? "OK" : "No"));
+    var p = c.profile || {};
+    td(p.infill_pct !== undefined && p.infill_pct !== null ? p.infill_pct + "%" : "—");
+    td(p.wall_count !== undefined && p.wall_count !== null ? p.wall_count : "—");
+    td(p.print_speed !== undefined && p.print_speed !== null ? p.print_speed + "mm/s" : "—");
+    td(s.overall); td(s.strength); td(s.time); td(s.material); td(s.reliability);
+    td(c.search_est_safety_factor !== null && c.search_est_safety_factor !== undefined
+       ? Math.round(c.search_est_safety_factor) : "—");
+    td(est.print_time_min !== undefined ? est.print_time_min.toFixed(1) + "min" : "—");
+    td(est.material_volume_mm3 !== undefined ? (est.material_volume_mm3 / 1000).toFixed(1) + "cm3" : "—");
+    td(s.quality);
+    body.appendChild(tr);
+    if (!c.feasible && c.note) {
+      var note = el("tr", "infeasible");
+      var nd = el("td", "muted", c.note); nd.colSpan = 15;
+      note.appendChild(nd);
+      body.appendChild(note);
+    }
+  });
+
+  // init tuning sliders from the values the engine used (except layer_height)
+  setParamValue("walls", inp.walls);
+  setParamValue("infill", inp.infill_density !== undefined ? (inp.infill_density * 100) : 15);
+  setParamValue("pattern", inp.infill_pattern);
+  setParamValue("material", inp.material);
+  setParamValue("nozzle_diameter", inp.nozzle_mm);
+  setParamValue("nozzle_temperature", inp.nozzle_temperature_c);
+  setParamValue("bed_temperature", inp.bed_temperature_c);
+  setParamValue("print_speed", inp.print_speed_mms);
+  setParamValue("cooling_fan", inp.cooling_fan_pct);
+  // clear stale locks visually (engine's locked set is authoritative)
+  Array.prototype.forEach.call(document.querySelectorAll("input[data-lock]"),
+    function (cb) { cb.checked = locks.indexOf(cb.dataset.lock) >= 0; });
+}
+
+function markChanged(name) {
+  // no-op in v0.1: every analyze re-sends the full panel; kept as a hook
+}
+
+// ---------- export ----------
+function export3mf() {
+  if (!state.token || !state.is3mf) return;
+  $("export-msg").textContent = "写回中…";
+  $("export-msg").className = "ok";
+  var profile = $("export-profile").value;
+  fetch("/api/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: state.token, profile: profile }),
+  }).then(function (r) {
+    var ct = r.headers.get("Content-Type") || "";
+    if (ct.indexOf("json") >= 0) return r.json().then(function (j) { throw new Error(j.error || "写回失败"); });
+    return r.blob();
+  }).then(function (blob) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (state.name.replace(/\.3mf$/i, "") || "model") + "_optimized_" + profile + ".3mf";
+    document.body.appendChild(a); a.click(); a.remove();
+    $("export-msg").textContent = "已下载优化后的 3MF（profile=" + profile + "）";
+  }).catch(function (e) {
+    $("export-msg").className = "err";
+    $("export-msg").textContent = String(e);
+  });
+}
+
+// ---------- wire up ----------
+$("model-file").addEventListener("change", onFile);
+$("btn-analyze").addEventListener("click", function () { analyze(false); });
+$("btn-compare").addEventListener("click", function () { analyze(true); });
+$("btn-export").addEventListener("click", export3mf);
+</script>
+</body>
+</html>
