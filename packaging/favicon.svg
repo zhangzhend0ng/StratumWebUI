@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Stratum WebUI mark: "Levitating Layer" — mirrors packaging/make_icon.py.
+       Base64-embedded as favicon in index.html; regenerate with:
+       python -c "import base64;print(base64.b64encode(open('favicon.svg','rb').read()).decode())" -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0D132A"/>
+      <stop offset="1" stop-color="#050814"/>
+    </linearGradient>
+    <linearGradient id="b1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3E62B0"/>
+      <stop offset="1" stop-color="#283E7E"/>
+    </linearGradient>
+    <linearGradient id="b2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4A92D8"/>
+      <stop offset="1" stop-color="#2E64A8"/>
+    </linearGradient>
+    <linearGradient id="b3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#64CAD8"/>
+      <stop offset="1" stop-color="#388EBE"/>
+    </linearGradient>
+    <linearGradient id="ft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#AAFAEE"/>
+      <stop offset="1" stop-color="#4AD0DA"/>
+    </linearGradient>
+    <radialGradient id="pool" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8CF0FA" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8CF0FA" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="under" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#32BEE1" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#32BEE1" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+
+  <!-- build-plate glow -->
+  <ellipse cx="32" cy="50.5" rx="20" ry="3.4" fill="url(#under)"/>
+  <!-- stack: three tapering layers, seams glowing -->
+  <rect x="16.6" y="42.2" width="30.8" height="7.4" rx="2.6" fill="url(#b1)" stroke="#B8E6FA" stroke-opacity="0.55" stroke-width="0.6"/>
+  <rect x="17.3" y="33.6" width="29.4" height="7.4" rx="2.6" fill="url(#b2)" stroke="#B8E6FA" stroke-opacity="0.55" stroke-width="0.6"/>
+  <rect x="17.9" y="25.1" width="28.2" height="7.4" rx="2.6" fill="url(#b3)" stroke="#D8F4FC" stroke-opacity="0.6" stroke-width="0.6"/>
+  <rect x="19.5" y="41.2" width="25" height="1.3" rx="0.65" fill="#78E6F5" opacity="0.85"/>
+  <rect x="20" y="32.7" width="24" height="1.3" rx="0.65" fill="#78E6F5" opacity="0.85"/>
+
+  <!-- light pooling on the stack -->
+  <ellipse cx="32" cy="24.4" rx="13" ry="2.4" fill="url(#pool)"/>
+  <!-- the levitating layer, slightly rotated -->
+  <g transform="rotate(-6 32 15.3)">
+    <rect x="19.2" y="11.6" width="25.6" height="7.4" rx="2.6" fill="url(#ft)" stroke="#F2FCFF" stroke-opacity="0.7" stroke-width="0.6"/>
+  </g>
+  <!-- sparks rising through the gap -->
+  <circle cx="23.5" cy="20.4" r="0.95" fill="#D2FAFF"/>
+  <circle cx="40.5" cy="19.3" r="0.75" fill="#D2FAFF"/>
+</svg>

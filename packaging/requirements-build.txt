@@ -1,0 +1,8 @@
+# Build-time tools only — isolated in .venv-build by build.ps1 and never
+# shipped to users (the app itself stays Python-stdlib only).
+# Supply-chain: PyInstaller — GPL w/ bootloader exception (bundled apps keep
+# their own license), de-facto standard, actively maintained; transitive deps
+# (altgraph, pefile, pywin32-ctypes) are small and standard.
+pyinstaller==6.22.1
+# pillow (any recent version) is only needed to REGENERATE the icon via
+# packaging/make_icon.py; the build itself consumes the committed .ico.

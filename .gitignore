@@ -1,2 +1,16 @@
 # Stratum 二进制来自 SDK 发布物（不入库）；设置 STRATUM_BIN 或复制到 bin/
 bin/*.exe
+
+# 打包产物（packaging/build.ps1 生成）
+.venv-build/
+build/
+dist/
+__pycache__/
+
+# ZCode 会话产物（plans 等）
+.zcode/
+
+# 对抗迭代日志（含引擎探针/缺陷细节，不入公开库）
+loop-journal*.md
+# 真实语料跑批产物（引擎 stdout dump + 用户文件名）
+test_data/real3mf-results/
