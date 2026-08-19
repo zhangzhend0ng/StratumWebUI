@@ -53,12 +53,13 @@
 
 - [x] a) **首跑向导**（2026-08-18 会话 3）：serve anyway + usage 探针校验 +
       config 持久化 + 表面重探（2026-08-19 追加：UNC 网络路径拒绝）
-- [x] b) **CI**（2026-08-19）：`.github/workflows/ci.yml` 三层（syntax 恒跑；
-      tests/installer 由 `STRATUM_SDK_URL` secret 门控——引擎不入库，fork 上
-      自动跳过）；verify-installer.ps1 补齐退出码判定（原为恒 rc=0 假绿）
+- [~] b) **CI**（2026-08-19 建，同日公开库关闭）：曾为 `.github/workflows/ci.yml`
+      三层（syntax 恒跑；tests/installer 由 `STRATUM_SDK_URL` secret 门控）；
+      公开化时按决策移除 workflow，本地回归 = `python tests/test_smoke.py` +
+      `node tests/browser_render_check.js`；verify-installer.ps1 保留真实退出码判定
 - [x] c) **版本兼容策略**（2026-08-18）：报告含 `schema_version`，逐请求精确校验（不支持即 502 fail-loud，
       不静默渲染错版本字段——2026-08-18 已实现于 server.py `schema_supported`）
-- 验证：verify-installer 进 CI；引擎版本矩阵冒烟
+- 验证：本地 smoke + browser E2E；引擎版本矩阵冒烟
 
 ### v0.5 — 方向三 b：UI 交互优化（2026-08-19，对抗审查修订版 v2）
 
