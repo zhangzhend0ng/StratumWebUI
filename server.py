@@ -69,7 +69,9 @@ def _validated_int(raw, lo, hi):
 # this, two installs of different vintages were indistinguishable (D1
 # groundwork, iter 65). Bump on user-visible change; the engine version is
 # reported separately (it moves independently).
-UI_VERSION = "0.5.0"
+# 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
+# bumped from 0.5.0 which had drifted behind the milestone (iter 67).
+UI_VERSION = "0.6.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and

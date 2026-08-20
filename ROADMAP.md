@@ -9,7 +9,7 @@
 
 ## 0. 架构红线（所有方向不许破）
 
-1. **零依赖**：Python stdlib + 自含 HTML UI（`index.html` + `report.js` / `stl-preview.js`，经典 script 标签、零构建链，无外部网络资源）。
+1. **零依赖**：Python stdlib + 自含 HTML UI（`index.html` + `report.js` / `stl-preview.js`，经典 script 标签、零构建链，无外部网络资源）。样式内联于 `index.html` 单 `<style>`（UI v3 起含设计令牌体系与旧令牌别名——JS 内联 `var()` 引用依赖别名存在，勿删）；后续若需本地静态资源（同目录文件、仍无 CDN/构建链）允许，但须同步 `server.py UI_STATIC` 白名单与 `packaging/StratumWebUI.spec` datas。
 2. **引擎是唯一事实源**：Python/JS 不复制任何评分/钳制/锁定规则，只渲染引擎 JSON；
    UI 侧编排（多次调用、批量候选）不算复制规则。
 
@@ -80,6 +80,37 @@
       不双接线）；输入框聚焦时忽略
 - 验证：`tests/browser_render_check.js` 21/21（8 项断言随 toast/checkbox 同步
   改造）+ `tests/test_smoke.py` 76/76
+
+### v0.6 — UI v3 商业化视觉（2026-08-19，对抗审查修订版 v2）
+
+- [x] a) **设计令牌体系**（单 `<style>` 内）：surface 分层 / 4px 间距网格 /
+      圆角·阴影阶梯 / 靛蓝渐变 accent / `prefers-reduced-motion` 降级；
+      **旧令牌（--panel/--panel2/--cyan…）保留为别名**——JS 内联 `var()` 引用
+      零改动（对抗审查 blocker：抽离 styles.css 需改 server.py 白名单 + spec
+      datas，零收益，弃）
+- [x] b) **布局重构**：sticky 毛玻璃顶栏（`@supports` 降级不透明）+ 分段控件
+      模式切换；上传区拖放卡片（drop 经 DataTransfer 写回 `#model-file` 并派发
+      change，测试注入路径不变）；③+③b 同面板双 `<details>` 折叠分组
+      （env 组整体 `advanced-only`）；④ 顶部 4 张 KPI 卡片（复用 `res-*` ID，
+      report.js 零改动）；空状态统一卡片
+- [x] c) **微交互**：按钮 hover/按压/focus 光环、primary 渐变；toast 入场
+      动画；分析中按钮 spinner（**不确定态，无伪进度**——与 v0.5 d 的
+      "无进度端点不做假进度"决策一致，弃骨架屏）；dirty 行 accent 左竖条；
+      表格行 hover
+- [x] d) 修复顺带发现：`buildExtraLocks` 空清单时隐藏 parentNode 在 v3 折叠
+      分组下会连 ③ 一起塌掉（改为只藏自身行）
+- [x] e) **实时分析**（auto mode，默认开，localStorage `stratum-ui-auto`
+      持久化，③ 区开关钮）：参数/环境/锁定/方向变化后 800ms 防抖自动重跑。
+      并发纪律：运行中重入被 `state.running` 闸住（手动优先，被挡的 auto
+      排队到 finally 后补跑，新参数不丢）；批量运行期间挂起（`batchRunning`）；
+      手动运行启动即吞掉待触发的 auto；auto 成功/取消不弹 toast（错误仍弹）。
+      已知取舍：每次 auto 都真实跑引擎并计入运行历史（server 侧无
+      no-history 通道，未加）。回显同步（setParamValue/syncEnvFromReport）
+      不经 markChanged，无自触发回路
+- 验证：`tests/browser_render_check.js` 21/21 + `tests/report_render_check.js`
+  21/21；顺带修测试自身竞态——restore 步骤 reload 后 `clearToasts()` 会清掉
+  它正在等待的恢复分析 toast（Page.reload 本就重置 DOM，该清理多余）；
+  截图 `gui-test-screenshots/v3-*.png`（简单/高级/运行态/窄屏）
 
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 

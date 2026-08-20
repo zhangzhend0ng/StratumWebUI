@@ -325,7 +325,11 @@ async function main() {
             && await evalJs("!!(state&&state.token)")) break;
         await sleep(200);
       }
-      await clearToasts();
+      // NO clearToasts here: the reload itself resets the DOM (all pre-reload
+      // toasts are gone), and clearing now can wipe the very "分析完成" toast
+      // this check polls for — the restored auto-analyze can complete before
+      // this line runs (observed with the v3 UI: engine run ~1s, wait loop
+      // exits as soon as state.token is set, toast already rendered).
       let restored = null;
       for (let i = 0; i < 150; i++) {
         const ts = JSON.parse(await toastState());

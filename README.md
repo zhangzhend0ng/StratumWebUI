@@ -88,7 +88,14 @@ wipe / travel_speed 等，清单同样来自 usage 探针自动同步）；载�
   跨并发批量求和；null=空闲）——进度计入每个 combo 含失败者（失败组合不进历史，
   不能用历史条目数计进度）。
 - **取消**：分析进行中「分析/优化对比」按钮变为「取消」——服务端杀引擎进程 +
-  前端 abort（`POST /api/cancel`）。
+  前端 abort（`POST /api/cancel`）。键盘：`Ctrl/Cmd+Enter` 分析、`Esc` 取消
+  （复用按钮 cancel handler，运行中重入被 `state.running` 闸住）。
+- **交互（v0.5d/v0.6）**：简单/高级双模式（顶栏分段控件）；toast 通知（err 常驻、
+  ok 5s）；调参 baseline 状态机（行级 ↺ +「重置全部」）；分析耗时秒表（纯客户端，
+  无伪进度）；拖放上传（drop 写回同一 file input）；**实时分析 auto 模式**（默认开，
+  ③ 区开关、`localStorage` 持久化：参数/环境/锁定/方向变化 800ms 防抖自动重跑；
+  运行中手动优先、被挡 auto 排队补跑、批量期间挂起）；设计令牌体系 +
+  `prefers-reduced-motion` 降级。
 - **自定义候选批量跑**：⑤ 面板把当前滑杆捕获为自定义候选（≤8 个）→ 批量运行
   （`POST /api/batch`，纯编排多次引擎调用）；全部组合先校验后执行（坏组合 400
   零副作用），单个失败不影响其余。
