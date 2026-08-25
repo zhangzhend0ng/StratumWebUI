@@ -93,6 +93,20 @@
     transition: border-color var(--dur-fast), background var(--dur-fast);
   }
   #mode-toggle:hover { border-color: var(--accent); background: var(--accent-a10); }
+  /* one-click presets — the simple-mode "0 参数" entry; also handy in
+     advanced mode as a fast multi-param setup (sets all 9 sliders at once) */
+  #preset-buttons {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px; margin: 6px 0;
+  }
+  .preset-btn {
+    padding: 10px 12px; font-size: 14px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border: none; border-radius: 8px; cursor: pointer; text-align: center;
+    transition: filter .15s, transform .15s;
+  }
+  .preset-btn:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+  .preset-btn:disabled { opacity: .45; cursor: not-allowed; }
   /* real-time analyze toggle: lit while on */
   #auto-toggle.on { border-color: var(--accent); color: #fff;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -399,7 +413,7 @@
     <span class="sub">工艺参数调参台 · UI <span id="ui-ver">…</span> · 引擎版本 <span id="engine-ver">…</span></span>
     <span id="bin-badge" class="badge">引擎未就绪</span>
     <span id="model-badge" class="badge" style="display:none"></span>
-    <button id="mode-toggle" title="显示或隐藏高级面板（环境载荷、候选对比、可信度、Orca 建议、运行历史等）">高级模式：关</button>
+    <button id="mode-toggle" title="显示或隐藏高级内容（参数滑杆调参、环境载荷、候选对比、可信度、Orca 建议、运行历史等）">高级模式：关</button>
   </header>
 
   <div class="grid">
@@ -455,8 +469,14 @@
         <div id="cp-locked" class="hint"></div>
       </div>
 
+      <div class="panel" id="preset-panel">
+        <h2>快速预设 <span class="tag">一键设置全部参数并分析</span></h2>
+        <div class="actions" id="preset-buttons"></div>
+        <div class="hint">上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开「高级模式」。</div>
+      </div>
+
       <div class="panel">
-        <details class="ui-group" open>
+        <details class="ui-group advanced-only" open>
           <summary>③ 调参 <span class="tag">滑杆 + 锁定（--lock）</span></summary>
           <div class="actions" style="gap:8px; margin:6px 0">
             <input type="text" id="param-search" placeholder="搜索参数（名称/标签，含环境与锁定项）…">
@@ -676,6 +696,7 @@ Promise.all([
     $("wizard").style.display = "";  // first-run wizard (v0.4a)
   }
   state.params = pm.params || [];
+  state.presets = pm.presets || [];
   if (st.history_cap) {
     $("history-cap-note").textContent =
       "本会话最近 " + st.history_cap + " 次（仅 nominal 值）";
@@ -709,6 +730,7 @@ Promise.all([
     note.push("usage 中被过滤的 token: " + sf.filtered.join(", "));
   }
   $("surface-note").textContent = note.join("；");
+  buildPresetPanel();
   buildTuningPanel();
   buildExtraLocks();
   buildEnvPanel();
@@ -824,6 +846,61 @@ function buildTuningPanel() {
     row.appendChild(lock);
     box.appendChild(row);
   });
+}
+
+// ---------- one-click presets (simple-mode "0 参数" entry) ----------
+// Rendered from /api/params `presets` (server-authored; sanitized against
+// the live enums there). Apply = set every slider/select to the preset's
+// value, mark it dirty (so the analyze sends exactly those), then run once.
+// The pending-auto timer, if any, is cleared by analyze() at run start —
+// an explicit preset click must produce exactly one run.
+function buildPresetPanel() {
+  var box = $("preset-buttons");
+  box.innerHTML = "";
+  (state.presets || []).forEach(function (p) {
+    var b = el("button", "preset-btn", p.label || p.name);
+    b.title = (p.desc || "") + (p.desc ? "\n" : "") + "共 " +
+      Object.keys(p.params || {}).length + " 项参数";
+    b.dataset.preset = p.name;
+    b.disabled = true;  // enabled by applySession once a model is live
+    b.onclick = function () { applyPreset(p); };
+    box.appendChild(b);
+  });
+  if (!(state.presets || []).length) box.style.display = "none";
+}
+function setPresetEnabled(on) {
+  var box = $("preset-buttons");
+  if (!box) return;
+  var btns = box.querySelectorAll("button");
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+}
+function applyPreset(p) {
+  if (!state.token) { toast("请先上传模型", "err"); return; }
+  if (state.running) { toast("上一次分析尚未结束，请稍候", "info"); return; }
+  Object.keys(p.params || {}).forEach(function (name) {
+    var input = findRowInput(name);
+    if (!input) return;  // param not rendered (defensive; presets are sanitized)
+    var meta = null;
+    for (var i = 0; i < state.params.length; i++)
+      if (state.params[i].name === name) { meta = state.params[i]; break; }
+    var val = document.querySelector(
+      '.param-row input[data-param="' + name + '"] ~ .val');
+    if (input.tagName === "SELECT") {
+      if (meta && meta.options.indexOf(String(p.params[name])) >= 0) {
+        input.value = String(p.params[name]);
+        if (val) val.textContent = String(p.params[name]);
+      }
+    } else {
+      input.value = p.params[name];
+      if (val && meta) val.textContent = fmtRange(meta, parseFloat(p.params[name]));
+    }
+    // dirty WITHOUT scheduleAuto — the immediate analyze below subsumes any
+    // pending debounce (analyze() clears autoTimer on start)
+    state.dirty[name] = true;
+    updateRowState(name);
+  });
+  toast("已应用预设「" + (p.label || p.name) + "」", "info");
+  analyze(false);
 }
 
 // core lockables without a slider row (layer_height, retraction, ...):
@@ -1069,6 +1146,7 @@ function applySession(j) {
     : ((j.name.split(".").pop() || "").toUpperCase() || "模型") + "（只读分析）";
   $("btn-analyze").disabled = false;
   $("btn-compare").disabled = false;
+  setPresetEnabled(true);
   $("btn-report").disabled = true;  // per-session: re-enabled by renderReport
   $("export-hint").textContent = !j.is_3mf ? "写回需要 .3mf 输入"
     : (state.writable ? "" : "该 3MF 无切片设置（CAD 裸导出），不可写回");
@@ -1142,6 +1220,7 @@ function analyze(compare, auto) {
   startRunIndicator();
   $("btn-analyze").disabled = true;
   $("btn-compare").disabled = true;
+  setPresetEnabled(false);
   var btn = compare ? $("btn-compare") : $("btn-analyze");
   var prev = btn.textContent;
   // cancel: kill the engine server-side AND abort the local fetch
@@ -1184,9 +1263,10 @@ function analyze(compare, auto) {
       clearPersistedSession();
       state.token = null; state.name = null; state.is3mf = false;
       $("model-badge").style.display = "none";
-      $("btn-analyze").disabled = true;
-      $("btn-compare").disabled = true;
-      $("btn-export").disabled = true;
+    $("btn-analyze").disabled = true;
+    $("btn-compare").disabled = true;
+    setPresetEnabled(false);
+    $("btn-export").disabled = true;
       $("btn-preview").disabled = true;
       $("export-hint").textContent = "先上传模型";
     }
@@ -1202,6 +1282,7 @@ function analyze(compare, auto) {
     // the catch above nulls state.token and must leave the buttons disabled)
     $("btn-analyze").disabled = !state.token;
     $("btn-compare").disabled = !state.token;
+    setPresetEnabled(!!state.token);
     state.running = false;
     // an auto run arrived mid-flight with newer params — run once more now
     if (state.autoQueued) { state.autoQueued = false; scheduleAuto(); }

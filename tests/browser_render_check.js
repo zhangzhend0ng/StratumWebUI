@@ -423,6 +423,56 @@ async function main() {
              echoed !== null, JSON.stringify(echoed));
     }
 
+    // (v0.7) one-click presets: 4 buttons rendered from /api/params and
+    // enabled once a session is live; default simple mode hides the slider
+    // details (CSS .advanced-only) while the preset panel stays visible;
+    // clicking 安全 sets walls=5 on the (hidden-but-alive) slider and runs
+    // one full analyze.
+    if (recovered) {
+      const presetState = await evalJs(
+        "(function(){var p=document.querySelectorAll('.preset-btn');" +
+        "return JSON.stringify({count:p.length," +
+        "labels:Array.prototype.map.call(p,function(b){return b.textContent})," +
+        "disabled:Array.prototype.map.call(p,function(b){return b.disabled})})})()");
+      const ps = JSON.parse(presetState);
+      expect("e2e preset: 4 buttons 安全/均衡/高速/外观 enabled",
+             ps.count === 4
+             && ps.labels.join(",") === "安全,均衡,高速,外观"
+             && ps.disabled.every(function (d) { return d === false; }),
+             presetState);
+      const vis = await evalJs(
+        "(function(){var det=document.querySelector('#tuning-panel').closest('details');" +
+        "var pp=document.getElementById('preset-panel');" +
+        "return JSON.stringify({simple:document.body.classList.contains('mode-simple')," +
+        "slidersHidden:getComputedStyle(det).display==='none'," +
+        "presetVisible:getComputedStyle(pp).display!=='none'})})()");
+      const v = JSON.parse(vis);
+      expect("e2e preset: simple mode hides sliders, shows preset panel",
+             v.simple === true && v.slidersHidden === true && v.presetVisible === true,
+             vis);
+      await clearToasts();
+      const clickOk = await evalJs(
+        "(function(){var b=document.querySelector('.preset-btn[data-preset=safe]');" +
+        "if(!b)return 'nobtn';b.click();return 'ok'})()");
+      const wallNow = await evalJs(
+        "(function(){var i=document.querySelector('[data-param=walls]');" +
+        "return i?String(i.value):'gone'})()");
+      let presetDone = null;
+      for (let i = 0; i < 150; i++) {
+        const ts = JSON.parse(await toastState());
+        const applied = ts.some(function (t) { return t.txt === "已应用预设「安全」"; });
+        const done = ts.some(function (t) { return t.txt === "分析完成"; });
+        const walls = await evalJs(
+          "document.getElementById('cp-walls').textContent");
+        if (applied && done && walls === "5") { presetDone = true; break; }
+        await sleep(300);
+      }
+      expect("e2e preset: click 安全 sets walls=5 and re-analyzes",
+             clickOk === "ok" && wallNow === "5" && presetDone !== null,
+             JSON.stringify({ clickOk: String(clickOk), wallNow: String(wallNow),
+                              done: presetDone }));
+    }
+
     ws.close(); cleanup();
     console.log(fails ? "%d FAIL".replace("%d", fails) : "browser E2E all green");
     process.exit(fails ? 1 : 0);

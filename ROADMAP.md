@@ -112,6 +112,24 @@
   它正在等待的恢复分析 toast（Page.reload 本就重置 DOM，该清理多余）；
   截图 `gui-test-screenshots/v3-*.png`（简单/高级/运行态/窄屏）
 
+### v0.7 — 新手 0 参数：一键预设（2026-08-25）
+
+- [x] a) **快速预设**：简单模式默认只显示 4 个一键预设按钮（安全/均衡/高速/外观，
+      复用引擎 `PROFILES` 语义），9 项参数滑杆整体移入高级模式（③ details 加
+      `advanced-only`；DOM 保留，browser E2E 的 `[data-param=walls]` 查询不受
+      影响）。预设表服务端定义（`PRESETS`，server.py 紧跟 PARAM_META），经
+      `/api/params` 新增 `presets` 字段下发，**无新端点**——点击 = 逐参数写滑杆 +
+      置 dirty + 立即一次 `analyze(false)`（analyze 启动即吞掉待触发的 auto 定时，
+      杜绝双跑）。`presets_for()` 做枚举漂移兜底：select 值不在实时枚举（引擎离线
+      回退）时回退该参数 default，数值越界同理；输入表不被改动（返回深拷贝）
+- [x] b) **运行态纪律**：预设按钮随会话启用（`applySession`）/ 运行中禁用（analyze
+      start→finally 恢复）/ 会话失效（unknown token 路径）一并禁用；无 token 点击
+      err toast，运行中点按 info toast（`state.running` 闸）
+- 验证：test_smoke T59（presets 形状 / PROFILES 序 / 值域）/ T60（safe 预设
+  analyze 全链路回显 walls=5 等）/ T61（presets_for 漂移兜底 + 无副作用）；
+  browser E2E 新增预设 3 项（4 按钮渲染且启用、简单模式滑杆隐藏而预设面板可见、
+  点击「安全」→ walls=5 并重分析）；README 记 0 参数流程
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 - [x] a) WebUI 侧可先行（2026-08-19 完成主体）：STL WebGL 预览（自研 ~240 行，零依赖保红线 1；

@@ -261,6 +261,9 @@ def main():
               and "gyroid" in opts and pat.get("default") in opts
               and sf.get("patterns_source") == "engine-usage",
               "opts=%s src=%r" % (opts, sf.get("patterns_source")))
+        check("T12 presets field present (4 entries)",
+              len(pm.get("presets") or []) == 4,
+              "presets=%r" % (pm.get("presets"),))
 
         # T13 — parse_usage_enums unit cases (pure function; the probe itself
         # already ran once at this test process's server import)
@@ -286,6 +289,71 @@ def main():
               l4 == ["compression", "bending", "torsion", "cantilever"]
               and srv.LOAD_TYPES == l4,
               "loads=%r live=%r" % (l4, srv.LOAD_TYPES))
+
+        # T59 — one-click presets (v0.7): /api/params serves 4 presets in
+        # PROFILES order, each covering every PARAM_META name with a value
+        # inside the served slider range (or a legal select option).
+        pres = pm.get("presets") or []
+        by_name = {}
+        for m in pm["params"]:
+            by_name[m["name"]] = m
+        ok59 = (len(pres) == 4
+                and [p["name"] for p in pres] == srv.PROFILES
+                and all(p.get("label") and p.get("desc") for p in pres))
+        for p in pres:
+            if len(p.get("params", {})) != len(by_name):
+                ok59 = False
+            for name, val in (p.get("params") or {}).items():
+                m = by_name.get(name)
+                if m is None:
+                    ok59 = False
+                elif m.get("kind") == "select":
+                    if val not in (m.get("options") or []):
+                        ok59 = False
+                elif not (m["min"] <= val <= m["max"]):
+                    ok59 = False
+        check("T59 presets served in PROFILES order, values in range",
+              ok59, json.dumps(pres)[:200])
+
+        # T60 — a preset click sends exactly the preset's params and the
+        # engine applies them (T1-style round-trip with the full "safe" set,
+        # as the UI's applyPreset collects them).
+        st60, up60 = upload(port, "beam.stl", STL)
+        safe60 = next((p for p in pres if p["name"] == "safe"), {})
+        st60, an60 = jrequest(port, "POST", "/api/analyze",
+                              {"token": up60["token"],
+                               "params": safe60.get("params", {}),
+                               "locks": []})
+        inp60 = (an60.get("report") or {}).get("input") or {}
+        check("T60 analyze applies safe preset params",
+              st60 == 200 and an60.get("ok")
+              and inp60.get("walls") == 5
+              and inp60.get("infill_density") == 0.4  # 40% echoed as fraction
+              and inp60.get("infill_pattern") == "tri-hexagon"
+              and inp60.get("material") == "PLA",
+              "st=%s input=%r" % (st60, inp60))
+
+        # T61 — presets_for() drift-proofing (pure function): a select value
+        # missing from the live enum falls back to that param's default, an
+        # out-of-range numeric falls back to its default, and the input
+        # PRESETS table is never mutated (returns sanitized copies).
+        orig61 = [dict(p, params=dict(p["params"])) for p in srv.PRESETS]
+        try:
+            srv.PRESETS[0]["params"]["walls"] = 999       # out of range (max 20)
+            srv.PRESETS[0]["params"]["print_speed"] = -5  # out of range (min 1)
+            dr = srv.presets_for(materials=["PETG"], patterns=["line"])
+        finally:
+            srv.PRESETS = orig61
+        safe61 = dr[0]["params"]
+        live61 = srv.presets_for(srv.MATERIALS, srv.PATTERNS)
+        check("T61 presets_for drift fallback + no mutation",
+              safe61["pattern"] == srv.PATTERN_DEFAULT   # tri-hexagon not in ["line"]
+              and safe61["material"] == srv.MATERIAL_DEFAULT  # PLA not in ["PETG"]
+              and safe61["walls"] == 2 and safe61["print_speed"] == 50
+              and live61[0]["params"]["walls"] == 5      # real enum: original kept
+              and live61[0]["params"]["pattern"] == "tri-hexagon"
+              and srv.PRESETS[0]["params"]["walls"] == 5,  # input table untouched
+              "safe61=%r live=%r" % (safe61, live61[0]["params"]))
 
         # T14/T15 — REGRESSION (iter 6): invalid startup env must fail fast
         # with a friendly message, never an import traceback. (Pre-fix PORT

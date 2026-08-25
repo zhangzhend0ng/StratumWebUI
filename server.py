@@ -69,9 +69,10 @@ def _validated_int(raw, lo, hi):
 # this, two installs of different vintages were indistinguishable (D1
 # groundwork, iter 65). Bump on user-visible change; the engine version is
 # reported separately (it moves independently).
+# 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.6.0"
+UI_VERSION = "0.7.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -630,6 +631,63 @@ PARAM_META = [
 
 PROFILES = ["safe", "balanced", "fast", "appearance"]
 
+# One-click tuning presets — the simple-mode "0 参数" entry for new users.
+# Each preset sets all 9 PARAM_META params at once; values are server-authored
+# constants inside the PARAM_META ranges (product defaults, engine decides the
+# real outcome). Served via /api/params and applied client-side through the
+# ordinary analyze path (no dedicated endpoint).
+PRESETS = [
+    {"name": "safe", "label": "安全",
+     "desc": "厚壁高填充，强度优先",
+     "params": {"walls": 5, "infill": 40, "pattern": "tri-hexagon",
+                "material": "PLA", "nozzle_diameter": 0.4,
+                "nozzle_temperature": 210, "bed_temperature": 65,
+                "print_speed": 30, "cooling_fan": 60}},
+    {"name": "balanced", "label": "均衡",
+     "desc": "接近引擎默认，强度与速度兼顾",
+     "params": {"walls": 3, "infill": 20, "pattern": "gyroid",
+                "material": "PLA", "nozzle_diameter": 0.4,
+                "nozzle_temperature": 200, "bed_temperature": 60,
+                "print_speed": 50, "cooling_fan": 100}},
+    {"name": "fast", "label": "高速",
+     "desc": "低填充高速度，出件最快",
+     "params": {"walls": 2, "infill": 10, "pattern": "gyroid",
+                "material": "PLA", "nozzle_diameter": 0.4,
+                "nozzle_temperature": 210, "bed_temperature": 60,
+                "print_speed": 80, "cooling_fan": 100}},
+    {"name": "appearance", "label": "外观",
+     "desc": "慢速细表面，外观优先",
+     "params": {"walls": 4, "infill": 15, "pattern": "gyroid",
+                "material": "PLA", "nozzle_diameter": 0.4,
+                "nozzle_temperature": 205, "bed_temperature": 60,
+                "print_speed": 40, "cooling_fan": 80}},
+]
+
+
+def presets_for(materials, patterns):
+    """Return PRESETS with each param checked against PARAM_META and the live
+    enums — a fallback probe (engine offline) must never serve a select value
+    the UI cannot hold, and numeric values stay inside the slider ranges.
+    Server-authored constants, so this is drift-proofing, not user-input
+    fixing. Returns new dicts; never mutates PRESETS."""
+    out = []
+    for p in PRESETS:
+        params = {}
+        for name, value in p["params"].items():
+            meta = next((m for m in PARAM_META if m["name"] == name), None)
+            if meta is None:
+                continue  # unknown key: drop (defensive; PRESETS is ours)
+            if meta["kind"] == "select":
+                options = {"pattern": patterns, "material": materials}[name]
+                value = value if value in options else meta["default"]
+            elif not (meta["min"] <= value <= meta["max"]):
+                value = meta["default"]
+            params[name] = value
+        out.append({"name": p["name"], "label": p["label"],
+                    "desc": p["desc"], "params": params})
+    return out
+
+
 # Physical / environmental inputs (analyze-only; engine domains are enforced
 # by the engine itself — the ranges below are only for argv hygiene and the
 # UI sliders, sourced from engine validation-error texts probed 2026-08-18:
@@ -851,6 +909,7 @@ class StratumHandler(BaseHTTPRequestHandler):
                 "materials": MATERIALS,
                 "patterns": PATTERNS,
                 "profiles": PROFILES,
+                "presets": presets_for(MATERIALS, PATTERNS),
                 "surface": {
                     "patterns_source": PATTERNS_SOURCE,
                     "materials_source": MATERIALS_SOURCE,
