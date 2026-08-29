@@ -10,7 +10,15 @@ function makeEl(tag) {
     style: {}, dataset: {}, className: "",
     set innerHTML(v) { this._innerHTML = v; this.children = []; },
     get innerHTML() { return this._innerHTML; },
+    // v0.9: solver split + apply CTA need DOM-ish surface below
+    get childNodes() { return this.children; },
+    get firstChild() { return this.children[0] || null; },
     appendChild: function (c) { this.children.push(c); return c; },
+    insertBefore: function (c, ref) {
+      const i = this.children.indexOf(ref);
+      if (i >= 0) this.children.splice(i, 0, c); else this.children.unshift(c);
+      return c;
+    },
     addEventListener: function () {},
     setAttribute: function (k, v) { (this.attrs || (this.attrs = {}))[k] = v; },
     querySelectorAll: function () { return []; },
@@ -40,7 +48,8 @@ const ctx = {
   stlSelectOrient: function () {}, stlOrientToDir: function () {},
   stlView: { orient: null, orientSel: 0 },
   document: { createTextNode: function (t) { return { textContent: String(t) }; },
-              querySelectorAll: function () { return []; } },
+              querySelectorAll: function () { return []; },
+              createElement: function (t) { return makeEl(t); } },
   Math: Math, Array: Array, Object: Object, String: String, Number: Number,
   JSON: JSON, isFinite: isFinite, isNaN: isNaN, parseFloat: parseFloat,
   console: console
@@ -68,19 +77,26 @@ function expect(name, cond, detail) {
   console.log((cond ? "PASS" : "FAIL") + "  " + name + (cond ? "" : "  " + detail));
   if (!cond) fails++;
 }
-function rerender(d) {
+function rerender(d, applyable) {
   for (const k in elements) delete elements[k];
-  ctx.renderReport(d, "");
+  ctx.renderReport(d, "", applyable);
 }
 
-// 1. real sample: cg converged hint + part_visibility warning surfaced
+// v0.9: solver internals moved out of phase-b-detail — shorthand targets
+const B_MAIN = "phase-b-detail", B_INT = "phase-b-internals",
+      C_MAIN = "phase-c-detail", C_INT = "phase-c-internals";
+
+// 1. real sample: cg converged hint (v0.9: in the internals box) + warning
 rerender(real);
 expect("real: CG hint with iterations+residual",
-       /CG 求解器收敛: 39 次迭代/.test(boxText("phase-b-detail"))
-       && /8\.33e-5/.test(boxText("phase-b-detail")),
-       boxText("phase-b-detail").slice(0, 80));
+       /CG 求解器收敛: 39 次迭代/.test(boxText(B_INT))
+       && /8\.33e-5/.test(boxText(B_INT)),
+       boxText(B_INT).slice(0, 80));
 expect("real: part_visibility_warning surfaced with Phase B prefix",
        boxText("warning-list").indexOf("Phase B: 网格含 41 个几何部件") >= 0);
+expect("real: solver internals box visible, main flow keeps Tsai-Wu only",
+       elements["phase-b-solver"].style.display === ""
+       && boxText(B_MAIN).indexOf("CG") < 0);
 
 // 2. forged: solver did NOT converge → loud warning, no hint
 const d2 = JSON.parse(JSON.stringify(real));
@@ -88,7 +104,7 @@ d2.phase_b.diagnostics.cg_converged = false;
 rerender(d2);
 expect("forged: 未收敛 warning rendered",
        boxText("warning-list").indexOf("线性求解器未收敛") >= 0
-       && boxText("phase-b-detail").indexOf("CG 求解器收敛") < 0);
+       && boxText(B_INT).indexOf("CG 求解器收敛") < 0);
 
 // 3. forged: diagnostics.warning string surfaced; empty string not
 const d3 = JSON.parse(JSON.stringify(real));
@@ -97,13 +113,12 @@ rerender(d3);
 expect("forged: diagnostics.warning surfaced",
        boxText("warning-list").indexOf("Phase B: extra solver caveat") >= 0);
 
-// 4. absent diagnostics (older engine) → no CG/diagnostics content (the
-// grid-dims hint of iter 81 is diagnostics-independent and MAY be present)
+// 4. absent diagnostics (older engine) → no CG/diagnostics content
 const d4 = JSON.parse(JSON.stringify(real));
 delete d4.phase_b.diagnostics;
 rerender(d4);
 expect("absent diagnostics: silent",
-       boxText("phase-b-detail").indexOf("CG") < 0
+       boxText(B_INT).indexOf("CG") < 0
        && boxText("warning-list").indexOf("Phase B:") < 0);
 
 // 5. cg_converged non-boolean shape → falls through as not assessable
@@ -111,7 +126,7 @@ const d5 = JSON.parse(JSON.stringify(real));
 d5.phase_b.diagnostics.cg_converged = "true";
 rerender(d5);
 expect("non-boolean cg_converged: no hint (strict === true)",
-       boxText("phase-b-detail").indexOf("CG 求解器收敛") < 0);
+       boxText(B_INT).indexOf("CG 求解器收敛") < 0);
 
 // 6. (iter 69) recommendation priority badge + tradeoff_note surfaced
 rerender(real);
@@ -215,8 +230,8 @@ expect("iter77: no tooltips when fields null",
 
 // 13. (iter 81) actual grid dims rendered (real sample: 5×4×4, 150 nodes)
 expect("iter81: grid dims + nodes hint",
-       boxText("phase-b-detail").indexOf("网格: 5×4×4（150 节点）") >= 0,
-       boxText("phase-b-detail"));
+       boxText(B_INT).indexOf("网格: 5×4×4（150 节点）") >= 0,
+       boxText(B_INT));
 
 // 14. (v0.8 iter 1) numEnv dual-shape contract — v2 {nominal,lo,hi} object vs
 // v3 scalar + *_envelope twin. Production helpers are injected (slice above).
@@ -311,20 +326,20 @@ expect("v0.8.1: printability line values",
        boxText("printability-line").indexOf("底面接触") >= 0 &&
        boxText("printability-line").indexOf("1000 mm²") >= 0,
        boxText("printability-line"));
-expect("v0.8.1: ZZ-SPR / Tsai-Wu / mesh quality / precond hints",
-       boxText("phase-b-detail").indexOf("离散误差 (ZZ-SPR)") >= 0 &&
-       boxText("phase-b-detail").indexOf("22.1%") >= 0 &&
-       boxText("phase-b-detail").indexOf("Tsai-Wu SF: 17.6") >= 0 &&
-       boxText("phase-b-detail").indexOf("uniform_cubic_voxel") >= 0 &&
-       boxText("phase-b-detail").indexOf("预条件子: ic0") >= 0,
-       boxText("phase-b-detail"));
+expect("v0.8.1: ZZ-SPR / mesh quality / precond hints (internals box); Tsai-Wu stays main",
+       boxText(B_INT).indexOf("离散误差 (ZZ-SPR)") >= 0 &&
+       boxText(B_INT).indexOf("22.1%") >= 0 &&
+       boxText(B_INT).indexOf("uniform_cubic_voxel") >= 0 &&
+       boxText(B_INT).indexOf("预条件子: ic0") >= 0 &&
+       boxText(B_MAIN).indexOf("Tsai-Wu SF: 17.6") >= 0,
+       boxText(B_INT) + " || " + boxText(B_MAIN));
 expect("v0.8.1: thermal-speed loop overheated line + rationale verbatim",
        boxText("phase-c-detail").indexOf("热-速闭环: 基板温 125.6°C / 上限 62.0°C — 超温，建议速度 16.5 mm/s") >= 0 &&
        boxText("phase-c-detail").indexOf("PLA: T_sub(8s)=125.6°C > Tg 62°C") >= 0,
        boxText("phase-c-detail"));
-expect("v0.8.1: weld_infill_aware with disclosure verbatim",
-       boxText("phase-c-detail").indexOf("有效键合(含填充): a_eff 0.0360") >= 0 &&
-       boxText("phase-c-detail").indexOf("non-decision-grade") >= 0);
+expect("v0.8.1: weld_infill_aware with disclosure verbatim (internals box)",
+       boxText(C_INT).indexOf("有效键合(含填充): a_eff 0.0360") >= 0 &&
+       boxText(C_INT).indexOf("non-decision-grade") >= 0);
 expect("v0.8.1: skipped reason / fatigue life / Weibull numbers",
        boxText("phase-d-detail").indexOf("跳过: Findley") >= 0 &&
        boxText("phase-d-detail").indexOf("疲劳寿命估算: 1.00e+9 次") >= 0 &&
@@ -340,11 +355,11 @@ expect("v0.8.1: skipped reason / fatigue life / Weibull numbers",
 rerender(real3);
 expect("v0.8.1: real fixture itself renders printability/thermal/precond",
        boxText("printability-line").indexOf("2880 mm²") >= 0 &&
-       boxText("phase-b-detail").indexOf("预条件子: ic0") >= 0 &&
-       boxText("phase-b-detail").indexOf("ZZ-SPR") >= 0 &&
-       boxText("phase-c-detail").indexOf("热-速闭环: 基板温 125.6°C") >= 0,
-       boxText("printability-line") + " || " + boxText("phase-b-detail") +
-       " || " + boxText("phase-c-detail"));
+       boxText(B_INT).indexOf("预条件子: ic0") >= 0 &&
+       boxText(B_INT).indexOf("ZZ-SPR") >= 0 &&
+       boxText(C_MAIN).indexOf("热-速闭环: 基板温 125.6°C") >= 0,
+       boxText("printability-line") + " || " + boxText(B_INT) +
+       " || " + boxText(C_MAIN));
 expect("v0.8.1: absent fast_mode/filament_slots stay hidden",
        elements["fast-mode-tag"].style.display === "none" &&
        elements["cp-filament-note"].style.display === "none");
@@ -469,17 +484,17 @@ expect("v0.8.1: est-error table rows + group column + engine note",
        boxText("esterr-detail"));
 expect("v0.8.1: est-error process row keeps -1 sentinel honest as —",
        boxText("esterr-detail").indexOf("—") >= 0);
-expect("v0.8.1: resolution-check hints verbatim deltas",
-       boxText("phase-b-detail").indexOf("分辨率校验: 16→32 网格，位移 Δ72.3% / 应力 Δ40.9%（细网格收敛）") >= 0 &&
-       boxText("phase-b-detail").indexOf("粗 0.205 / 细 0.198") >= 0,
-       boxText("phase-b-detail"));
+expect("v0.8.1: resolution-check hints verbatim deltas (internals box)",
+       boxText(B_INT).indexOf("分辨率校验: 16→32 网格，位移 Δ72.3% / 应力 Δ40.9%（细网格收敛）") >= 0 &&
+       boxText(B_INT).indexOf("粗 0.205 / 细 0.198") >= 0,
+       boxText(B_INT));
 const d22b = JSON.parse(JSON.stringify(d22));
 d22b.phase_b.resolution_check.capped = true;
 d22b.phase_b.resolution_check.fine_converged = false;
 rerender(d22b);
 expect("v0.8.1: resolution-check capped + not-converged surfaced",
-       boxText("phase-b-detail").indexOf("已封顶 128") >= 0 &&
-       boxText("phase-b-detail").indexOf("细网格未收敛") >= 0);
+       boxText(B_INT).indexOf("已封顶 128") >= 0 &&
+       boxText(B_INT).indexOf("细网格未收敛") >= 0);
 rerender(real3);
 expect("v0.8.1: esterr box hidden when block absent",
        elements["esterr-box"].style.display === "none");
@@ -513,5 +528,118 @@ expect("v0.8.1: calibration not-applied carries reason verbatim",
 rerender(real3);
 expect("v0.8.1: calibration box hidden when block absent",
        elements["calibration-box"].style.display === "none");
+
+// 24. (v0.9) verdict-first split visibility + engine assessment line +
+// applyable checkboxes/CTA. The v1 identity whitelist lives server-side
+// (smoke T-numbers pin it against the real engine); here we pin the RENDER
+// contract only: applyable[i] pairs with items[i], applicable → checkbox,
+// applicable:false → reason text, no applyable → plain text (old callers).
+//
+// 24a. real v3 fixture carries phase_b.assessment → verdict line verbatim;
+// solver boxes visible (both fixtures carry internals data)
+rerender(real3);
+expect("v0.9: phase_b assessment verdict line verbatim",
+       boxText("phase-b-assessment").indexOf("结论: ✅ 安全 — 结构强度充足") >= 0,
+       boxText("phase-b-assessment"));
+expect("v0.9: phase-b/c internals boxes visible on real data " +
+       "(v3 fixture: grid/precond + yield-idx/weld are all present)",
+       elements["phase-b-solver"].style.display === "" &&
+       elements["phase-c-solver"].style.display === "" &&
+       boxText(C_INT).indexOf("Hill48 屈服指数: 0.0000") >= 0,
+       boxText(C_INT));
+expect("v0.9: Hill48 yield index split out of the main SF line",
+       boxText(C_MAIN).indexOf("Hill48 SF:") >= 0 &&
+       boxText(C_MAIN).indexOf("屈服指数") < 0,
+       boxText(C_MAIN).slice(0, 120));
+// 24b. absent assessment + empty internals → hidden boxes (absent-not-null,
+// per-frame reverse reset: a previous render's content must not leak)
+const d24 = JSON.parse(JSON.stringify(real3));
+delete d24.phase_b.assessment;
+delete d24.phase_b.diagnostics;
+delete d24.phase_b.grid;
+delete d24.phase_b.resolution_adequacy;
+delete d24.phase_b.mesh_quality;
+d24.phase_c.max_hill48_yield_index = null;
+d24.phase_c.abs_wlf_shift_factor = null;
+d24.phase_c.crystallinity_modulus_factor = null;
+d24.phase_c.weld_infill_aware = null;
+rerender(d24);
+expect("v0.9: assessment absent → hidden",
+       elements["phase-b-assessment"].style.display === "none");
+expect("v0.9: internals emptied → both solver boxes reset to hidden",
+       elements["phase-b-solver"].style.display === "none" &&
+       elements["phase-c-solver"].style.display === "none");
+// 24c. applyable render contract: multi-item applicable list → CTA with
+// count + checked checkboxes paired by index. The v3 fixture carries a
+// single item, so forge a 3-item rec list shaped like the real v2 sample
+// (identity keys — render contract only; server pairing is smoke's scope).
+const d24c = JSON.parse(JSON.stringify(real3));
+d24c.recommendations.items = [
+  {action: "decrease", parameter: "nozzle_diameter", priority: 2,
+   reason: "thin-wall risk; nozzle is too large",
+   current_value: 0.4, recommended_value: 0.2,
+   confidence: 0.7, est_safety_factor: null, est_max_stress: null},
+  {action: "decrease", parameter: "print_speed", priority: 2,
+   reason: "slow down for thin-wall extrusion accuracy",
+   current_value: 60, recommended_value: 36,
+   confidence: 0.7, est_safety_factor: null, est_max_stress: null},
+  {action: "decrease", parameter: "cooling_fan", priority: 2,
+   reason: "reduce fan to lower shrinkage gradients",
+   current_value: 100, recommended_value: 60,
+   confidence: 0.65, est_safety_factor: null, est_max_stress: null}];
+const app24 = d24c.recommendations.items.map(function (it) {
+  return {parameter: it.parameter, action: it.action,
+          current_value: it.current_value,
+          recommended_value: it.recommended_value,
+          priority: it.priority, applicable: true, reason: "",
+          ui_key: it.parameter};
+});
+rerender(d24c, app24);
+expect("v0.9: CTA rendered with count",
+       boxText("rec-items").indexOf("应用勾选建议 (3)") >= 0,
+       boxText("rec-items").slice(0, 80));
+(function () {
+  // checkboxes live inside the per-item divs — walk recursively
+  const found = [];
+  (function walk(n) {
+    (n.children || []).forEach(function (c) {
+      if (c.tagName === "input") found.push(c); else walk(c);
+    });
+  })(elements["rec-items"]);
+  expect("v0.9: 3 checked checkboxes paired by index",
+         found.length === 3 &&
+         found.every(function (c) { return c.checked === true; }) &&
+         found.map(function (c) { return c.attrs["data-apply-idx"]; }).join(",")
+           === "0,1,2",
+         JSON.stringify(found.map(function (c) { return c.attrs; })));
+})();
+// 24d. applicable:false → inline reason, not a checkbox; CTA counts only
+// applicable items
+const app24b = JSON.parse(JSON.stringify(app24));
+app24b[0].applicable = false;
+app24b[0].reason = "参数不在可执行白名单（该名暂无真实样本实证）";
+app24b[1].applicable = false;
+app24b[1].reason = "已等于当前值";
+rerender(d24c, app24b);
+expect("v0.9: non-applicable reason shown inline, no checkbox",
+       boxText("rec-items").indexOf("不可一键应用: 参数不在可执行白名单") >= 0 &&
+       boxText("rec-items").indexOf("不可一键应用: 已等于当前值") >= 0);
+expect("v0.9: CTA counts only applicable items",
+       boxText("rec-items").indexOf("应用勾选建议 (1)") >= 0);
+// 24e. no applyable argument (old callers / fixture renders) → exactly the
+// v0.8 text-only render, no CTA, no checkboxes
+rerender(d24c);
+expect("v0.9: no applyable → no CTA/checkbox (backward compatible)",
+       boxText("rec-items").indexOf("应用勾选建议") < 0 &&
+       boxText("rec-items").indexOf("不可一键应用") < 0 &&
+       boxText("rec-items").indexOf("[decrease] nozzle_diameter") >= 0);
+// 24f. forged WLF sample → phase-c internals box becomes visible
+const d24f = JSON.parse(JSON.stringify(real3));
+d24f.phase_c.abs_wlf_shift_factor = 1.2345;
+rerender(d24f);
+expect("v0.9: ABS WLF rendered in internals box, box visible",
+       boxText(C_INT).indexOf("ABS WLF: 移位因子 1.2345") >= 0 &&
+       elements["phase-c-solver"].style.display === "",
+       boxText(C_INT));
 
 process.exit(fails ? 1 : 0);

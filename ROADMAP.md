@@ -226,7 +226,48 @@
 `browser_render_check.js` 全绿；GUI 冒烟截图 `gui-test-screenshots/v081-*.png`
 （开关行/③b 新行/诊断面板/估算校准，无头 Chrome CDP 管线）。UI 0.8.1。
 
+### v0.9 — 产品化 P0：建议一键应用 + ④ verdict-first 分层（2026-08-29）
+
+> 方法：设计空间 5 候选各自独立 REFUTE 后收敛（本轮共 4 份对抗报告 + 1 份自我证伪）。
+> 判决：**S 服务端映射**（REJECT-as-designed→修正采纳：applyable 必须是响应顶层兄弟键——
+> `session["last_report"]` 按引用存储、`/api/report` 直接 dumps，注入 report 树会污染下载工件；
+> 逐项 applicable:false+reason 而非静默丢弃；滑杆 step 预吸附对齐控件语义）；
+> **W 暂存确认单**（REJECT→staging 降为属性：常驻确认单会被 auto renderReport 摧毁/陈旧且全仓无
+> 代际闸——checkbox 与 items 同生命周期即天然免陈旧）；**R 结论卡重组**（REJECT 弃：SF/判定行
+> 被 KPI 覆盖面核查 disproves——Tsai-Wu/塑性/残余/老化/Findley 等 13 类无 KPI 代理，折叠即信息丢失；
+> 「N 条紧急」计数是 UI 自造分级触红线 2 判例 v0.5e）；**N 虚拟对比**（self-refuted 弃：
+> per-item est_safety_factor 全 null，组合效果未验证=假乐观）。
+
+- [x] a) **服务端 `applyable`**（`applyable_suggestions`，响应顶层键）：v1 白名单=仅实证 identity 键
+      （nozzle_diameter/print_speed/cooling_fan，0.24.0 真实样本恒等 PARAM_META，零换算）；
+      wall_count→walls / infill_pct→infill（单位空间 % vs 分数 fixture 不可判）/ infill_pattern→pattern /
+      material 全部**挂账待真实样本**——无实证换算=发明引擎契约。判定规则（控件语义非引擎规则）：
+      action∈{increase,decrease}、值≠当前、range 域校验、step 预吸附、同 ui_key 首个 applicable 胜出
+      （引擎序=优先级序，UI 永不重排）；构建 never-raise（heatmap 同款纪律），v2 形状容忍
+- [x] b) **勾选 + 单 CTA**（`applyCheckedSuggestions`）：checkbox 与 rec item 同生命周期；守卫
+      token/running/**batchRunning**；客户端按 meta 复核（控件=最终事实）；写滑杆+dirty（不
+      scheduleAuto，单次 analyze(false) 吞 pending auto）；toast 列出生效值（简单模式滑杆隐藏时可感知）；
+      `.rec-apply` disabled 生命周期与 preset 按钮三点对齐（analyze start/catch/finally）。
+      **前置修复**：applyPreset 补 batchRunning 闸（同语义兄弟，analyze 本体无此闸）
+- [x] c) **回显 reconcile**：`state.lastApplied` 记写入值，analyze 成功后比对引擎 echo
+      （APPLY_ECHO_KEYS 与 report.js 字面映射同源扩表），不一致 info toast「引擎按域调整为 X」——
+      事后诚实披露替代预判钳制（预判=复制引擎钳制规则，触红线 2）
+- [x] d) **④ verdict-first 分层**：solver internals（CG/网格/ZZ-SPR/mesh_quality/预条件子/
+      resolution_check + Hill48 屈服指数/WLF/结晶度/键合）→ 两个 advanced-only 折叠 details
+      （每帧反向复位，absent-not-null）；**全部 SF/判定行/热-速闭环留主区**（R 对抗的证据即边界）
+- [x] e) **引擎结论前置**：`phase_b.assessment` verbatim 显示于 KPI 下（v3 实证「✅ 安全 — 结构强度充足」；
+      两 fixture 的 warnings 均为 [] 且 priority 域仅 {2}——任何「N 条紧急」计数都是 UI 发明，不做）
+- 验证：`tests/test_smoke.py` 105/105（T84 构建器敌意矩阵 14 case + never-raise；T85 真引擎
+  round-trip：顶层键/report 树不被污染/逐项配对）；`report_render_check.js` 68 项（internals 位移
+  ~13 处 + §24 渲染契约：CTA 计数/勾选配对/不可应用原因/无 applyable 向后兼容/盒子反向复位）；
+  `browser_render_check.js` 39 项（真引擎 e2e 断言 applyable 顶层 + CTA 渲染）；截图
+  `gui-test-screenshots/v09-*.png`（简单模式结论行+CTA / 高级折叠展开 / 应用后 dirty+toast，
+  真引擎 STL 全流程；一次性脚本用后即删）
+- 挂账（backlog）：改名键白名单扩表（需真实 rec 样本）；infill_pct 单位空间探针；`overall_band`
+  契约缺口（UI 不自造分数色带，需引擎出枚举）；applyable 兜底规则与 presets_for 分叉已成文（本节 a）
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
+
 
 - [x] a) WebUI 侧可先行（2026-08-19 完成主体）：STL WebGL 预览（自研 ~240 行，零依赖保红线 1；
       包围盒定中心/拖拽旋转/滚轮缩放）+ **方向候选箭头 overlay**（iter 63：④ 表行点击 ↔ 预览

@@ -83,7 +83,7 @@ def _validated_int(raw, lo, hi):
 # 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.8.1"
+UI_VERSION = "0.9.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -1002,6 +1002,98 @@ def presets_for(materials, patterns):
     return out
 
 
+# v0.9 "applyable" — server-derived, executable view of the engine's
+# recommendation items. Name-space evidence (0.24.0 real runs,
+# test_data/real3mf-results/report.json:645-647): every observed
+# recommendations.items[].parameter (nozzle_diameter / print_speed /
+# cooling_fan) is IDENTITY with its PARAM_META slider key. Renamed keys that
+# exist only in the process_optimization baseline/candidate space
+# (wall_count→walls, infill_pct→infill, infill_pattern→pattern) have ZERO
+# observed recommendation samples — and infill_pct's unit space (percent vs
+# fraction) is indistinguishable on current fixtures — so wiring them would
+# mean inventing the engine's name/unit mapping. They stay text-only until a
+# real sample proves both name AND unit (ROADMAP v0.9 backlog).
+# Everything below is UI-side orchestration (ROADMAP red line 2 allows it):
+# filtering by the UI's OWN control semantics (slider range/step/no-op) —
+# no engine scoring/clamping rule is copied or re-implemented.
+_APPLYABLE_ACTIONS = ("increase", "decrease")  # observed action space (0.24.0)
+
+
+def applyable_suggestions(report):
+    """Project recommendations.items onto the UI slider face. Returns one
+    entry per engine item, SAME order (the engine order is its priority
+    order — never re-sorted), so applyable[i] pairs with items[i] on the
+    client. applicable:false entries carry the reason. Never raises: any
+    surprise shape degrades to applicable:false — bonus channel, same
+    discipline as the heatmap passthrough (must not fail a good analysis).
+    Duplicates on one UI key keep the FIRST applicable hit (earlier engine
+    order = higher priority)."""
+    out = []
+    if not isinstance(report, dict):
+        return out
+    rec = report.get("recommendations")
+    items = rec.get("items") if isinstance(rec, dict) else None
+    if not isinstance(items, list):
+        return out
+    seen_keys = set()
+    for it in items:
+        entry = {"parameter": None, "action": None, "current_value": None,
+                 "recommended_value": None, "priority": None,
+                 "applicable": False, "reason": "", "ui_key": None}
+        out.append(entry)
+        if not isinstance(it, dict):
+            entry["reason"] = "建议项形状异常"
+            continue
+        name = it.get("parameter")
+        val = it.get("recommended_value")
+        cur = it.get("current_value")
+        if isinstance(name, str):
+            entry["parameter"] = name
+        if isinstance(it.get("action"), str):
+            entry["action"] = it["action"]
+        for k, v in (("current_value", cur), ("recommended_value", val)):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                entry[k] = v
+        if isinstance(it.get("priority"), int) and not isinstance(it["priority"], bool):
+            entry["priority"] = it["priority"]
+        # identity whitelist, numeric sliders only (selects have no real
+        # sample yet — see block comment above)
+        meta = next((m for m in PARAM_META
+                     if m["name"] == name and m["kind"] != "select"), None)
+        if meta is None:
+            entry["reason"] = "参数不在可执行白名单（该名暂无真实样本实证）"
+            continue
+        if entry["action"] not in _APPLYABLE_ACTIONS:
+            entry["reason"] = "非设值型建议（action=%s）" % (entry["action"],)
+            continue
+        if entry["recommended_value"] is None:
+            entry["reason"] = "建议值缺失"
+            continue
+        if (entry["current_value"] is not None
+                and entry["recommended_value"] == entry["current_value"]):
+            entry["reason"] = "已等于当前值"
+            continue
+        # step pre-snap: a range input snaps to step on assignment and the
+        # client sends the control value — snapping HERE keeps the listed
+        # value identical to the value that will actually be sent. This is
+        # the UI's own control semantics, not an engine rule.
+        val = entry["recommended_value"]
+        snapped = meta["min"] + round((val - meta["min"]) / meta["step"]) * meta["step"]
+        snapped = round(snapped, 6)  # 0.05/0.02-step float drift
+        if not (meta["min"] <= snapped <= meta["max"]):
+            entry["reason"] = ("建议值 %s 超出滑杆域 %s..%s"
+                               % (val, meta["min"], meta["max"]))
+            continue
+        if meta["name"] in seen_keys:
+            entry["reason"] = "同参数多项建议，保留引擎顺序在前的一项"
+            continue
+        seen_keys.add(meta["name"])
+        entry["applicable"] = True
+        entry["ui_key"] = meta["name"]
+        entry["recommended_value"] = snapped
+    return out
+
+
 # Physical / environmental inputs (analyze-only; engine domains are enforced
 # by the engine itself — the ranges below are only for argv hygiene and the
 # UI sliders, sourced from engine validation-error texts probed 2026-08-18:
@@ -1825,9 +1917,15 @@ class StratumHandler(BaseHTTPRequestHandler):
                 pass
         # console: pass through the engine's own stdout so the UI can show the
         # CLI's "Recommended:" line verbatim (no recommendation logic in JS).
+        # applyable (v0.9): top-level SIBLING key, deliberately NOT merged
+        # into the report tree — session["last_report"] is stored by
+        # reference and GET /api/report dumps it verbatim; injecting here
+        # would fabricate an engine-authored field inside the downloaded
+        # artifact. Builder is degrade-never-raise (bonus channel).
         _send_json(self, 200, {"ok": True, "report": report,
                                "console": out.decode("utf-8", "replace"),
-                               "heatmap": heatmap})
+                               "heatmap": heatmap,
+                               "applyable": applyable_suggestions(report)})
 
     def _export(self):
         body = _read_json_body(self)

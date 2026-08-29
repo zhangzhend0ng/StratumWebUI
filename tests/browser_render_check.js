@@ -92,8 +92,10 @@ async function main() {
       if (!cond) fails++;
     };
     expect("real page: renderReport did not throw", threw === "no", threw);
-    expect("real page: CG hint in phase-b-detail",
-           await evalJs("document.getElementById('phase-b-detail').textContent.indexOf('CG 求解器收敛') >= 0"));
+    expect("real page: CG hint in phase-b-internals (v0.9 solver split)",
+           await evalJs("document.getElementById('phase-b-internals').textContent.indexOf('CG 求解器收敛') >= 0"));
+    expect("real page: solver details box shown for real data",
+           await evalJs("document.getElementById('phase-b-solver').style.display === ''"));
     expect("real page: Phase B part-visibility warning",
            await evalJs("document.getElementById('warning-list').textContent.indexOf('Phase B: 网格含 41 个几何部件') >= 0"));
     expect("real page: priority badge [P2]",
@@ -120,6 +122,25 @@ async function main() {
            await evalJs("document.getElementById('cp-lh').textContent.indexOf('0.2 mm') >= 0"));
     expect("v3 fixture: refusal box hidden after clean render",
            await evalJs("document.getElementById('validate-refused').style.display === 'none'"));
+    // (v0.9) engine assessment verdict line + applyable checkbox/CTA render
+    // path in the REAL page. applyable here is forged client-side (identity
+    // keys of the fixture item) — the server-side whitelist itself is pinned
+    // by the e2e flow further down, which consumes the real /api/analyze
+    // response's applyable field.
+    const v09 = JSON.parse(await evalJs(
+      "(function(){var r=window.__r3;" +
+      "var ap=(r.recommendations.items||[]).map(function(it){return {" +
+      "parameter:it.parameter,action:it.action,current_value:it.current_value," +
+      "recommended_value:it.recommended_value,priority:it.priority," +
+      "applicable:true,reason:'',ui_key:it.parameter}});" +
+      "renderReport(r,'',ap);" +
+      "return JSON.stringify({verdict:document.getElementById('phase-b-assessment').textContent," +
+      "cta:(document.querySelector('#rec-items button.rec-apply')||{}).textContent," +
+      "cbs:document.querySelectorAll('#rec-items input[data-apply-idx]').length})})()"));
+    expect("v0.9: verdict line verbatim from engine assessment",
+           v09.verdict.indexOf("结论: ✅ 安全 — 结构强度充足") >= 0, v09.verdict);
+    expect("v0.9: CTA + checkbox rendered from applyable pairing",
+           v09.cta === "应用勾选建议 (1)" && v09.cbs === 1, JSON.stringify(v09));
     // --validate refusal rendering (server 422 payload shape)
     const vr = JSON.parse(await evalJs(
       "(function(){renderValidationRefused({status:'validation_refused'," +
@@ -188,11 +209,14 @@ async function main() {
       "body:JSON.stringify({token:up.token,env:{load:'compression',fatigue_cycles:100000}})})" +
       ".then(function(r){return r.json()});" +
       "if(!an.ok)return JSON.stringify({stage:'analyze',err:an.error});" +
-      "try{renderReport(an.report,an.console||'')}catch(e){return JSON.stringify({stage:'render',err:String(e)})}" +
+      "try{renderReport(an.report,an.console||'',an.applyable||null)}catch(e){return JSON.stringify({stage:'render',err:String(e)})}" +
       "var bk=document.getElementById('res-buckling');var ft=document.getElementById('res-fatigue');" +
+      "var cta=document.querySelector('#rec-items button.rec-apply');" +
       "return JSON.stringify({stage:'ok',bk:bk.textContent,bkT:bk.title||''," +
       "ft:ft.textContent,ftT:ft.title||'',sl:(an.report.phase_d||{}).buckling_slenderness," +
-      "ex:(an.report.phase_d||{}).fatigue_expected_cycles});})()"));
+      "ex:(an.report.phase_d||{}).fatigue_expected_cycles," +
+      "cta:cta?cta.textContent:'(none)'," +
+      "polluted:('applyable' in an.report)});})()"));
     expect("e2e: pipeline stage ok", e2e.stage === "ok", JSON.stringify(e2e).slice(0, 200));
     if (e2e.stage === "ok") {
       expect("e2e: real buckling SF + slenderness tooltip",
@@ -203,6 +227,16 @@ async function main() {
              e2e.ft !== "—" && e2e.ftT.indexOf("目标寿命 100000 次") === 0
              && e2e.ex === 100000,
              JSON.stringify({ft: e2e.ft, ftT: e2e.ftT, ex: e2e.ex}));
+      // (v0.9) the real /api/analyze response carries a top-level applyable
+      // array (never inside the report tree) and the render wires the CTA
+      // when at least one item lands on the identity whitelist
+      expect("e2e: applyable is top-level, report tree unpolluted",
+             e2e.polluted === false, JSON.stringify(e2e).slice(0, 200));
+      expect("e2e: apply suggestions CTA from real engine response",
+             typeof e2e.cta === "string"
+             && (e2e.cta === "(none)"
+                 || /^应用勾选建议 \(\d+\)$/.test(e2e.cta)),
+             String(e2e.cta));
     }
 
     // (v0.8 iter 3) REAL heatmap end-to-end: the analyze response carries the

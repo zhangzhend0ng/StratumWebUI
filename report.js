@@ -5,7 +5,7 @@
 // at CALL time — this file only declares functions, runs nothing.
 
 // ---------- render ----------
-function renderReport(d, consoleText) {
+function renderReport(d, consoleText, applyable) {
   // a successful render supersedes any --validate refusal listing (④)
   var vr = $("validate-refused");
   if (vr) { vr.style.display = "none"; vr.innerHTML = ""; }
@@ -99,6 +99,18 @@ function renderReport(d, consoleText) {
   var rec = d.recommendations || {};
   $("res-overall").textContent = rec.overall_score !== null && rec.overall_score !== undefined
     ? rec.overall_score : "—";
+  // v0.9 verdict line: the engine's own phase_b assessment string, verbatim,
+  // under the KPI cards (engine-authored conclusion; no UI-invented summary).
+  // Hidden when absent (older engines) — absent-not-null.
+  var pbaBox = $("phase-b-assessment");
+  if (pbaBox) {
+    if (typeof pb.assessment === "string" && pb.assessment) {
+      pbaBox.textContent = "结论: " + pb.assessment;
+      pbaBox.style.display = "";
+    } else {
+      pbaBox.style.display = "none";
+    }
+  }
 
   // printability block: quantitative Phase A surface numbers (the risks list
   // below carries only the qualitative regions). Hidden entirely when the
@@ -160,10 +172,17 @@ function renderReport(d, consoleText) {
   // prefix so users can tell them from the engine-global list above.
   var pbd = (d.phase_b || {}).diagnostics || {};
   var pbdBox = $("phase-b-detail");
-  if (pbdBox) {
-    pbdBox.innerHTML = "";
+  // v0.9 verdict-first split: solver internals (CG convergence / adaptive
+  // grid / ZZ-SPR discretization / voxel mesh quality / preconditioner /
+  // --resolution-check deltas) render into a collapsed advanced-only
+  // <details> box; user-facing SF/criterion lines stay in the main flow.
+  // Wrapper is reset to hidden EVERY render (absent-not-null: no internals
+  // data → no box), same lifecycle as the phase boxes above.
+  var pbiBox = $("phase-b-internals");
+  if (pbiBox) {
+    pbiBox.innerHTML = "";
     if (pbd.cg_converged === true) {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "CG 求解器收敛" +
         (typeof pbd.cg_iterations === "number" ? ": " + pbd.cg_iterations + " 次迭代" : "") +
         (typeof pbd.cg_relative_residual === "number"
@@ -174,7 +193,7 @@ function renderReport(d, consoleText) {
     var pg = pb.grid || {};
     if (typeof pg.nx === "number" && typeof pg.ny === "number"
         && typeof pg.nz === "number") {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "网格: " + pg.nx + "×" + pg.ny + "×" + pg.nz +
         (typeof pg.nodes === "number" ? "（" + pg.nodes + " 节点）" : "")));
     }
@@ -182,22 +201,17 @@ function renderReport(d, consoleText) {
     // ZZ-SPR discretization error — how adequate the voxel grid actually is
     var ra = pb.resolution_adequacy;
     if (ra && ra.assessed === true && typeof ra.rel_index === "number") {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "离散误差 (ZZ-SPR): η_rms " + num(ra.eta_rms_mpa, 4) + " / η_max " +
         num(ra.eta_max_mpa, 4) + " MPa（相对指标 " +
         (ra.rel_index * 100).toFixed(1) + "%）"));
-    }
-    // Tsai-Wu criterion SF alongside the headline Tsai-Hill number
-    if (typeof pb.tsai_wu_safety_factor === "number") {
-      pbdBox.appendChild(el("div", "hint",
-        "Tsai-Wu SF: " + num(pb.tsai_wu_safety_factor, 1)));
     }
     // voxel mesh quality (uniform-cubic voxels are by-construction; the
     // shape string is still rendered verbatim for future element types)
     var mq = pb.mesh_quality;
     if (mq && typeof mq === "object" && typeof mq.element_shape === "string"
         && mq.element_shape) {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "网格质量: " + mq.element_shape +
         (typeof mq.scaled_jacobian === "number"
           ? " · SJ " + num(mq.scaled_jacobian, 3) : "") +
@@ -207,7 +221,7 @@ function renderReport(d, consoleText) {
     }
     // preconditioner identity + non-positive-pivot fallback count (ic0→Jacobi)
     if (typeof pbd.preconditioner === "string" && pbd.preconditioner) {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "预条件子: " + pbd.preconditioner +
         (typeof pbd.precond_fallback_count === "number"
          && pbd.precond_fallback_count > 0
@@ -217,7 +231,7 @@ function renderReport(d, consoleText) {
     // deltas, verbatim numbers — no UI-side judgement of what a delta "means"
     var rc = pb.resolution_check;
     if (rc && typeof rc === "object") {
-      pbdBox.appendChild(el("div", "hint",
+      pbiBox.appendChild(el("div", "hint",
         "分辨率校验: " + num(rc.coarse_grid, 0) + "→" + num(rc.fine_grid, 0) +
         " 网格，位移 Δ" + num(rc.disp_delta_pct, 1) + "% / 应力 Δ" +
         num(rc.stress_delta_pct, 1) + "%" +
@@ -226,10 +240,22 @@ function renderReport(d, consoleText) {
         (rc.capped === true ? "［已封顶 128］" : "")));
       if (typeof rc.zz_rel_coarse === "number"
           && typeof rc.zz_rel_fine === "number") {
-        pbdBox.appendChild(el("div", "hint",
+        pbiBox.appendChild(el("div", "hint",
           "分辨率校验 ZZ 相对指标: 粗 " + num(rc.zz_rel_coarse, 3) + " / 细 " +
           num(rc.zz_rel_fine, 3)));
       }
+    }
+    var pbsWrap = $("phase-b-solver");
+    if (pbsWrap) pbsWrap.style.display = pbiBox.childNodes.length ? "" : "none";
+  }
+  if (pbdBox) {
+    pbdBox.innerHTML = "";
+    // Tsai-Wu criterion SF alongside the headline Tsai-Hill number —
+    // a safety factor stays in the main flow (verdict-first: only solver
+    // internals moved out, never conclusions)
+    if (typeof pb.tsai_wu_safety_factor === "number") {
+      pbdBox.appendChild(el("div", "hint",
+        "Tsai-Wu SF: " + num(pb.tsai_wu_safety_factor, 1)));
     }
   }
   if (pbd.cg_converged === false) {
@@ -262,13 +288,47 @@ function renderReport(d, consoleText) {
   // (probed: ABS+service-time, PLA+anneal-hours).
   var pc = d.phase_c || {};
   var pcd = $("phase-c-detail");
-  pcd.innerHTML = "";
-  if (pc.run) {
+  // v0.9 verdict-first split (mirror of phase-b): constitutive/model-internal
+  // numbers (Hill48 yield index, ABS WLF shift, annealing crystallinity,
+  // infill-aware weld internals) → collapsed advanced-only details; SF and
+  // risk lines stay in the main flow. Reset to hidden EVERY render.
+  var pciBox = $("phase-c-internals");
+  if (pciBox) {
+    pciBox.innerHTML = "";
+    if (pc.run && pc.max_hill48_yield_index != null) {
+      pciBox.appendChild(el("div", "hint",
+        "Hill48 屈服指数: " + numEnv(pc.max_hill48_yield_index, 4)));
+    }
+    if (pc.run && pc.abs_wlf_shift_factor != null) {
+      pciBox.appendChild(el("div", "hint",
+        "ABS WLF: 移位因子 " + numEnv(pc.abs_wlf_shift_factor, 4) +
+        "，折算时间 " + numEnv(pc.abs_wlf_reduced_time_s, 1) + " s" +
+        (pc.abs_viscoelastic_creep_risk != null
+          ? "，蠕变风险 " + numEnv(pc.abs_viscoelastic_creep_risk, 4) : "")));
+    }
+    if (pc.run && pc.crystallinity_modulus_factor != null) {
+      pciBox.appendChild(el("div", "hint",
+        "退火结晶模量因子: " + numEnv(pc.crystallinity_modulus_factor, 4)));
+    }
+    // infill-aware weld bond internals (v0.8.1 render gap): effective bond
+    // accounting for the infill structure; disclosure tag verbatim
+    var wi = pc.weld_infill_aware;
+    if (pc.run && wi && typeof wi === "object") {
+      pciBox.appendChild(el("div", "hint",
+        "有效键合(含填充): a_eff " + num(wi.a_eff, 4) +
+        "，键合质量 " + num(wi.bond_quality_eff, 4) +
+        (typeof wi.disclosure === "string" && wi.disclosure
+          ? "（" + wi.disclosure + "）" : "")));
+    }
+    var pcsWrap = $("phase-c-solver");
+    if (pcsWrap) pcsWrap.style.display = pciBox.childNodes.length ? "" : "none";
+  }
+  if (pcd) {
+    pcd.innerHTML = "";
+    if (pc.run) {
     if (pc.hill48_safety_factor != null) {
       pcd.appendChild(el("div", "hint",
-        "Hill48 SF: " + numEnv(pc.hill48_safety_factor, 1) +
-        (pc.max_hill48_yield_index != null
-          ? "（屈服指数 " + numEnv(pc.max_hill48_yield_index, 4) + "）" : "")));
+        "Hill48 SF: " + numEnv(pc.hill48_safety_factor, 1)));
     }
     if (pc.plastic_safety_factor != null) {
       pcd.appendChild(el("div", "hint",
@@ -329,20 +389,10 @@ function renderReport(d, consoleText) {
       else if (pc.is_degraded === false) parts.push("未降级");
       pcd.appendChild(el("div", "hint", "服役老化: " + parts.join("，")));
     }
-    if (pc.abs_wlf_shift_factor != null) {
-      pcd.appendChild(el("div", "hint",
-        "ABS WLF: 移位因子 " + numEnv(pc.abs_wlf_shift_factor, 4) +
-        "，折算时间 " + numEnv(pc.abs_wlf_reduced_time_s, 1) + " s" +
-        (pc.abs_viscoelastic_creep_risk != null
-          ? "，蠕变风险 " + numEnv(pc.abs_viscoelastic_creep_risk, 4) : "")));
-    }
-    if (pc.crystallinity_modulus_factor != null) {
-      pcd.appendChild(el("div", "hint",
-        "退火结晶模量因子: " + numEnv(pc.crystallinity_modulus_factor, 4)));
-    }
     // thermal-speed closed loop (v0.8.1 render gap): bed/substrate heat-up
     // vs the material's cap; overheated → the engine's own suggested speed +
     // layer time, rationale verbatim. Fields all engine-authored.
+    // (v0.9: stays in the MAIN flow — it carries an actionable suggestion.)
     var ts = pc.thermal_speed;
     if (ts && typeof ts === "object" && ts.assessable === true) {
       pcd.appendChild(el("div", "hint",
@@ -356,15 +406,8 @@ function renderReport(d, consoleText) {
         (typeof ts.rationale === "string" && ts.rationale
           ? "；" + ts.rationale : "")));
     }
-    // infill-aware weld bond quality (v0.8.1 render gap): effective bond
-    // accounting for the infill structure; disclosure tag verbatim
-    var wi = pc.weld_infill_aware;
-    if (wi && typeof wi === "object") {
-      pcd.appendChild(el("div", "hint",
-        "有效键合(含填充): a_eff " + num(wi.a_eff, 4) +
-        "，键合质量 " + num(wi.bond_quality_eff, 4) +
-        (typeof wi.disclosure === "string" && wi.disclosure
-          ? "（" + wi.disclosure + "）" : "")));
+    // (v0.9: ABS WLF / crystallinity / weld-infill-aware moved above into
+    // #phase-c-internals — model-internal numbers, not conclusions.)
     }
   }
 
@@ -784,18 +827,57 @@ function renderReport(d, consoleText) {
     riskBox.appendChild(item);
   });
 
-  // recommendations
+  // recommendations. v0.9: the server pairs each engine item with an
+  // "applyable" projection (same order, one entry per item) — applicable
+  // items get a checkbox and a single "apply checked" CTA above the list.
+  // The identity-key whitelist and unit/range/step decisions live entirely
+  // server-side (PARAM_META is the one owner of the control semantics); the
+  // client holds no engine-name knowledge. No applyable data (older caller /
+  // direct fixture render) → plain text exactly as before.
   var recBox = $("rec-items");
   recBox.innerHTML = "";
   var items = rec.items || [];
   if (!items.length) { recBox.appendChild(el("p", "muted", "无参数建议。")); }
-  items.forEach(function (it) {
+  var applyCta = null, nApplicable = 0;
+  if (items.length && Array.isArray(applyable)) {
+    applyCta = el("button", "rec-apply");
+    applyCta.style.display = "none";
+    applyCta.title = "按勾选项写入参数滑杆并立即重新分析";
+    applyCta.onclick = function () {
+      // collect checked entries at click time (checkboxes and items share
+      // one lifecycle — every renderReport rebuilds both, so no stale sheet)
+      var picked = [];
+      var cbs = recBox.querySelectorAll("input[data-apply-idx]");
+      for (var i = 0; i < cbs.length; i++) {
+        if (cbs[i].checked && applyable[cbs[i].getAttribute("data-apply-idx")])
+          picked.push(applyable[cbs[i].getAttribute("data-apply-idx")]);
+      }
+      if (typeof applyCheckedSuggestions === "function")
+        applyCheckedSuggestions(picked);
+    };
+  }
+  items.forEach(function (it, idx) {
     var li = el("div", "risk-item");
     // priority badge (iter 69; unconsumed engine field): displayed, order
     // stays engine-authoritative — the UI never re-sorts recommendations.
     li.appendChild(el("strong", null,
       (typeof it.priority === "number" ? "[P" + it.priority + "] " : "")
       + "[" + it.action + "] " + it.parameter));
+    var ap = Array.isArray(applyable) ? applyable[idx] : null;
+    if (ap && ap.applicable) {
+      nApplicable++;
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      cb.setAttribute("data-apply-idx", idx);
+      cb.className = "rec-apply-cb";
+      cb.title = "勾选后随上方按钮一并应用（当前 "
+        + ap.current_value + " → 建议 " + ap.recommended_value + "）";
+      li.appendChild(cb);
+    } else if (ap && ap.reason) {
+      var nr = el("span", "hint", "（不可一键应用: " + ap.reason + "）");
+      li.appendChild(nr);
+    }
     li.appendChild(document.createTextNode(" — " + (it.reason || "")));
     if (it.recommended_value !== null && it.recommended_value !== undefined) {
       li.appendChild(el("div", "hint",
@@ -818,6 +900,11 @@ function renderReport(d, consoleText) {
     }
     recBox.appendChild(li);
   });
+  if (applyCta && nApplicable > 0) {
+    applyCta.textContent = "应用勾选建议 (" + nApplicable + ")";
+    applyCta.style.display = "";
+    recBox.insertBefore(applyCta, recBox.firstChild);
+  }
 
   // engine recommendation line (verbatim from CLI stdout — no JS logic)
   var er = $("engine-recommendation");

@@ -359,6 +359,96 @@ def main():
               and srv.PRESETS[0]["params"]["walls"] == 5,  # input table untouched
               "safe61=%r live=%r" % (safe61, live61[0]["params"]))
 
+        # T84 — v0.9 applyable_suggestions pure-function hostile matrix.
+        # Small/unit-tier (no I/O): the builder must never raise on surprise
+        # shapes, keep report order (engine priority order), apply only the
+        # evidence-backed identity whitelist, snap to the slider step (the
+        # range input would snap the same way client-side), and answer every
+        # rejection with a reason.
+        def mk_item(param, action="decrease", cur=None, rec=None, **kw):
+            d = {"parameter": param, "action": action,
+                 "reason": "r", "priority": 2}
+            if cur is not None: d["current_value"] = cur
+            if rec is not None: d["recommended_value"] = rec
+            d.update(kw)
+            return d
+        cases = [
+            # (label, report, predicate(results))
+            ("non-dict report", None,
+             lambda r: r == []),
+            ("missing recommendations", {},
+             lambda r: r == []),
+            ("items not a list", {"recommendations": {"items": "x"}},
+             lambda r: r == []),
+            ("non-dict item tolerated",
+             {"recommendations": {"items": ["junk"]}},
+             lambda r: r[0]["applicable"] is False and r[0]["reason"]),
+            ("identity key applicable",
+             {"recommendations": {"items": [mk_item("cooling_fan", cur=100, rec=60)]}},
+             lambda r: r[0]["applicable"] is True and r[0]["ui_key"] == "cooling_fan"
+                       and r[0]["recommended_value"] == 60),
+            ("step pre-snap 63→65 (slider step 5)",
+             {"recommendations": {"items": [mk_item("cooling_fan", cur=100, rec=63)]}},
+             lambda r: r[0]["applicable"] is True and r[0]["recommended_value"] == 65),
+            ("out of range → reasoned refusal",
+             {"recommendations": {"items": [mk_item("print_speed", cur=50, rec=5000)]}},
+             lambda r: r[0]["applicable"] is False and "超出滑杆域" in r[0]["reason"]),
+            ("renamed key NOT whitelisted (wall_count)",
+             {"recommendations": {"items": [mk_item("wall_count", cur=2, rec=5)]}},
+             lambda r: r[0]["applicable"] is False and "白名单" in r[0]["reason"]),
+            ("select key NOT whitelisted (infill_pattern)",
+             {"recommendations": {"items": [mk_item("infill_pattern", rec="line")]}},
+             lambda r: r[0]["applicable"] is False),
+            ("action not set-value shaped",
+             {"recommendations": {"items": [mk_item("cooling_fan", action="check", rec=60)]}},
+             lambda r: r[0]["applicable"] is False and "非设值型" in r[0]["reason"]),
+            ("missing recommended_value",
+             {"recommendations": {"items": [mk_item("cooling_fan", cur=100)]}},
+             lambda r: r[0]["applicable"] is False and "缺失" in r[0]["reason"]),
+            ("no-op (rec == current)",
+             {"recommendations": {"items": [mk_item("cooling_fan", cur=60, rec=60)]}},
+             lambda r: r[0]["applicable"] is False and "已等于当前值" in r[0]["reason"]),
+            ("duplicate key keeps FIRST applicable",
+             {"recommendations": {"items": [mk_item("cooling_fan", cur=100, rec=60),
+                                            mk_item("cooling_fan", cur=100, rec=80)]}},
+             lambda r: r[0]["applicable"] is True and r[0]["recommended_value"] == 60
+                       and r[1]["applicable"] is False and "同参数" in r[1]["reason"]),
+            ("order preserved for pairing (applyable[i] ↔ items[i])",
+             {"recommendations": {"items": [mk_item("print_speed", cur=60, rec=36),
+                                            mk_item("nozzle_diameter", cur=0.4, rec=0.2),
+                                            mk_item("cooling_fan", cur=100, rec=60)]}},
+             lambda r: [e["ui_key"] for e in r] ==
+                       ["print_speed", "nozzle_diameter", "cooling_fan"]),
+        ]
+        ok84 = True
+        for label, rep84, pred in cases:
+            try:
+                res = srv.applyable_suggestions(rep84)
+                if not pred(res):
+                    ok84 = False
+                    print("    T84 sub-case failed: %s → %r" % (label, res))
+            except Exception as exc:  # never-raise contract
+                ok84 = False
+                print("    T84 sub-case RAISED (%s): %r" % (label, exc))
+        check("T84 applyable builder hostile matrix + never-raise", ok84)
+
+        # T85 — v0.9 round-trip on the real engine response (an60 above):
+        # `applyable` rides TOP-LEVEL next to report/console/heatmap, and the
+        # report tree stays engine-verbatim (last_report is stored by
+        # reference — a merged key would leak into the /api/report download).
+        rep85 = an60.get("report") or {}
+        ap85 = an60.get("applyable")
+        items85 = (rep85.get("recommendations") or {}).get("items") or []
+        ok85 = (st60 == 200 and isinstance(ap85, list)
+                and len(ap85) == len(items85)
+                and all(set(("parameter", "action", "current_value",
+                             "recommended_value", "priority", "applicable",
+                             "reason", "ui_key")) <= set(e) for e in ap85)
+                and "applyable" not in rep85)
+        check("T85 applyable top-level sibling, report unpolluted, pairing",
+              ok85, "n_items=%s n_applyable=%s" % (len(items85),
+                                                   len(ap85) if isinstance(ap85, list) else ap85))
+
         # T14/T15 — REGRESSION (iter 6): invalid startup env must fail fast
         # with a friendly message, never an import traceback. (Pre-fix PORT
         # crashed with a traceback; GRID started "fine" and 502'd per run.)

@@ -107,6 +107,16 @@
   }
   .preset-btn:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
   .preset-btn:disabled { opacity: .45; cursor: not-allowed; }
+  /* v0.9 apply-suggestions CTA: compact accent button heading #rec-items */
+  .rec-apply {
+    padding: 7px 12px; font-size: 13px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border: none; border-radius: 8px; cursor: pointer; margin-bottom: 6px;
+    transition: filter .15s, transform .15s;
+  }
+  .rec-apply:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+  .rec-apply:disabled { opacity: .45; cursor: not-allowed; }
+  .rec-apply-cb { accent-color: var(--accent); margin-left: 6px; vertical-align: middle; }
   /* real-time analyze toggle: lit while on */
   #auto-toggle.on { border-color: var(--accent); color: #fff;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -529,8 +539,17 @@
           <span class="k">Weibull 等级</span><span class="v" id="res-weibull">—</span>
         </div>
         <div class="kv" id="printability-line" style="display:none; margin-bottom:8px"></div>
+        <div id="phase-b-assessment" class="rec-line" style="display:none"></div>
         <div id="phase-b-detail"></div>
+        <details id="phase-b-solver" class="advanced-only" style="display:none; margin-top:6px">
+          <summary class="hint" style="cursor:pointer">求解器与网格详情 <span class="tag">CG 收敛 / 网格 / 离散误差 / 预条件子</span></summary>
+          <div id="phase-b-internals" style="margin-top:6px"></div>
+        </details>
         <div id="phase-c-detail"></div>
+        <details id="phase-c-solver" class="advanced-only" style="display:none; margin-top:6px">
+          <summary class="hint" style="cursor:pointer">本构与材料模型细节 <span class="tag">屈服指数 / WLF / 结晶度 / 键合</span></summary>
+          <div id="phase-c-internals" style="margin-top:6px"></div>
+        </details>
         <div id="phase-d-detail"></div>
         <details id="appearance-box" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">外观评估 <span class="tag">--appearance · 引擎 JSON</span></summary>
@@ -652,7 +671,9 @@
 // 3MF's own slicer config — leftover slider positions never override them.
 var state = { token: null, name: null, is3mf: false, params: [], materials: [],
               loads: [], dirty: {}, lastEnv: {}, baseline: {},
-              baseProfile: null };
+              baseProfile: null,
+              lastApplied: null };  // v0.9: {ui_key: writtenValue} — reconciled
+                                    // against the engine echo post-analyze
 
 // env panel: serverName is the analyze body key; kind select/num; convert
 // maps slider value → body value (pure unit/exponent math, engine stays the
@@ -1020,6 +1041,10 @@ function setPresetEnabled(on) {
 function applyPreset(p) {
   if (!state.token) { toast("请先上传模型", "err"); return; }
   if (state.running) { toast("上一次分析尚未结束，请稍候", "info"); return; }
+  // v0.9 pre-fix (sibling of applyCheckedSuggestions): analyze() itself has
+  // no batch gate (only scheduleAuto does), so a click mid-batch would run
+  // the engine concurrently with /api/batch on the same token.
+  if (state.batchRunning) { toast("批量运行进行中，请稍候", "info"); return; }
   Object.keys(p.params || {}).forEach(function (name) {
     var input = findRowInput(name);
     if (!input) return;  // param not rendered (defensive; presets are sanitized)
@@ -1044,6 +1069,67 @@ function applyPreset(p) {
   });
   toast("已应用预设「" + (p.label || p.name) + "」", "info");
   analyze(false);
+}
+
+// ---------- v0.9 apply-suggestions (server-derived `applyable`) ----------
+// The identity-key whitelist, unit/range/step decisions and the priority
+// (first-wins) dedupe ALL live server-side (applyable_suggestions in
+// server.py) — this function is pure UI orchestration: write sliders, mark
+// dirty, re-analyze. Flow mirrors applyPreset above (dirty WITHOUT
+// scheduleAuto — the immediate analyze below subsumes any pending debounce).
+function setRecApplyEnabled(on) {
+  var cta = document.querySelector("#rec-items button.rec-apply");
+  if (cta) cta.disabled = !on;
+}
+function applyCheckedSuggestions(entries) {
+  if (!state.token) { toast("请先上传模型", "err"); return; }
+  if (state.running) { toast("上一次分析尚未结束，请稍候", "info"); return; }
+  if (state.batchRunning) { toast("批量运行进行中，请稍候", "info"); return; }
+  var applied = [], lastApplied = {};
+  (entries || []).forEach(function (e) {
+    if (!e || !e.applicable || !e.ui_key) return;
+    var meta = null;
+    for (var i = 0; i < state.params.length; i++)
+      if (state.params[i].name === e.ui_key) { meta = state.params[i]; break; }
+    if (!meta) return;  // param row gone (defensive; server pre-checked)
+    var v = e.recommended_value;
+    // controls are the final truth (REFUTE-S): re-check against the live
+    // meta before writing — the server snap is a mirror of these semantics
+    if (meta.min !== undefined && (v < meta.min || v > meta.max)) return;
+    var input = findRowInput(e.ui_key);
+    if (!input) return;
+    var valEl = document.querySelector(
+      '.param-row input[data-param="' + e.ui_key + '"] ~ .val');
+    input.value = v;
+    if (valEl) valEl.textContent = fmtRange(meta, parseFloat(v));
+    state.dirty[e.ui_key] = true;
+    updateRowState(e.ui_key);
+    applied.push(meta.label + " " + e.current_value + "→" + v);
+    lastApplied[e.ui_key] = v;
+  });
+  if (!applied.length) { toast("没有可应用的建议", "info"); return; }
+  state.lastApplied = lastApplied;
+  toast("已应用建议：" + applied.join("，") + "，正在重新分析", "info");
+  analyze(false);
+}
+// engine echo keys for the v1 identity whitelist — mirrors the literal
+// setParamValue mapping in report.js (input.<key> ← report echo). Rendering
+// plumbing, not engine rules. Extended together with the server whitelist.
+var APPLY_ECHO_KEYS = { cooling_fan: "cooling_fan_pct",
+                        print_speed: "print_speed_mms",
+                        nozzle_diameter: "nozzle_mm" };
+function reconcileApplied(inp) {
+  var last = state.lastApplied;
+  state.lastApplied = null;
+  if (!last || !inp) return;
+  var diffs = [];
+  Object.keys(last).forEach(function (key) {
+    var echoKey = APPLY_ECHO_KEYS[key];
+    var echo = echoKey ? inp[echoKey] : undefined;
+    if (typeof echo === "number" && Math.abs(echo - last[key]) > 1e-9)
+      diffs.push(key + " 已按引擎域调整为 " + echo);
+  });
+  if (diffs.length) toast("注意：" + diffs.join("，"), "info");
 }
 
 // core lockables without a slider row (layer_height, retraction, ...):
@@ -1483,6 +1569,7 @@ function analyze(compare, auto) {
   $("btn-analyze").disabled = true;
   $("btn-compare").disabled = true;
   setPresetEnabled(false);
+  setRecApplyEnabled(false);
   var btn = compare ? $("btn-compare") : $("btn-analyze");
   var prev = btn.textContent;
   // cancel: kill the engine server-side AND abort the local fetch
@@ -1532,7 +1619,8 @@ function analyze(compare, auto) {
       if (j.status === "validation_refused") renderValidationRefused(j);
       throw new Error(j.error || "分析失败");
     }
-    renderReport(j.report, j.console || "");
+    renderReport(j.report, j.console || "", j.applyable || null);
+    reconcileApplied((j.report || {}).input);
     applyHeatmap(j.heatmap || null);
     refreshHistory();
     // auto runs stay quiet — a toast after every slider release would be noise;
@@ -1551,6 +1639,7 @@ function analyze(compare, auto) {
     $("btn-analyze").disabled = true;
     $("btn-compare").disabled = true;
     setPresetEnabled(false);
+    setRecApplyEnabled(false);
     $("btn-export").disabled = true;
     $("btn-export-orca").disabled = true;
       $("btn-preview").disabled = true;
@@ -1571,6 +1660,7 @@ function analyze(compare, auto) {
     $("btn-analyze").disabled = !state.token;
     $("btn-compare").disabled = !state.token;
     setPresetEnabled(!!state.token);
+    setRecApplyEnabled(true);  // CTA is rebuilt each render; click guards cover no-token
     state.running = false;
     // an auto run arrived mid-flight with newer params — run once more now
     if (state.autoQueued) { state.autoQueued = false; scheduleAuto(); }
