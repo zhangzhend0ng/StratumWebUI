@@ -69,10 +69,21 @@ def _validated_int(raw, lo, hi):
 # this, two installs of different vintages were indistinguishable (D1
 # groundwork, iter 65). Bump on user-visible change; the engine version is
 # reported separately (it moves independently).
+# 0.8.1 — engine 0.24 full-surface pass: render-gap batch (fast_mode/
+#         filament_slots/input_overrides/printability/thermal_speed/weld/
+#         ZZ-SPR/Tsai-Wu/mesh_quality/precond/skipped_reasons/fatigue-life/
+#         Weibull numbers/rec confidence/candidate provenance), appearance/
+#         rheology/est-error/resolution-check phases, voxel-vote+precond,
+#         retraction/travel/wipe send-value rows, prony + heatmap-bins +
+#         per-run grid, cal-time/mass estimator calibration, --base-profile,
+#         supports/stress-modifier artifact downloads, --apply-orca mode.
+# 0.8.0 — Stratum 0.24.0 integration: schema v3 gate, --schema-driven param
+#         surface, layer_height/z_ratio/fill_angle sliders, machine/validate/
+#         repair/fast flags, heatmap viewer, real progress (ROADMAP v0.8).
 # 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.7.0"
+UI_VERSION = "0.8.1"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -105,12 +116,14 @@ MAX_QUEUE = _validated_int(MAX_QUEUE_RAW, 0, 64)
 # the A/B diff permanently unusable (it needs two entries).
 MAX_HISTORY_RAW = os.environ.get("STRATUM_UI_MAX_HISTORY", "10")
 MAX_HISTORY = _validated_int(MAX_HISTORY_RAW, 2, 100)
-# Schema gate: the engine report carries schema_version (0.21.0 emits int 2).
-# Exact numeric match against SUPPORTED_SCHEMA, per request — a future schema
-# 3 that renames fields must fail loud here, not misrender silently
-# (ROADMAP v0.4c). Missing/None/unparseable → reject (fail-loud default);
-# escape valve for hypothetical pre-schema engines mirrors PHASE_D.
-SUPPORTED_SCHEMA = (2,)
+# Schema gate: the engine report carries schema_version (0.21.0 emits int 2;
+# 0.22.0+ emits int 3 — v3 moved the five uncertainty fields to scalar +
+# *_envelope twins, docs/schema/report-v3.md; report.js numEnv handles both
+# shapes). Exact numeric match against SUPPORTED_SCHEMA, per request — a
+# future schema that renames fields must fail loud here, not misrender
+# silently (ROADMAP v0.4c). Missing/None/unparseable → reject (fail-loud
+# default); escape valve for hypothetical pre-schema engines mirrors PHASE_D.
+SUPPORTED_SCHEMA = (2, 3)
 ALLOW_ANY_SCHEMA = os.environ.get("STRATUM_UI_ALLOW_ANY_SCHEMA", "0") == "1"
 
 
@@ -122,6 +135,66 @@ def schema_supported(report):
         return False
     # exact numeric equality — no int() truncation (2.9 must NOT pass as 2)
     return v in SUPPORTED_SCHEMA
+
+
+# Status markers (engine 0.22+): when cancellation is honored at a stage
+# boundary the engine writes {"status":"cancelled", ...} into the --json file
+# and exits 130; when --validate strict/paranoid refuses the input topology it
+# writes {"status":"validation_refused", "validation":{tier,findings}, ...}
+# and exits 1 (findings entries: {code, fatal, count, hint}). Both carry
+# schema_version, so the schema gate alone cannot catch them — `status` is
+# the discriminator and must be checked BEFORE any rendering.
+REPORT_MARKER_STATUSES = ("validation_refused", "cancelled")
+
+
+def load_report_marker(path):
+    """Return the parsed marker dict when `path` holds a status-marker JSON
+    rather than a normal report; None when missing/unparseable/normal. Never
+    raises — callers fall through to the generic rc!=0 error path."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    status = data.get("status")
+    if isinstance(status, str) and status in REPORT_MARKER_STATUSES:
+        return data
+    return None
+
+
+def refusal_text(marker):
+    """User-facing one-liner for a validation_refused marker (shared by the
+    single-analyze and per-batch-combo paths)."""
+    validation = marker.get("validation")
+    tier = validation.get("tier") if isinstance(validation, dict) else None
+    if isinstance(tier, str):
+        return ("输入拓扑校验拒绝（--validate %s）——"
+                "改用 standard 档可继续分析（仅披露、不拒绝）" % tier)
+    return "输入拓扑校验拒绝——改用 standard 档可继续分析（仅披露、不拒绝）"
+
+
+def send_marker_response(handler, marker):
+    """Translate an engine status marker into its HTTP response at the trust
+    boundary: cancelled → 502 (same message as the local cancel path),
+    validation_refused → 422 with the structured validation findings the UI
+    renders inline. Unknown statuses fail loud with the raw marker."""
+    status = marker.get("status")
+    if status == "cancelled":
+        _send_json(handler, 502, {"ok": False, "error": "已取消"})
+        return
+    if status == "validation_refused":
+        validation = marker.get("validation")
+        topo = marker.get("mesh_topology")
+        _send_json(handler, 422, {
+            "ok": False, "error": refusal_text(marker),
+            "status": "validation_refused",
+            "validation": validation if isinstance(validation, dict) else {},
+            "mesh_topology": topo if isinstance(topo, dict) else {}})
+        return
+    _send_json(handler, 502, {"ok": False,
+                              "error": "引擎返回未知状态标记: %r" % status})
 
 # Frozen layout (PyInstaller onedir): resources live in _internal/ next to the
 # exe; the app dir (for bin/stratum.exe) is the exe's own directory.
@@ -294,9 +367,22 @@ def resolve_binary():
 BINARY = resolve_binary()
 
 
+# --schema probe cache (engine 0.22+): `stratum --schema` prints machine-
+# readable flag domains as JSON, rc=0 — value ranges, enum values, lockable
+# parameters and the engine's own version string. The version field beats the
+# SDK VERSION.txt, which describes the bundle the binary SHIPPED in and can
+# lag a synced binary (repo carried 0.21.0 text next to a 0.24.0 exe — the
+# 2026-08-28 drift this fixes). Filled by _probe_surface (import time and
+# /api/set-binary re-probe).
+_SCHEMA_CACHE = {"binary": None, "doc": None, "version": None}
+
+
 def engine_version(binary):
-    """Read the SDK VERSION.txt that ships next to the binary (bundle root
-    is one level above bin/). Fall back to 'unknown' without failing."""
+    """Engine version string. Preferred source: the --schema probe's own
+    `version` field (exact, matches the running binary). Falls back to the
+    SDK VERSION.txt regex, then 'unknown' — never fails."""
+    if binary and _SCHEMA_CACHE["binary"] == binary and _SCHEMA_CACHE["version"]:
+        return _SCHEMA_CACHE["version"]
     if not binary:
         return "unknown"
     candidates = [
@@ -395,35 +481,99 @@ def run_analyze_cancelable(args, token):
                 _batch_cancel.discard(token)
                 return CANCELLED_RC, b"", b"cancelled"
         if _ANALYZE_DELAY:
-            argv = [sys.executable, "-c", "import time; time.sleep(%d)" % _ANALYZE_DELAY]
+            # deterministic slow runner (cancel/progress E2E): also emits one
+            # --progress-json NDJSON line so GET /api/progress can be polled
+            # mid-run without a real long-running engine solve
+            argv = [sys.executable, "-c",
+                    "import sys, time; "
+                    "sys.stderr.write('{\"type\": \"progress\", \"stage\": \"fem\", \"pct\": 42}\\n'); "
+                    "sys.stderr.flush(); time.sleep(%d)" % _ANALYZE_DELAY]
         else:
             argv = [BINARY] + args
         return _run_proc_with_inflight(argv, token, gen)
     # unreachable
 
 
+# per-token last engine progress (--progress-json NDJSON, engine 0.22+).
+# Written by the stderr pump thread, read by GET /api/progress; entries are
+# removed when the run leaves the inflight table (no stale percentages).
+_progress = {}
+
+
+def _parse_progress_line(raw):
+    """Parse one --progress-json NDJSON line into {"stage","pct"}; None for
+    anything else (non-JSON, other event types, malformed fields). The
+    engine is our own subprocess but the line is still shape-checked before
+    it reaches the API surface."""
+    try:
+        obj = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or obj.get("type") != "progress":
+        return None
+    stage, pct = obj.get("stage"), obj.get("pct")
+    if (not isinstance(stage, str) or isinstance(pct, bool)
+            or not isinstance(pct, (int, float))):
+        return None
+    return {"stage": stage, "pct": int(pct)}
+
+
 def _run_proc_with_inflight(argv, token, gen):
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     with _inflight_lock:
         _inflight[token] = {"proc": proc, "gen": gen}
+    err_chunks = []
+    timed_out = []
+
+    def _pump_stderr():
+        # --progress-json emits per-line-flushed NDJSON on stderr; pumping
+        # (instead of the old communicate()) is what makes the progress
+        # channel exist at all. Full stderr is still reassembled for the
+        # caller (error texts, engine console).
+        try:
+            for raw in iter(proc.stderr.readline, b""):
+                err_chunks.append(raw)
+                m = _parse_progress_line(raw)
+                if m is not None:
+                    with _inflight_lock:
+                        # only the CURRENT generation may write this token's
+                        # progress (a stale pump from a previous killed run
+                        # must not overwrite the next run's percentage)
+                        if _inflight.get(token, {}).get("gen") == gen:
+                            _progress[token] = m
+        except (OSError, ValueError):
+            pass  # pipe closed on kill — remaining stderr is best-effort
+
+    pump = threading.Thread(target=_pump_stderr, daemon=True)
+    pump.start()
+
+    def _on_timeout():
+        timed_out.append(True)
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    timer = threading.Timer(180, _on_timeout)
+    timer.start()
     was_cancelled = False
     try:
-        out, err = proc.communicate(timeout=180)
-        rc = proc.returncode
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        out, err = proc.communicate()
-        return 124, b"", b"stratum.exe timed out"
+        out = proc.stdout.read()  # until EOF (kill/exit both end it)
+        rc = proc.wait()
     finally:
+        timer.cancel()
+        pump.join(timeout=5)
         with _inflight_lock:
             was_cancelled = gen in _cancelled_gens  # read BEFORE discard
             cur = _inflight.get(token)
             if cur and cur["gen"] == gen:
                 del _inflight[token]
+            _progress.pop(token, None)
             _cancelled_gens.discard(gen)
     if was_cancelled:
         return CANCELLED_RC, b"", b"cancelled"
-    return rc, out, err
+    if timed_out:
+        return 124, out, b"".join(err_chunks)
+    return rc, out, b"".join(err_chunks)
 
 
 # per-token "a cancel was requested" sticky flag — a cancel arriving in the
@@ -452,8 +602,17 @@ def cancel_analyze(token):
 # bonus flags: stripped+retried once on old engines that reject them (their
 # error text is "unrecognized argument: <flag>", so the match is on the FULL
 # flag string — a bare "orca"/"orient" substring would false-positive on the
-# engine's own "orientation" output)
-_FALLBACK_FLAGS = ("--orca-suggest", "--optimize-orient", "--explain")
+# engine's own "orientation" output). --progress-json/--heatmap-json are v0.8
+# bonus channels (0.22+): losing them on an old engine degrades gracefully.
+# --appearance/--rheology join in v0.8.1 (0.24-era diagnostics phases), and
+# the two solver diagnostics likewise; --voxel-vote is an env-path bool but
+# belongs to the same degrade-don't-fail family. --precond is deliberately
+# NOT in this list: it is an explicit user choice, and an engine too old to
+# know it should fail loud rather than silently run the default.
+_FALLBACK_FLAGS = ("--orca-suggest", "--optimize-orient", "--explain",
+                   "--progress-json", "--heatmap-json", "--appearance",
+                   "--rheology", "--est-error-profile", "--resolution-check",
+                   "--voxel-vote", "--heatmap-bins")
 
 
 def run_analyze_with_fallback(args, run=None):
@@ -495,11 +654,25 @@ PARAM_FLAGS = {
     "bed_temperature": ("--bed-temp", "float"),
     "print_speed": ("--speed", "float"),
     "cooling_fan": ("--cooling", "float"),
+    # v0.8 (engine 0.22+ surface): layer height gained a real CLI flag (the
+    # value also PINS the dimension engine-side, same semantics as
+    # --lock layer_height); z-ratio and CLT fill-angle are verdict-affecting
+    # physics knobs with input echoes (z_strength_ratio /
+    # requested+applied_fill_angle_deg).
+    "layer_height": ("--layer-height", "float"),
+    "z_ratio": ("--z-ratio", "float"),
+    "fill_angle": ("--fill-angle", "float"),
 }
 
 FALLBACK_PATTERNS = ["line", "gyroid", "cubic", "triangles", "honeycomb", "grid", "rectilinear"]
 FALLBACK_MATERIALS = ["PLA", "PETG", "ABS", "CUSTOM"]
 FALLBACK_LOADS = ["compression", "bending", "torsion", "cantilever"]
+# v0.8 select surfaces (engine --schema enum_flags; fallbacks mirror 0.24.0)
+FALLBACK_AXES = ["x", "y", "z"]
+FALLBACK_MACHINES = ["A250", "A350", "Artisan", "J1", "U1", "A1", "A1mini",
+                     "P1P", "P1S", "X1", "X1C"]
+FALLBACK_VALIDATE_TIERS = ["minimal", "standard", "strict", "paranoid"]
+FALLBACK_PRECOND = ["ic0", "jacobi"]
 PATTERN_DEFAULT = "gyroid"
 MATERIAL_DEFAULT = "PLA"
 LOAD_DEFAULT = "compression"
@@ -545,22 +718,88 @@ def parse_usage_locks(text):
 
 
 # Extra lock surface (core lockables that have NO param slider row in this
-# UI). Static fallback mirrors the 0.21.0 usage; the live list comes from the
-# usage probe. "load" is excluded here — it has its own select in the env
-# panel, which now carries its own lock checkbox.
-FALLBACK_EXTRA_LOCKS = ["layer_height", "outer_wall_speed", "extrusion_stability",
+# UI). Static fallback mirrors the 0.21.0 usage minus what became a slider in
+# v0.8 (layer_height). The live list comes from the --schema lockable table
+# (or the usage probe on old engines) minus PARAM_FLAGS; it includes the
+# engine's full Orca-key lock surface (brim_width, support_angle, ...).
+# "load" is excluded — it has its own select in the env panel with a lock
+# checkbox.
+FALLBACK_EXTRA_LOCKS = ["outer_wall_speed", "extrusion_stability",
                         "retraction_length", "retraction_speed", "wipe",
                         "travel_speed"]
+
+
+def probe_schema(binary, timeout=5):
+    """Run `stratum --schema` and return (doc, version). (None, None) when
+    the binary is missing, the flag is unsupported (pre-0.22 engine), or the
+    output is not the expected JSON shape — callers fall back to the usage
+    probe. Semi-trusted input (our own binary's stdout): shape-checked before
+    any use, never exec'd."""
+    if not binary:
+        return None, None
+    try:
+        rc, out, _err = run_stratum(["--schema"], timeout=timeout)
+        if rc != 0:
+            return None, None
+        doc = json.loads(out.decode("utf-8", "replace"))
+    except Exception:
+        return None, None
+    if not isinstance(doc, dict) or not isinstance(doc.get("value_flags"), list):
+        return None, None
+    ver = doc.get("version")
+    return doc, (ver if isinstance(ver, str) else None)
+
+
+def _enum_from_schema(doc, flag, fallback, default):
+    """Pull one enum list from --schema enum_flags with the same guards as
+    the usage probe: well-typed strings, must contain the UI default and
+    overlap the fallback by >=2 (a renamed/truncated enum degrades to the
+    fallback instead of serving garbage). Returns (values|None, source)."""
+    for e in doc.get("enum_flags") or []:
+        if isinstance(e, dict) and e.get("name") == flag:
+            values = e.get("values")
+            if (isinstance(values, list) and len(values) >= 3
+                    and all(isinstance(v, str) for v in values)
+                    and default in values
+                    and len(set(values) & set(fallback)) >= 2):
+                return values, "engine-schema"
+            return None, "fallback"
+    return None, "fallback"
 
 
 def _probe_surface():
     """One-shot subprocess probe at import. Never raises: a broken binary
     (unexecutable, AV quarantine, ...) must degrade to the fallback lists,
-    not kill the server at startup."""
+    not kill the server at startup. Preferred source: `--schema` JSON
+    (0.22+; exact lists, no text parsing). Legacy fallback: no-arg usage
+    text regex (pre-0.22 engines)."""
     if BINARY is None:
         return (FALLBACK_PATTERNS, FALLBACK_MATERIALS, FALLBACK_LOADS,
                 "fallback", "fallback", "fallback", [],
                 FALLBACK_EXTRA_LOCKS, "fallback")
+    global _SCHEMA_CACHE
+    doc, ver = probe_schema(BINARY)
+    _SCHEMA_CACHE = {"binary": BINARY if doc is not None else None,
+                     "doc": doc, "version": ver}
+    if doc is not None:
+        patterns, psrc = _enum_from_schema(doc, "--pattern",
+                                           FALLBACK_PATTERNS, PATTERN_DEFAULT)
+        materials, msrc = _enum_from_schema(doc, "--material",
+                                            FALLBACK_MATERIALS, MATERIAL_DEFAULT)
+        loads, lsrc = _enum_from_schema(doc, "--load",
+                                        FALLBACK_LOADS, LOAD_DEFAULT)
+        if patterns and materials and loads:
+            locks = doc.get("lockable_parameters")
+            extra = None
+            if (isinstance(locks, list) and len(locks) >= 5
+                    and all(isinstance(n, str) for n in locks)):
+                param_names = set(PARAM_FLAGS) | {"load"}
+                extra = [n for n in locks if n not in param_names]
+            return (patterns, materials, loads, psrc, msrc, lsrc,
+                    [],  # structured JSON: no charset-filtered tokens
+                    extra if extra is not None else FALLBACK_EXTRA_LOCKS,
+                    "engine-schema" if extra is not None else "fallback")
+        # partial schema parse: degrade to the usage probe below
     try:
         rc, out, err = run_stratum([], timeout=5)
         text = err.decode("utf-8", "replace") + out.decode("utf-8", "replace")
@@ -627,40 +866,115 @@ PARAM_META = [
     {"name": "cooling_fan", "label": "冷却风扇", "kind": "float",
      "min": 0, "max": 100, "step": 5, "unit": "%", "hint": "0-100 %",
      "default": 100},
+    # v0.8 rows (engine 0.22+): domains from --schema value_flags via
+    # _apply_schema_domains below; the values here mirror 0.24.0 exactly and
+    # stay as the offline fallback.
+    {"name": "layer_height", "label": "层高", "kind": "float",
+     "min": 0.01, "max": 5.0, "step": 0.02, "unit": "mm",
+     "hint": "0.01-5.0 mm；设值即钉住该维（搜索/写回不漂移）", "default": 0.2},
+    {"name": "z_ratio", "label": "层间强度比 Z/XY", "kind": "float",
+     "min": 0.1, "max": 2.0, "step": 0.01, "unit": "",
+     "hint": "0.1-2.0；不设=随材料（PLA 0.46 / PETG 0.55 / ABS 0.50）",
+     "default": 0.46},
+    {"name": "fill_angle", "label": "填充角（CLT）", "kind": "float",
+     "min": 0, "max": 360, "step": 5, "unit": "°",
+     "hint": "0-360 °；0=不旋转（回显 applied_fill_angle_deg）", "default": 0},
 ]
+
+# Select surfaces beyond pattern/material/load, resolved from the --schema
+# probe (exact) with hardcoded fallbacks. Recomputed by _set_binary after a
+# wizard re-probe.
+def _enum_values(doc, flag, fallback):
+    """Pull one enum list from a --schema doc; fallback when the doc is
+    missing or the entry is malformed (well-typed strings, >=2 values)."""
+    if doc:
+        for e in doc.get("enum_flags") or []:
+            if isinstance(e, dict) and e.get("name") == flag:
+                values = e.get("values")
+                if (isinstance(values, list) and len(values) >= 2
+                        and all(isinstance(v, str) for v in values)):
+                    return values
+    return fallback
+
+
+def _refresh_select_surfaces():
+    """Recompute the schema-derived select surfaces. Returns the new tuple —
+    callers rebind the module globals (import time and /api/set-binary)."""
+    doc = _SCHEMA_CACHE.get("doc")
+    return (_enum_values(doc, "--axis", FALLBACK_AXES),
+            _enum_values(doc, "--machine", FALLBACK_MACHINES),
+            _enum_values(doc, "--validate", FALLBACK_VALIDATE_TIERS),
+            _enum_values(doc, "--precond", FALLBACK_PRECOND))
+
+
+(AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES) = \
+    _refresh_select_surfaces()
+
+
+def _apply_schema_domains():
+    """Overlay exact numeric domains from the --schema probe onto the v0.8
+    param rows. The 9 legacy rows keep their authored domains (identical to
+    --schema as of 0.24.0, verified 2026-08-28) — overlaying them too would
+    need a drift channel for zero current benefit. Mutates PARAM_META rows in
+    place (they are dicts); safe to call again after a wizard re-probe."""
+    doc = _SCHEMA_CACHE.get("doc")
+    if not doc:
+        return
+    domains = {}
+    for f in doc.get("value_flags") or []:
+        if (isinstance(f, dict) and isinstance(f.get("name"), str)
+                and isinstance(f.get("min"), (int, float))
+                and isinstance(f.get("max"), (int, float))
+                and f["max"] > f["min"]):
+            domains[f["name"]] = f
+    overlay = {"layer_height": "--layer-height",
+               "z_ratio": "--z-ratio",
+               "fill_angle": "--fill-angle"}
+    for row in PARAM_META:
+        flag = overlay.get(row["name"])
+        d = domains.get(flag) if flag else None
+        if d:
+            row["min"], row["max"] = d["min"], d["max"]
+
+
+_apply_schema_domains()
 
 PROFILES = ["safe", "balanced", "fast", "appearance"]
 
 # One-click tuning presets — the simple-mode "0 参数" entry for new users.
-# Each preset sets all 9 PARAM_META params at once; values are server-authored
-# constants inside the PARAM_META ranges (product defaults, engine decides the
-# real outcome). Served via /api/params and applied client-side through the
-# ordinary analyze path (no dedicated endpoint).
+# Each preset sets the 9 core print params PLUS layer_height (which the
+# engine tiers themselves vary). z_ratio is deliberately NOT preset-authored:
+# it is material-relative (PLA 0.46 / PETG 0.55 / ABS 0.50) and pinning one
+# value would override the material default the preset's own material choice
+# implies. fill_angle likewise stays untouched (0 = no rotation). Values are
+# server-authored constants inside the PARAM_META ranges (product defaults,
+# engine decides the real outcome). Served via /api/params and applied
+# client-side through the ordinary analyze path (no dedicated endpoint).
 PRESETS = [
     {"name": "safe", "label": "安全",
      "desc": "厚壁高填充，强度优先",
      "params": {"walls": 5, "infill": 40, "pattern": "tri-hexagon",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 210, "bed_temperature": 65,
-                "print_speed": 30, "cooling_fan": 60}},
+                "print_speed": 30, "cooling_fan": 60, "layer_height": 0.16}},
     {"name": "balanced", "label": "均衡",
      "desc": "接近引擎默认，强度与速度兼顾",
      "params": {"walls": 3, "infill": 20, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 200, "bed_temperature": 60,
-                "print_speed": 50, "cooling_fan": 100}},
+                "print_speed": 50, "cooling_fan": 100, "layer_height": 0.2}},
     {"name": "fast", "label": "高速",
      "desc": "低填充高速度，出件最快",
      "params": {"walls": 2, "infill": 10, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 210, "bed_temperature": 60,
-                "print_speed": 80, "cooling_fan": 100}},
+                "print_speed": 80, "cooling_fan": 100, "layer_height": 0.28}},
     {"name": "appearance", "label": "外观",
      "desc": "慢速细表面，外观优先",
      "params": {"walls": 4, "infill": 15, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 205, "bed_temperature": 60,
-                "print_speed": 40, "cooling_fan": 80}},
+                "print_speed": 40, "cooling_fan": 80, "layer_height": 0.12}},
 ]
 
 
@@ -705,13 +1019,77 @@ ENV_FLAGS = {
     "humidity": ("--humidity", "float"),
     "anneal_hours": ("--anneal-hours", "float"),
     "fatigue_cycles": ("--fatigue-cycles", "float"),
+    # --- v0.8 (engine 0.22+ surface) ---
+    # --layer-time: consumed by the Orca weld-bond model + AutoSuggester
+    # layer-bonding; echoed consumption-gated as input.layer_time_s.
+    "layer_time_s": ("--layer-time", "float"),
+    # --axis: torsion axis override (input.torsion_axis echo is null unless
+    # load=torsion — the engine ignores it otherwise, with a console warning).
+    "torsion_axis": ("--axis", "select"),
+    # --machine: firmware-limits clamp identity (speed suggestions and
+    # optimize candidates clamp; disclosure in report machine_limits.clamps).
+    # Absent = 3MF printer_model auto-detect — the UI sends nothing then.
+    "machine": ("--machine", "select"),
+    # --validate: input-topology ENFORCEMENT tier (standard = audit only;
+    # strict/paranoid refuse → status:"validation_refused" marker, rendered
+    # inline in ④).
+    "validate_tier": ("--validate", "select"),
+    # bool flags (no value in argv; validated_env only passes True through)
+    "repair_orientation": ("--repair-orientation", "bool"),
+    "fast": ("--fast", "bool"),
+    # --- v0.8.1 solver/mesh robustness switches ---
+    # --voxel-vote: three-axis parity voting voxel fill for cracked/non-
+    # watertight meshes (triples voxelization cost — disclosed in the hint).
+    # No JSON block of its own; an old engine without the flag fails loud.
+    "voxel_vote": ("--voxel-vote", "bool"),
+    # --precond: CG preconditioner identity (ic0 default; Jacobi fallback on
+    # non-positive pivots is automatic and disclosed via
+    # phase_b.diagnostics.preconditioner/precond_fallback_count). "" = auto:
+    # nothing is sent, same convention as the machine select.
+    "precond": ("--precond", "select"),
+    # --- v0.8.1 send-value channels WITHOUT engine echo ---
+    # retraction/travel/wipe feed the Orca suggestion + appearance channels
+    # and setting a value PINS the dimension engine-side (same semantics as
+    # --lock), but the report's input block does NOT echo them — the UI sends
+    # them as-is and the row hints say the value is unverifiable from the
+    # report. Ranges below are argv hygiene from --schema value_flags.
+    "retraction_length": ("--retraction-length", "float"),
+    "retraction_speed": ("--retraction-speed", "float"),
+    "travel_speed": ("--travel-speed", "float"),
+    "wipe": ("--wipe", "bool"),
+    # --- v0.8.1 misc knobs ---
+    # --prony-duration: Prony load duration for the long-term (viscoelastic)
+    # modulus; requested/applied echo in input.requested_prony_duration_s /
+    # applied_prony_duration_s (echo-synced like other ③b numeric rows).
+    "prony_duration_s": ("--prony-duration", "float"),
+    # --- v0.8.1 estimator calibration (iter 582 surface) ---
+    # --cal-time/--cal-mass: measured print time / material mass from a real
+    # run; the engine derives multiplicative calibration factors for its
+    # time/mass estimates and discloses them in the top-level `calibration`
+    # block (applied/reason/time_factor/mass_factor/measured_*/predicted_*/
+    # notes). Engine domains 1..1e6 s / 0.01..1e6 g (its own range errors).
+    "cal_time_s": ("--cal-time", "float"),
+    "cal_mass_g": ("--cal-mass", "float"),
+}
+
+# select whitelists, resolved at call time (the lists rebind after a wizard
+# re-probe, so indirection through lambdas is required)
+_ENV_SELECT_ALLOWED = {
+    "load": lambda: LOAD_TYPES,
+    "torsion_axis": lambda: AXIS_VALUES,
+    "machine": lambda: MACHINE_VALUES,
+    "validate_tier": lambda: VALIDATE_TIERS,
+    "precond": lambda: PRECOND_VALUES,
 }
 
 
 def validated_env(env):
     """Type-gate + normalize the env dict from the analyze body. Numbers
     only (bool rejected explicitly — bool is an int subclass), whole floats
-    narrowed to int for clean argv ("50" not "50.0"). Returns a new dict."""
+    narrowed to int for clean argv ("50" not "50.0"); selects are whitelisted
+    against the live engine enums (the engine either rejects unknown values
+    or — worse for --load — silently falls back, so the UI must not forward
+    them); bool flags only pass `True` through. Returns a new dict."""
     if not isinstance(env, dict):
         raise ValueError("env 必须是对象")
     out = {}
@@ -719,10 +1097,17 @@ def validated_env(env):
         spec = ENV_FLAGS.get(name)
         if spec is None:
             raise ValueError("unknown env: %r" % name)
-        if spec[1] == "select":
-            if value not in LOAD_TYPES:
-                raise ValueError("load 必须是 %s 之一" % "|".join(LOAD_TYPES))
+        kind = spec[1]
+        if kind == "select":
+            allowed = _ENV_SELECT_ALLOWED[name]()
+            if value not in allowed:
+                raise ValueError("%s 必须是 %s 之一" % (name, "|".join(allowed)))
             out[name] = value
+            continue
+        if kind == "bool":
+            if value is not True:
+                raise ValueError("%s 仅接受 true" % name)
+            out[name] = True
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("env.%s 必须是数值" % name)
@@ -732,17 +1117,62 @@ def validated_env(env):
     return out
 
 
+BASE_PROFILE_MAX_BYTES = 256 * 1024
+
+
+def validated_base_profile(raw):
+    """Validate the client-supplied base-profile JSON TEXT (untrusted input
+    crossing a trust boundary — same harness as uploads): size cap, must
+    parse, must be a JSON object. Returns the original text; the file write
+    happens at the call site into the private temp dir. The engine remains
+    the authority on which KEYS it accepts (unknown keys → engine rc=1 with
+    its own message, surfaced as-is)."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("base_profile 需为非空 JSON 文本")
+    if len(raw.encode("utf-8")) > BASE_PROFILE_MAX_BYTES:
+        raise ValueError("base_profile 过大（上限 256 KB）")
+    try:
+        parsed = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError("base_profile 不是有效 JSON: %s" % exc)
+    if not isinstance(parsed, dict):
+        raise ValueError("base_profile 需为 JSON 对象（flat Orca project_settings 键）")
+    return raw
+
+
 def build_analyze_args(model_path, params, locks, compare, json_path, env=None,
-                       orient=False):
+                       orient=False, heatmap_path=None, appearance=False,
+                       rheology=False, est_error=False, res_check=False,
+                       grid=None, heatmap_bins=None, base_profile_path=None):
     """Build the whitelisted argv for an analyze/compare run."""
     # --explain: engine prints per-suggestion trust grounding (kb_module /
     # trust_source) to stdout only — JSON is byte-identical with/without it
     # (probed 0.21.0, iter 62). The UI shows engine console verbatim, so this
     # is the only wiring needed; no render-side contract.
-    args = [model_path, "--phase-c", "--grid", GRID, "--orca-suggest",
-            "--explain"]
+    # grid: per-run override (int 4..128, pre-validated by callers); None =
+    # the server-level STRATUM_UI_GRID default. Kept a string in argv (a list
+    # argv with an int element raises TypeError).
+    args = [model_path, "--phase-c", "--grid",
+            str(grid) if grid else GRID, "--orca-suggest", "--explain"]
+    # progress channel: NDJSON stage boundaries on stderr → GET /api/progress
+    # (v0.8, engine 0.22+; old engines drop it via the fallback retry)
+    args.append("--progress-json")
     if orient:
         args.append("--optimize-orient")
+    # v0.8.1 diagnostics phases: --appearance implies --phase-c (already on);
+    # both blocks are absent from the report entirely when the flag is not
+    # passed (absent-not-null), so the render side gates on block presence.
+    if appearance:
+        args.append("--appearance")
+    if rheology:
+        args.append("--rheology")
+    # v0.8.1 solver diagnostics (opt-in; --resolution-check re-runs the FEM
+    # at 2x grid → roughly doubles solve time, --est-error-profile probes
+    # several dims; both only meaningful with FEM, which analyze always runs)
+    if est_error:
+        args.append("--est-error-profile")
+    if res_check:
+        args.append("--resolution-check")
     if PHASE_D:
         args.append("--phase-d")
     if compare:
@@ -754,11 +1184,32 @@ def build_analyze_args(model_path, params, locks, compare, json_path, env=None,
         args.append(flag[0])
         args.append(str(value))
     for name, value in (env or {}).items():
-        args.append(ENV_FLAGS[name][0])
-        args.append(str(value))
+        flag, kind = ENV_FLAGS[name]
+        args.append(flag)
+        if kind != "bool":
+            args.append(str(value))  # bool flags are bare (--fast, no value)
     if locks:
         args.append("--lock")
         args.append(",".join(locks))
+    if base_profile_path:
+        # external baseline profile (v0.8.1): flat Orca project_settings
+        # keys, precedence CLI > 3MF > base profile > default. The path
+        # points at a server-written temp file holding the pre-validated
+        # JSON text (the engine is the authority on the KEYS it accepts).
+        args.append("--base-profile")
+        args.append(base_profile_path)
+    if heatmap_path:
+        # spatial risk/stress heatmap (v0.8, engine 0.22+): FEM von Mises +
+        # Phase A risk regions aggregated into a sparse bins³ grid; the UI
+        # overlays it on the 3D preview. Bonus channel — stripped+retried on
+        # old engines (see _FALLBACK_FLAGS).
+        args.append("--heatmap-json")
+        args.append(heatmap_path)
+        # bins-per-axis knob (v0.8.1; --schema value_flags 2..64). Callers
+        # pre-validate; None/16-equivalent = engine default, flag not sent.
+        if heatmap_bins:
+            args.append("--heatmap-bins")
+            args.append(str(heatmap_bins))
     args.append("--json")
     args.append(json_path)
     return args
@@ -917,6 +1368,13 @@ class StratumHandler(BaseHTTPRequestHandler):
                     "loads": LOAD_TYPES,
                     "extra_locks": EXTRA_LOCKS,
                     "extra_locks_source": EXTRA_LOCKS_SOURCE,
+                    # v0.8 select surfaces (schema-probed when available —
+                    # the client builds the ③b selects from these, not from
+                    # hardcoded copies)
+                    "axis_values": AXIS_VALUES,
+                    "machine_values": MACHINE_VALUES,
+                    "validate_tiers": VALIDATE_TIERS,
+                    "precond_values": PRECOND_VALUES,
                     "drift": {
                         "patterns": [p for p in PATTERNS
                                      if p not in FALLBACK_PATTERNS],
@@ -937,6 +1395,21 @@ class StratumHandler(BaseHTTPRequestHandler):
                 _send_json(self, 400, {"ok": False, "error": "unknown token"})
             else:
                 _send_json(self, 200, {"ok": True, "sidecar": sidecar})
+        elif path == "/api/progress":
+            # last engine progress for a running analyze (v0.8). `running`
+            # false + progress null = idle (no fake 100% tail).
+            query = parse_qs(urlparse(self.path).query)
+            tk = (query.get("token") or [""])[0]
+            with _session_lock:
+                found = tk in _sessions
+            if not found:
+                _send_json(self, 400, {"ok": False, "error": "unknown token"})
+                return
+            with _inflight_lock:
+                running = tk in _inflight
+                prog = _progress.get(tk)
+            _send_json(self, 200, {"ok": True, "running": running,
+                                   "progress": prog})
         elif path == "/api/report":
             # last successful run's full JSON (single analyze, compare, or
             # batch combo — last writer wins). token-gated like /api/history.
@@ -1079,6 +1552,8 @@ class StratumHandler(BaseHTTPRequestHandler):
                 self._analyze()
             elif path == "/api/export":
                 self._export()
+            elif path == "/api/export-artifact":
+                self._export_artifact()
             elif path == "/api/export-preview":
                 self._export_preview()
             elif path == "/api/cancel":
@@ -1196,6 +1671,36 @@ class StratumHandler(BaseHTTPRequestHandler):
             raise ValueError("locks 必须是参数名列表")
         compare = bool(body.get("compare", False))
         orient = bool(body.get("orient", False))
+        # v0.8.1 diagnostics phases (bonus channels, whole-request switches
+        # like orient; the old-engine fallback retry strips them if rejected)
+        appearance = bool(body.get("appearance", False))
+        rheology = bool(body.get("rheology", False))
+        est_error = bool(body.get("est_error_profile", False))
+        res_check = bool(body.get("resolution_check", False))
+        # per-run FEM grid (v0.8.1): 4..128 is the engine's own domain (same
+        # as the STRATUM_UI_GRID startup check). Absent/None = server default.
+        grid = None
+        if body.get("grid") is not None:
+            grid = _validated_int(body.get("grid"), 4, 128)
+            if grid is None:
+                raise ValueError("grid 需为 4-128 整数（引擎域）")
+        # heatmap bins-per-axis (v0.8.1): --schema domain 2..64; None = the
+        # engine default 16, flag not sent.
+        heatmap_bins = None
+        if body.get("heatmap_bins") is not None:
+            heatmap_bins = _validated_int(body.get("heatmap_bins"), 2, 64)
+            if heatmap_bins is None:
+                raise ValueError("heatmap_bins 需为 2-64 整数（引擎域）")
+        # external baseline profile (v0.8.1): client sends the JSON TEXT,
+        # server validates + writes it to the private temp dir and passes a
+        # PATH to the engine (the engine parses/validates the keys itself).
+        base_profile_path = None
+        if body.get("base_profile") is not None:
+            text = validated_base_profile(body["base_profile"])
+            base_profile_path = os.path.join(WORK_DIR, "%s.b%s.json" % (
+                session["token"], secrets.token_hex(4)))
+            with open(base_profile_path, "w", encoding="utf-8") as fh:
+                fh.write(text)
         # clear a stale sticky-cancel flag (a late /api/cancel after the last
         # run finished leaves the token in _batch_cancel — the queued-cancel
         # recheck in run_analyze_cancelable would swallow THIS run with a
@@ -1208,6 +1713,8 @@ class StratumHandler(BaseHTTPRequestHandler):
             if name not in PARAM_FLAGS:
                 raise ValueError("unknown parameter: %r" % name)
         env = validated_env(body.get("env") or {})
+        if body.get("fast") is True:  # ① 「快速预览」--fast (preview-grade run)
+            env["fast"] = True  # constant literal: already whitelist-valid
         # Keyed on the server-generated hex token, not the user-supplied name:
         # two concurrent sessions with the same filename no longer overwrite
         # each other's report, and odd names never reach the filesystem.
@@ -1217,15 +1724,35 @@ class StratumHandler(BaseHTTPRequestHandler):
         report_path = os.path.join(WORK_DIR, "%s.a%s%s.json" % (
             session["token"], secrets.token_hex(4),
             ".compare" if compare else ".analyze"))
+        heatmap_path = os.path.join(WORK_DIR, "%s.h%s.json" % (
+            session["token"], secrets.token_hex(4)))
         args = build_analyze_args(session["path"], params, locks, compare,
-                                  report_path, env=env, orient=orient)
+                                  report_path, env=env, orient=orient,
+                                  heatmap_path=heatmap_path,
+                                  appearance=appearance, rheology=rheology,
+                                  est_error=est_error, res_check=res_check,
+                                  grid=grid, heatmap_bins=heatmap_bins,
+                                  base_profile_path=base_profile_path)
         self._log("run: %s ..." % os.path.basename(BINARY))
         rc, out, err = run_analyze_with_fallback(
             args, run=lambda a: run_analyze_cancelable(a, session["token"]))
+        if base_profile_path:
+            # consumed by the engine run (either outcome) — best-effort delete
+            try:
+                os.remove(base_profile_path)
+            except OSError:
+                pass
         if rc == CANCELLED_RC:
             _send_json(self, 502, {"ok": False, "error": "已取消"})
             return
         if rc != 0:
+            # status markers (engine writes marker JSON instead of a report):
+            # cancelled-at-stage-boundary (rc=130) and --validate refusal
+            # (rc=1). Both must surface structured responses, not a raw rc.
+            marker = load_report_marker(report_path)
+            if marker is not None:
+                send_marker_response(self, marker)
+                return
             # rc=124 is our own timeout kill. Real-world batch (2026-08-19,
             # 52-model sample): every >20MB high-poly multicolor model blew
             # the 180s budget, and load time alone (no phase flags, any
@@ -1244,6 +1771,12 @@ class StratumHandler(BaseHTTPRequestHandler):
                 report = json.load(fh)
         except (OSError, ValueError) as exc:
             _send_json(self, 502, {"ok": False, "error": "报告解析失败: %s" % exc})
+            return
+        # Defensive: the engine exits nonzero for its markers, but if a future
+        # path ever exits 0 with a marker file, fail loud here rather than
+        # render a marker as if it were a report.
+        if isinstance(report, dict) and report.get("status") in REPORT_MARKER_STATUSES:
+            send_marker_response(self, report)
             return
         if not ALLOW_ANY_SCHEMA and not schema_supported(report):
             _send_json(self, 502, {"ok": False, "error":
@@ -1272,10 +1805,29 @@ class StratumHandler(BaseHTTPRequestHandler):
             # successful run wins, single or combo alike).
             session["last_report"] = report
             del hist[:-MAX_HISTORY]
+        # heatmap passthrough (v0.8): the engine wrote a sparse bins³ grid —
+        # shape-check minimally and embed. A missing/unparseable file is NOT
+        # an error: this is a bonus channel (old engine, --fast without FEM
+        # scope, disk hiccup) and must never fail an otherwise-good analysis.
+        heatmap = None
+        try:
+            if os.path.isfile(heatmap_path):
+                with open(heatmap_path, "r", encoding="utf-8") as fh:
+                    hm = json.load(fh)
+                if isinstance(hm, dict) and isinstance(hm.get("bins"), list):
+                    heatmap = hm
+        except (OSError, ValueError):
+            heatmap = None
+        finally:
+            try:
+                os.remove(heatmap_path)
+            except OSError:
+                pass
         # console: pass through the engine's own stdout so the UI can show the
         # CLI's "Recommended:" line verbatim (no recommendation logic in JS).
         _send_json(self, 200, {"ok": True, "report": report,
-                               "console": out.decode("utf-8", "replace")})
+                               "console": out.decode("utf-8", "replace"),
+                               "heatmap": heatmap})
 
     def _export(self):
         body = _read_json_body(self)
@@ -1296,6 +1848,15 @@ class StratumHandler(BaseHTTPRequestHandler):
         if profile not in PROFILES:
             raise ValueError("unknown profile: %r" % profile)
         strict = bool(body.get("strict_tier", False))
+        # mode (v0.8.1): "optimize" (default) = --optimize-3mf <profile>
+        # (profile + Orca suggestions); "orca" = --apply-orca (Orca
+        # suggestions ONLY — brim/support/PA/weld, no profile writeback).
+        # Both need a writable project 3MF. --apply-orca accepts but does
+        # not write --sidecar-json (probed 0.24.0), so orca mode has no
+        # sidecar audit — the download itself is the product.
+        mode = body.get("mode") or "optimize"
+        if mode not in ("optimize", "orca"):
+            raise ValueError("mode 必须是 optimize|orca 之一")
         # per-run suffix, same rationale as the analyze report path (two
         # concurrent exports of one token must not stomp each other's out
         # file — one would read the other's mid-write truncated 3mf, and the
@@ -1306,14 +1867,24 @@ class StratumHandler(BaseHTTPRequestHandler):
         run_hex = secrets.token_hex(4)
         out_path = os.path.join(WORK_DIR, "out_%s.%s.3mf" % (session["token"], run_hex))
         sidecar_path = os.path.join(WORK_DIR, "%s.s%s.json" % (session["token"], run_hex))
-        args = [session["path"], "--optimize-3mf", profile,
-                "--out", out_path, "--grid", GRID,
-                "--sidecar-json", sidecar_path]
-        if strict:
-            args.append("--strict-tier")
-        with _engine_slot():
-            rc, out, err = run_stratum(args)
-        if rc != 0 and "sidecar" in err.decode("utf-8", "replace").lower():
+        if mode == "orca":
+            args = [session["path"], "--apply-orca", out_path,
+                    "--grid", GRID]
+            if strict:
+                args.append("--strict-tier")
+            with _engine_slot():
+                rc, out, err = run_stratum(args)
+            sidecar_path = None
+        else:
+            args = [session["path"], "--optimize-3mf", profile,
+                    "--out", out_path, "--grid", GRID,
+                    "--sidecar-json", sidecar_path]
+            if strict:
+                args.append("--strict-tier")
+            with _engine_slot():
+                rc, out, err = run_stratum(args)
+        if rc != 0 and mode == "optimize" and \
+                "sidecar" in err.decode("utf-8", "replace").lower():
             # Older engine without --sidecar-json: retry once without it —
             # the audit is a bonus and must not break the export itself.
             sidecar_path = None
@@ -1334,7 +1905,11 @@ class StratumHandler(BaseHTTPRequestHandler):
             _send_json(self, 502, {"ok": False, "error": "输出读取失败: %s" % exc})
             return
         # [:-4] relies on is_3mf above: the name ends in exactly ".3mf".
-        download_name = "%s_optimized_%s.3mf" % (session["name"][:-4], profile)
+        if mode == "orca":
+            download_name = "%s_orca_suggestions.3mf" % session["name"][:-4]
+        else:
+            download_name = "%s_optimized_%s.3mf" % (session["name"][:-4],
+                                                     profile)
         audit = _sidecar_header(sidecar_path) if sidecar_path else None
         # full sidecar for the detail view: keep the LAST SUCCESSFUL export
         # (failed exports/previews intentionally leave the previous value —
@@ -1370,16 +1945,76 @@ class StratumHandler(BaseHTTPRequestHandler):
         # filename must not go in raw — percent-encode it and keep a fixed
         # ASCII fallback. (The browser download uses the JS-side name; this
         # header covers curl/direct-API consumers.)
+        if mode == "orca":
+            fallback_name = "model_orca_suggestions.3mf"
+        else:
+            fallback_name = "model_optimized_%s.3mf" % profile
         self.send_header(
             "Content-Disposition",
-            "attachment; filename=\"model_optimized_%s.3mf\"; "
-            "filename*=UTF-8''%s" % (profile, quote(download_name)))
+            "attachment; filename=\"%s\"; "
+            "filename*=UTF-8''%s" % (fallback_name, quote(download_name)))
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         try:
             self.wfile.write(data)  # large binary body — same client-gone rule
         except ConnectionError:
             return
+
+    def _export_artifact(self):
+        """Analysis-artifact downloads (v0.8.1): --generate-supports (support
+        structure mesh) and --stress-modifier (P95 hot-zone voxel STL, the
+        slicer-modifier export). Both run a real engine analysis at the
+        server grid and stream the produced STL back. `kind` is whitelisted;
+        files are token-keyed per-run and deleted after read. Works for every
+        input format (STL included) — nothing here writes back into a 3MF."""
+        body = _read_json_body(self)
+        session = self._session(body)
+        artifact_flags = {
+            "supports": "--generate-supports",
+            "stress_modifier": "--stress-modifier",
+        }
+        flag = artifact_flags.get(body.get("kind"))
+        if flag is None:
+            raise ValueError("kind 必须是 supports|stress_modifier 之一")
+        run_hex = secrets.token_hex(4)
+        out_path = os.path.join(WORK_DIR, "%s.k%s.stl" % (
+            session["token"], run_hex))
+        args = [session["path"], "--grid", GRID, flag, out_path]
+        with _engine_slot():
+            rc, out, err = run_stratum(args)
+        if rc != 0:
+            _send_json(self, 502, {"ok": False,
+                                   "error": "导出失败 (rc=%d): %s" % (
+                                       rc, err.decode("utf-8", "replace")[:400])})
+            return
+        try:
+            with open(out_path, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            _send_json(self, 502, {"ok": False, "error": "产物读取失败: %s" % exc})
+            return
+        # fully consumed — delete now, best-effort (evict glob is the backstop)
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+        base = os.path.splitext(session["name"] or "model")[0]
+        # RFC 6266/5987: CJK-safe download name, fixed ASCII fallback — same
+        # double-header shape as /api/report download
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header(
+            "Content-Disposition",
+            "attachment; filename=\"artifact_%s.stl\"; filename*=UTF-8''%s"
+            % (body.get("kind"), quote(base + {
+                "supports": "_supports.stl",
+                "stress_modifier": "_stress_modifier.stl"}[body.get("kind")])))
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except ConnectionError:
+            return  # client gone mid-download
 
     def _export_preview(self):
         """Dry-run audit: what --optimize-3mf WOULD write, in the engine's
@@ -1425,8 +2060,29 @@ class StratumHandler(BaseHTTPRequestHandler):
             raise ValueError("combos 必须是 1-8 个组合的列表")
         # orient is a WHOLE-BATCH switch (top-level body key): the UI keeps a
         # single checkbox, and per-combo embedding is deliberately not read —
-        # two sources for one flag would drift (refuter b', iter 38).
+        # two sources for one flag would drift (refuter b', iter 38). The
+        # v0.8.1 diagnostics phases follow the same pattern.
         orient = bool(body.get("orient", False))
+        appearance = bool(body.get("appearance", False))
+        rheology = bool(body.get("rheology", False))
+        est_error = bool(body.get("est_error_profile", False))
+        res_check = bool(body.get("resolution_check", False))
+        # whole-batch per-run grid override, validated once up front (a bad
+        # value must be a 400 before ANY combo runs — same zero-side-effect
+        # contract as the combo validation)
+        grid = None
+        if body.get("grid") is not None:
+            grid = _validated_int(body.get("grid"), 4, 128)
+            if grid is None:
+                raise ValueError("grid 需为 4-128 整数（引擎域）")
+        # whole-batch base profile (v0.8.1), validated once up front
+        base_profile_path = None
+        if body.get("base_profile") is not None:
+            text = validated_base_profile(body["base_profile"])
+            base_profile_path = os.path.join(WORK_DIR, "%s.b%s.json" % (
+                session["token"], secrets.token_hex(4)))
+            with open(base_profile_path, "w", encoding="utf-8") as fh:
+                fh.write(text)
         plans = []
         for i, c in enumerate(combos):
             if not isinstance(c, dict):
@@ -1445,7 +2101,13 @@ class StratumHandler(BaseHTTPRequestHandler):
             report_path = os.path.join(WORK_DIR, "%s.b%s%d.json" % (
                 session["token"], secrets.token_hex(4), i))
             argv = build_analyze_args(session["path"], params, locks, False,
-                                      report_path, env=env, orient=orient)
+                                      report_path, env=env, orient=orient,
+                                      appearance=appearance,
+                                      rheology=rheology,
+                                      est_error=est_error,
+                                      res_check=res_check,
+                                      grid=grid,
+                                      base_profile_path=base_profile_path)
             plans.append({"label": label, "argv": argv, "path": report_path,
                           "params": params, "env": env, "locks": locks})
         token = session["token"]
@@ -1486,6 +2148,16 @@ class StratumHandler(BaseHTTPRequestHandler):
                     cancelled = True
                     break
                 if rc != 0:
+                    # marker first (cancelled/refused), then the generic rc
+                    marker = load_report_marker(plan["path"])
+                    if marker is not None:
+                        if marker.get("status") == "cancelled":
+                            cancelled = True
+                            break
+                        results.append({"label": plan["label"], "ok": False,
+                                        "status": "validation_refused",
+                                        "error": refusal_text(marker)})
+                        continue
                     results.append({"label": plan["label"], "ok": False,
                                     "error": "rc=%d: %s" % (rc, err.decode("utf-8", "replace")[:200])})
                     continue
@@ -1495,6 +2167,15 @@ class StratumHandler(BaseHTTPRequestHandler):
                 except (OSError, ValueError) as exc:
                     results.append({"label": plan["label"], "ok": False,
                                     "error": str(exc)})
+                    continue
+                # defensive status-marker check (mirrors _analyze)
+                if isinstance(report, dict) and report.get("status") in REPORT_MARKER_STATUSES:
+                    if report.get("status") == "cancelled":
+                        cancelled = True
+                        break
+                    results.append({"label": plan["label"], "ok": False,
+                                    "status": "validation_refused",
+                                    "error": refusal_text(report)})
                     continue
                 if not ALLOW_ANY_SCHEMA and not schema_supported(report):
                     results.append({"label": plan["label"], "ok": False,
@@ -1521,6 +2202,11 @@ class StratumHandler(BaseHTTPRequestHandler):
             # a fake progress forever.
             with _session_lock:
                 session.get("batch_prog", {}).pop(batch_id, None)
+            if base_profile_path:
+                try:
+                    os.remove(base_profile_path)
+                except OSError:
+                    pass
 
         _send_json(self, 200, {"ok": True, "cancelled": cancelled,
                                "results": results})
@@ -1530,7 +2216,10 @@ class StratumHandler(BaseHTTPRequestHandler):
         is the engine (usage probe), then rebinds the module globals the
         import-time probe filled (a stale enum surface would keep serving
         the fallback lists after a successful setup)."""
-        global BINARY, PATTERNS, MATERIALS, LOAD_TYPES, PATTERNS_SOURCE,             MATERIALS_SOURCE, LOADS_SOURCE, SURFACE_FILTERED, EXTRA_LOCKS,             EXTRA_LOCKS_SOURCE
+        global BINARY, PATTERNS, MATERIALS, LOAD_TYPES, PATTERNS_SOURCE, \
+            MATERIALS_SOURCE, LOADS_SOURCE, SURFACE_FILTERED, EXTRA_LOCKS, \
+            EXTRA_LOCKS_SOURCE, AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, \
+            PRECOND_VALUES
         body = _read_json_body(self)
         p = body.get("path")
         if not isinstance(p, str) or not p.strip():
@@ -1543,7 +2232,11 @@ class StratumHandler(BaseHTTPRequestHandler):
         BINARY = os.path.abspath(p)
         # re-probe the enum surface with the new binary and rebind
         (PATTERNS, MATERIALS, LOAD_TYPES, PATTERNS_SOURCE, MATERIALS_SOURCE,
-         LOADS_SOURCE, SURFACE_FILTERED, EXTRA_LOCKS, EXTRA_LOCKS_SOURCE) =             _probe_surface()
+         LOADS_SOURCE, SURFACE_FILTERED, EXTRA_LOCKS, EXTRA_LOCKS_SOURCE) = \
+            _probe_surface()
+        (AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES) = \
+            _refresh_select_surfaces()
+        _apply_schema_domains()  # re-overlay numeric domains from the new probe
         try:
             tmp = CONFIG_PATH + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:

@@ -432,6 +432,12 @@
           <button id="btn-compare" disabled>优化对比</button>
           <button id="btn-report" disabled>下载报告 JSON</button>
           <label class="lock-cb" style="align-self:center"><input type="checkbox" id="opt-orient">方向优化</label>
+          <label class="lock-cb" style="align-self:center" title="快速预览：FEM 网格封顶 12³，结果为预览级（报告 fast_mode:true 披露）"><input type="checkbox" id="opt-fast">快速预览</label>
+          <label class="lock-cb" style="align-self:center" title="外观质量评估（--appearance）：光泽/纹理/层纹/台阶纹/表面翘曲，结果在 ④「外观评估」面板"><input type="checkbox" id="opt-appearance">外观评估</label>
+          <label class="lock-cb" style="align-self:center" title="熔体流变诊断（--rheology）：剪切率/黏度/压力降/稳定性/胀大，结果在 ④「流变诊断」面板"><input type="checkbox" id="opt-rheology">流变诊断</label>
+          <label class="lock-cb" style="align-self:center" title="估算误差剖析（--est-error-profile）：引擎按多维度重跑 FEM，对比代理模型估算与真实解的外推误差（结果在 ④「估算误差剖析」表）"><input type="checkbox" id="opt-esterror">估算误差剖析</label>
+          <label class="lock-cb" style="align-self:center" title="分辨率校验（--resolution-check）：以 2 倍网格重跑 FEM 并披露位移/应力偏差（约 2 倍求解时间；结果在 ④ Phase B 详情）"><input type="checkbox" id="opt-rescheck">分辨率校验</label>
+          <label class="lock-cb" style="align-self:center" title="FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。">网格 <input type="number" id="opt-grid" min="4" max="128" step="1" placeholder="默认" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"></label>
           <span id="run-indicator" class="hint" style="display:none; align-self:center"></span>
         </div>
         <div id="wizard" style="display:none; margin-top:8px">
@@ -442,6 +448,12 @@
             <button id="btn-setbin">设置引擎</button>
           </div>
           <div id="wizard-msg" class="err" style="display:none"></div>
+        </div>
+        <div class="actions advanced-only" style="margin-top:6px" title="外挂基线 JSON（flat Orca project_settings 键）：优先级 CLI > 3MF 值 > 基线 > 默认，填 CAD 裸 3MF/STL 的参数空位">
+          <input type="file" id="base-profile-file" accept=".json,application/json" title="选择基线 JSON 文件"
+                 style="color:var(--text);font-size:12px;max-width:220px">
+          <span class="hint" id="base-profile-note">外挂基线：未设置</span>
+          <button id="btn-clear-base" style="display:none">清除基线</button>
         </div>
         <div id="upload-msg" class="ok"></div>
         <canvas id="stl-view" width="420" height="280"
@@ -467,6 +479,7 @@
           <span class="k">载荷大小</span><span class="v" id="cp-force">—</span>
         </div>
         <div id="cp-locked" class="hint"></div>
+        <div id="cp-filament-note" class="hint" style="display:none"></div>
       </div>
 
       <div class="panel" id="preset-panel">
@@ -491,7 +504,7 @@
         <details class="ui-group advanced-only">
           <summary>③b 环境与载荷 <span class="tag">未触碰项不发送，用引擎默认</span></summary>
           <div id="env-panel"></div>
-          <div class="hint">载荷大小为数字直输（引擎域 0..1e6 N）；疲劳寿命为 10ⁿ 指数滑杆。服役时长/温度/湿度/退火供老化与 WLF 模型（部分材料未标定时引擎回 null）。</div>
+          <div class="hint">载荷大小为数字直输（引擎域 0..1e6 N）；疲劳寿命为 10ⁿ 指数滑杆。服役时长/温度/湿度/退火供老化与 WLF 模型（部分材料未标定时引擎回 null）。回抽/空走/擦除为「发送值」通道：只进 Orca 建议与外观通道、设值即钉住，且引擎报告不回显——UI 无法替你核实，写回审计里看实际效果。</div>
         </details>
       </div>
     </div>
@@ -501,6 +514,8 @@
       <div class="panel">
         <h2>④ 分析结果</h2>
         <div id="warning-list"></div>
+        <div id="validate-refused" style="display:none"></div>
+        <div id="fast-mode-tag" class="hint" style="display:none">⚡ 预览级结果（--fast：FEM 网格封顶 12³）——精度披露见报告 fast_mode，勿与全分辨率结果混用</div>
         <div class="ui-kpis">
           <div class="ui-kpi"><span class="k">总体评分</span><span class="v" id="res-overall">—</span></div>
           <div class="ui-kpi"><span class="k">安全系数</span><span class="v" id="res-sf">—</span></div>
@@ -513,10 +528,55 @@
           <span class="k">断裂风险</span><span class="v" id="res-fracture">—</span>
           <span class="k">Weibull 等级</span><span class="v" id="res-weibull">—</span>
         </div>
+        <div class="kv" id="printability-line" style="display:none; margin-bottom:8px"></div>
         <div id="phase-b-detail"></div>
         <div id="phase-c-detail"></div>
         <div id="phase-d-detail"></div>
+        <details id="appearance-box" class="advanced-only" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">外观评估 <span class="tag">--appearance · 引擎 JSON</span></summary>
+          <div id="appearance-detail" style="margin-top:6px"></div>
+        </details>
+        <details id="rheology-box" class="advanced-only" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">流变诊断 <span class="tag">--rheology · 引擎 JSON</span></summary>
+          <div id="rheology-detail" style="margin-top:6px"></div>
+        </details>
+        <details id="esterr-box" class="advanced-only" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">估算误差剖析 <span class="tag">--est-error-profile · 引擎逐维重跑</span></summary>
+          <div id="esterr-detail" style="margin-top:6px"></div>
+        </details>
+        <details id="calibration-box" class="advanced-only" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">估算校准 <span class="tag">--cal-time/--cal-mass · 引擎因子披露</span></summary>
+          <div id="calibration-detail" style="margin-top:6px"></div>
+        </details>
+        <div class="actions advanced-only" style="margin-top:8px" id="artifact-row">
+          <button id="btn-supports" disabled title="--generate-supports：导出支撑结构网格 STL（空支撑也会导出空实体）">下载支撑网格 STL</button>
+          <button id="btn-stress-modifier" disabled title="--stress-modifier：导出 P95 应力热区体素 STL，可在切片器中作为 modifier mesh 做区域覆写">下载应力热区 STL（modifier）</button>
+          <span class="hint" id="artifact-hint">各需一次完整引擎分析</span>
+        </div>
         <div id="orient-detail"></div>
+        <details id="mesh-topology-box" class="advanced-only" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">网格拓扑审计 <span class="tag" id="mesh-topo-tier"></span></summary>
+          <div id="mesh-topology-detail" style="margin-top:6px"></div>
+        </details>
+        <details id="machine-limits-box" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">机器限制（--machine / 3MF 识别） <span class="tag" id="machine-limits-src"></span></summary>
+          <div id="machine-limits-detail" style="margin-top:6px"></div>
+        </details>
+        <details id="heatmap-box" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">风险热图 <span class="tag">--heatmap-json · 引擎 bins³ 聚合</span></summary>
+          <div style="margin-top:6px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+            <label class="lock-cb"><input type="checkbox" id="heat-toggle">3D 热图视图</label>
+            <select id="heat-mode" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px">
+              <option value="vm">von Mises 应力</option>
+              <option value="risk">Phase A 风险分</option>
+            </select>
+            <span class="hint" id="heat-legend-max"></span>
+            <label class="lock-cb" title="热图分箱数/轴（引擎域 2..64，默认 16）——下次分析生效"><input type="number" id="heat-bins" min="2" max="64" step="1" value="16" style="width:52px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"> bins</label>
+          </div>
+          <div id="heat-legend-gradient" style="height:10px; margin-top:6px; border-radius:5px; border:1px solid var(--line);
+               background:linear-gradient(90deg,#000080,#0000ff,#00ffff,#00ff00,#ffff00,#ff8000,#ff0000)"></div>
+          <div class="hint" id="heat-note" style="margin-top:4px"></div>
+        </details>
         <details id="engine-console" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">引擎控制台输出（含跳过项理由）</summary>
           <pre id="engine-console-pre" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px;margin-top:6px"></pre>
@@ -570,6 +630,7 @@
           </select>
           <button id="btn-preview" disabled>预览写回（dry-run）</button>
           <button id="btn-export" disabled>写回下载 3MF</button>
+          <button id="btn-export-orca" disabled title="--apply-orca：只把 Orca 建议（底边/支撑/PA/焊接）写进新 3MF，不做结构优化写回；无 sidecar 审计">仅写回 Orca 建议</button>
           <label class="lock-cb"><input type="checkbox" id="strict-tier">严格可信层</label>
           <span class="hint" id="export-hint">先上传模型</span>
         </div>
@@ -590,7 +651,8 @@
 // engine, so a fresh upload is analyzed with the engine defaults (STL) or the
 // 3MF's own slicer config — leftover slider positions never override them.
 var state = { token: null, name: null, is3mf: false, params: [], materials: [],
-              loads: [], dirty: {}, lastEnv: {}, baseline: {} };
+              loads: [], dirty: {}, lastEnv: {}, baseline: {},
+              baseProfile: null };
 
 // env panel: serverName is the analyze body key; kind select/num; convert
 // maps slider value → body value (pure unit/exponent math, engine stays the
@@ -599,7 +661,7 @@ var ENV_META = [
   { name: "load", label: "载荷类型", kind: "select",
     options: null, default: "compression", echo: "load_type" },
   { name: "force", label: "载荷大小", kind: "num", widget: "number",
-    min: 0, max: 1000000, step: 1, unit: "N", default: 10, echo: "force_N" },
+    min: 0, max: 1000000, step: 1, unit: "N", default: 100, echo: "force_N" },
   { name: "service_time_h", label: "服役时长", kind: "num", min: 0, max: 1000,
     step: 1, unit: "h", default: 0, serverName: "service_time_s",
     convert: function (v) { return v * 3600; }, echo: "service_time_s",
@@ -617,6 +679,72 @@ var ENV_META = [
     convert: function (v) { return Math.pow(10, v); },
     echo: "requested_fatigue_cycles",
     back: function (v) { return Math.log10(v); } },
+  // --- v0.8 (engine 0.22+ surface) ---
+  // layer_time: consumed by the Orca weld-bond + layer-bonding models; the
+  // engine echoes it only when actually consumed (null → slider untouched).
+  { name: "layer_time_s", label: "层时间", kind: "num", min: 0.1, max: 120,
+    step: 0.1, unit: "s", default: 8, echo: "layer_time_s" },
+  // torsion axis: only consumed under load=torsion (echo null otherwise —
+  // sync keeps the user's value, same convention as the numeric rows)
+  { name: "torsion_axis", label: "扭转轴", kind: "select",
+    optionsKey: "axisValues", default: "z", echo: "torsion_axis" },
+  // machine: firmware-limit clamp identity; "" = auto (3MF printer_model)
+  // and NOTHING is sent. No engine input echo — the detected machine is
+  // disclosed in report.machine_limits instead (④).
+  { name: "machine", label: "机器型号", kind: "select",
+    optionsKey: "machineValues", autoOption: "自动（3MF 识别）",
+    default: "", echo: null },
+  // validate tier: input-topology enforcement (standard = audit only;
+  // strict/paranoid refuse → ④ inline findings). Echo lives in
+  // mesh_topology.validation_tier, not input — no slider bounce.
+  { name: "validate_tier", label: "校验档位", kind: "select",
+    optionsKey: "validateTiers", default: "standard", echo: null },
+  // repair: flip faces to consistent outward orientation pre-solve
+  { name: "repair_orientation", label: "修复网格朝向", kind: "bool",
+    default: false },
+  // v0.8.1 solver/mesh robustness switches:
+  // voxel-vote: three-axis parity voting for cracked/non-watertight meshes
+  // (costs ~3x voxelization; no input echo — checkbox is user-owned)
+  { name: "voxel_vote", label: "三轴投票体素化（破网格）", kind: "bool",
+    default: false },
+  // precond: CG preconditioner identity; "" = auto (engine default ic0,
+  // automatic Jacobi fallback disclosed in Phase B diagnostics)
+  { name: "precond", label: "预条件子", kind: "select",
+    optionsKey: "precondValues", autoOption: "自动（ic0，失败自动回退）",
+    default: "", echo: null },
+  // --- v0.8.1 send-value channels WITHOUT engine echo (honest semantics):
+  // they feed the Orca suggestion / appearance channels and setting a value
+  // PINS the dimension engine-side (same as --lock) — but the report's
+  // input block does NOT echo them, so the UI cannot verify what the engine
+  // used. Sent every run once touched; per-row hint says so.
+  { name: "retraction_length", label: "回抽长度", kind: "num",
+    min: 0, max: 20, step: 0.1, unit: "mm", default: 0.8, echo: null,
+    hint: "0-20 mm；设值即钉住该维（同 --lock 语义，建议/写回不再改动它）；引擎不回显此值，UI 无法从报告核实" },
+  { name: "retraction_speed", label: "回抽速度", kind: "num",
+    min: 0, max: 500, step: 5, unit: "mm/s", default: 40, echo: null,
+    hint: "0-500 mm/s；设值即钉住；引擎不回显此值" },
+  { name: "travel_speed", label: "空走速度", kind: "num",
+    min: 1, max: 1000, step: 5, unit: "mm/s", default: 150, echo: null,
+    hint: "1-1000 mm/s；仅影响外观建议通道（无 3MF 写回映射）；引擎不回显此值" },
+  { name: "wipe", label: "擦除 wipe", kind: "bool", default: false,
+    hint: "外观建议通道布尔旋钮（无 3MF 写回映射）；引擎不回显此值" },
+  // v0.8.1: Prony load duration for the long-term modulus (viscoelastic);
+  // echo-synced via input.requested_prony_duration_s. 0 = unset (not sent).
+  { name: "prony_duration_s", label: "Prony 载荷时长", kind: "num",
+    min: 0, max: 600, step: 10, unit: "s", default: 0, zeroUnset: true,
+    echo: "requested_prony_duration_s",
+    hint: "0=不发送（引擎域 0..1e308 s）；粘弹性长期模量的载荷时长；回显 requested_prony_duration_s" },
+  // v0.8.1 estimator calibration: measured time/mass from a real print →
+  // engine calibrates its estimates (top-level `calibration` block in ④;
+  // ⑤ 候选行悬停显示 calibrated)。引擎域 1..1e6 s / 0.01..1e6 g。
+  { name: "cal_time_s", label: "实测打印时长", kind: "num", widget: "number",
+    min: 1, max: 1000000, step: 60, unit: "s", default: 0, zeroUnset: true,
+    echo: null,
+    hint: "0=不发送；真实打印耗时（秒，直输）——引擎据此校准时间估算（calibration 块披露因子）；估算面需要对比分析/Phase B" },
+  { name: "cal_mass_g", label: "实测耗材质量", kind: "num", widget: "number",
+    min: 0, max: 1000000, step: 0.1, unit: "g", default: 0, zeroUnset: true,
+    echo: null,
+    hint: "0=不发送；实际耗材克数（直输）——引擎据此校准材料估算（calibration 块披露因子）" },
 ];
 ENV_META.forEach(function (m) {
   if (!m.serverName) m.serverName = m.name;
@@ -646,20 +774,21 @@ function el(tag, cls, text) {
 // (contract violation / wrong-version report) renders "—", never "NaN" —
 // silent Number() coercion masked bad data (iter 16 class, closed here).
 function num(v, d) { return typeof v === "number" && isFinite(v) ? v.toFixed(d) : "—"; }
-// engine v2 scalars may ship as uncertainty envelopes {nominal, lo, hi}
-function numEnv(v, d) {
+// engine v2 shipped uncertainty fields as {nominal, lo, hi} envelopes; v3
+// (schema 3) makes the plain field a scalar and moves the band to an explicit
+// *_envelope twin — pass it as `env` where the band matters. Both shapes and
+// bare scalars render correctly; a non-numeric engine value renders "—",
+// never "NaN" (iter 16/75 hardening).
+function numEnv(v, d, env) {
   if (v === null || v === undefined) return "—";
-  if (typeof v === "object") {
-    // dict without nominal (only reachable via STRATUM_UI_ALLOW_ANY_SCHEMA=1
-    // rendering a wrong-version report; probed 0.21.0 always ships complete
-    // {nominal,lo,hi}) is unassessable, not zero — bare "—", never NaN.
-    if (v.nominal === undefined) return "—";
-    if (v.lo !== undefined && v.hi !== undefined) {
-      return num(v.nominal, d) + " (" + num(v.lo, d) + "–" + num(v.hi, d) + ")";
-    }
-    return num(v.nominal, d);
+  var band = (env !== null && env !== undefined && typeof env === "object")
+    ? env : (typeof v === "object" ? v : null);
+  var nominal = typeof v === "object" ? v.nominal : v;
+  if (nominal === null || nominal === undefined) return "—";
+  if (band && band.lo !== undefined && band.hi !== undefined) {
+    return num(nominal, d) + " (" + num(band.lo, d) + "–" + num(band.hi, d) + ")";
   }
-  return num(v, d);
+  return num(nominal, d);
 }
 // display labels for the engine's load_adequacy enum (unknown values pass through)
 var LOAD_LABELS = {
@@ -674,9 +803,9 @@ var LOAD_ADEQUACY_CLASS = {
   load_dominated: "warn"
 };
 // null/undefined value → bare "—" placeholder (never "— MPa": a missing
-// value has no unit)
-function fmtUnit(v, d, unit) {
-  return v === null || v === undefined ? "—" : numEnv(v, d) + " " + unit;
+// value has no unit). `env` = optional v3 *_envelope twin (see numEnv).
+function fmtUnit(v, d, unit, env) {
+  return v === null || v === undefined ? "—" : numEnv(v, d, env) + " " + unit;
 }
 
 // ---------- init ----------
@@ -686,6 +815,7 @@ Promise.all([
 ]).then(function (arr) {
   var st = arr[0], pm = arr[1];
   $("engine-ver").textContent = st.engine_version;
+  state.serverGrid = st.grid;  // per-run grid default (v0.8.1)
   // own build vintage — bug reports from distributed installs need it
   if (st.ui_version) $("ui-ver").textContent = st.ui_version;
   var badge = $("bin-badge");
@@ -705,6 +835,14 @@ Promise.all([
   state.extraLocks = ((pm.surface || {}).extra_locks) || [];
   state.loads = ((pm.surface || {}).loads)
     || ["compression", "bending", "torsion", "cantilever"];
+  // v0.8 select surfaces (schema-probed server-side; the ③b selects build
+  // from these — no client-side hardcoded copies of the engine enums)
+  state.axisValues = ((pm.surface || {}).axis_values) || ["x", "y", "z"];
+  state.machineValues = ((pm.surface || {}).machine_values) || [];
+  state.validateTiers = ((pm.surface || {}).validate_tiers)
+    || ["minimal", "standard", "strict", "paranoid"];
+  // v0.8.1: preconditioner enum (schema-probed server-side)
+  state.precondValues = ((pm.surface || {}).precond_values) || ["ic0", "jacobi"];
   // surface provenance: fallback means the engine usage parse failed (the
   // enums may be stale); drift lists engine entries beyond the fallback.
   var sf = pm.surface || {};
@@ -777,17 +915,22 @@ function resetOne(name) {
   var input = findRowInput(name);
   var base = state.baseline[name];
   if (input && base !== undefined) {
-    input.value = base;
     var val = input.parentNode.querySelector(".val");
     var pm = null, em = null;
     for (var i = 0; i < state.params.length; i++)
       if (state.params[i].name === name) { pm = state.params[i]; break; }
     for (var j = 0; j < ENV_META.length; j++)
       if (ENV_META[j].serverName === name) { em = ENV_META[j]; break; }
-    if (val) {
-      if (input.tagName === "SELECT") val.textContent = input.value;
-      else if (pm) val.textContent = fmtRange(pm, parseFloat(input.value));
-      else if (em) val.textContent = fmtEnv(em, parseFloat(input.value));
+    if (input.type === "checkbox") {
+      input.checked = base === true;
+      if (val) val.textContent = input.checked ? "开" : "关";
+    } else {
+      input.value = base;
+      if (val) {
+        if (input.tagName === "SELECT") val.textContent = input.value || "自动";
+        else if (pm) val.textContent = fmtRange(pm, parseFloat(input.value));
+        else if (em) val.textContent = fmtEnv(em, parseFloat(input.value));
+      }
     }
   }
   delete state.dirty[name];
@@ -933,10 +1076,26 @@ function buildEnvPanel() {
     var row = el("div", "param-row");
     row.dataset.search = (m.name + " " + (m.serverName || "") + " " + m.label).toLowerCase();
     var lbl = el("span", "lbl", m.label);
+    if (m.hint) lbl.title = m.hint;  // hover disclosure (e.g. no-echo rows)
     var input, val;
-    if (m.kind === "select") {
+    if (m.kind === "bool") {
+      input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.env = m.name;
+      input.addEventListener("change", function () {
+        val.textContent = input.checked ? "开" : "关";
+        markChanged(m.serverName);
+      });
+      val = el("span", "val", "关");
+    } else if (m.kind === "select") {
       input = document.createElement("select");
-      (state.loads || []).forEach(function (o) {
+      if (m.autoOption) {
+        var auto = el("option", null, m.autoOption);
+        auto.value = "";
+        input.appendChild(auto);
+      }
+      var opts = m.optionsKey ? (state[m.optionsKey] || []) : (state.loads || []);
+      opts.forEach(function (o) {
         var opt = el("option", null, o);
         opt.value = o;
         input.appendChild(opt);
@@ -944,7 +1103,7 @@ function buildEnvPanel() {
       input.value = m.default;
       input.dataset.env = m.name;
       input.addEventListener("change", function () { markChanged(m.serverName); });
-      val = el("span", "val", input.value);
+      val = el("span", "val", input.value || "自动");
       if (m.name === "load") {
         // "load" is a core lockable too (usage --lock list); its only UI home
         // is this select, so the lock checkbox rides along here.
@@ -1015,15 +1174,21 @@ function collectEnv() {
     if (!state.dirty[m.serverName]) return;
     var input = document.querySelector('[data-env="' + m.name + '"]');
     if (!input) return;
-    var v;
-    if (m.kind === "select") {
-      v = input.value;
-    } else {
-      if (input.value === "") return;  // cleared numeric box: skip, not zero
-      v = parseFloat(input.value);
-      if (isNaN(v)) return;
-      if (m.convert) v = m.convert(v);
+    if (m.kind === "bool") {
+      if (input.checked) out[m.serverName] = true;  // unchecked → not sent
+      return;
     }
+    if (m.kind === "select") {
+      if (m.autoOption && input.value === "") return;  // auto = send nothing
+      out[m.serverName] = input.value;
+      return;
+    }
+    if (input.value === "") return;  // cleared numeric box: skip, not zero
+    var v = parseFloat(input.value);
+    if (isNaN(v)) return;
+    if (m.zeroUnset && v === 0) return;  // 0 = unset for these knobs (the
+    // engine's own domain starts above 0 — e.g. --cal-time min 1)
+    if (m.convert) v = m.convert(v);
     out[m.serverName] = v;
   });
   return out;
@@ -1034,6 +1199,7 @@ function collectEnv() {
 // the slider back to a default would silently mask the user's setting).
 function syncEnvFromReport(inp) {
   ENV_META.forEach(function (m) {
+    if (m.kind === "bool") return;  // checkboxes are user-owned, no bounce
     if (!(m.serverName in state.lastEnv)) return;
     var echo = inp[m.echo];
     if (echo === null || echo === undefined) return; // keep slider, keep dirty
@@ -1119,18 +1285,34 @@ function resetTuningState() {
   ENV_META.forEach(function (m) {
     var input = document.querySelector('[data-env="' + m.name + '"]');
     if (!input) return;
+    var val = input.parentNode.querySelector(".val");
+    if (m.kind === "bool") {
+      input.checked = m.default === true;
+      state.baseline[m.serverName] = input.checked;
+      if (val) val.textContent = input.checked ? "开" : "关";
+      return;
+    }
     if (input.tagName === "SELECT") input.value = m.default;
     else input.value = m.default;
     state.baseline[m.serverName] = input.value;
-    var val = input.parentNode.querySelector(".val");
     if (val) val.textContent = input.tagName === "SELECT"
-      ? input.value : fmtEnv(m, parseFloat(input.value));
+      ? (input.value || "自动") : fmtEnv(m, parseFloat(input.value));
   });
   state.params.forEach(function (m) { updateRowState(m.name); });
   ENV_META.forEach(function (m) { updateRowState(m.serverName); });
   Array.prototype.forEach.call(document.querySelectorAll("input[data-lock]"),
     function (cb) { cb.checked = false; });
   $("opt-orient").checked = false;  // per-session switch (fresh model = off)
+  $("opt-fast").checked = false;    // --fast likewise (v0.8)
+  $("opt-appearance").checked = false;  // diagnostics phases likewise (v0.8.1)
+  $("opt-rheology").checked = false;
+  $("opt-esterror").checked = false;
+  $("opt-rescheck").checked = false;
+  $("opt-grid").value = "";   // per-run grid back to the server default
+  $("heat-bins").value = 16;  // heatmap bins back to the engine default
+  clearBaseProfile();         // external baseline is model-scoped
+  state.lastHeatmap = null;         // stale heatmap cubes must not linger
+  stlSetHeatmap(null);
 }
 
 function applySession(j) {
@@ -1148,9 +1330,12 @@ function applySession(j) {
   $("btn-compare").disabled = false;
   setPresetEnabled(true);
   $("btn-report").disabled = true;  // per-session: re-enabled by renderReport
+  $("btn-supports").disabled = true;
+  $("btn-stress-modifier").disabled = true;
   $("export-hint").textContent = !j.is_3mf ? "写回需要 .3mf 输入"
     : (state.writable ? "" : "该 3MF 无切片设置（CAD 裸导出），不可写回");
   $("btn-export").disabled = !j.is_3mf || !state.writable;
+  $("btn-export-orca").disabled = !j.is_3mf || !state.writable;
   $("btn-preview").disabled = !j.is_3mf;
   $("export-msg").textContent = "";
   loadStlPreview(j);
@@ -1205,6 +1390,83 @@ function onFile() {
     .catch(function (e) { $("upload-msg").className = "err"; $("upload-msg").textContent = String(e); });
 }
 
+// --validate strict/paranoid refusal (engine status marker, server 422):
+// structured findings render inline in ④ — a bare toast would hide WHICH
+// topology findings were fatal. Cleared by the next successful renderReport.
+function renderValidationRefused(j) {
+  var box = $("validate-refused");
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "";
+  var v = j.validation || {};
+  var tier = typeof v.tier === "string" ? v.tier : null;
+  var head = el("div", "risk-item",
+    (tier ? "输入拓扑校验拒绝（--validate " + tier + "）" : "输入拓扑校验拒绝") +
+    " — 把「校验档位」改回 standard 可继续分析（仅披露、不拒绝）");
+  box.appendChild(head);
+  (v.findings || []).forEach(function (f) {
+    var item = el("div", "risk-item");
+    item.appendChild(el("span", "sev " + (f.fatal ? "sev-1" : "sev-2"),
+                        f.fatal ? "致命" : "提示"));
+    item.appendChild(document.createTextNode(
+      (f.code || "?") + (typeof f.count === "number" ? " ×" + f.count : "") +
+      (f.hint ? " — " + f.hint : "")));
+    box.appendChild(item);
+  });
+  var topo = j.mesh_topology || {};
+  if (typeof topo.boundary_edges === "number") {
+    box.appendChild(el("div", "hint",
+      "拓扑审计: 边界边 " + topo.boundary_edges +
+      " · 非流形边 " + (typeof topo.nonmanifold_edges === "number" ? topo.nonmanifold_edges : "—") +
+      " · 退化边 " + (typeof topo.degenerate_edges === "number" ? topo.degenerate_edges : "—")));
+  }
+}
+// ---------- risk heatmap (v0.8) ----------
+// The analyze response carries the engine's sparse bins³ heatmap (if the
+// channel produced one). We keep the raw data so the ④ toggle can flip the
+// 3D preview between mesh view and heatmap-cube view without re-running.
+function applyHeatmap(hm) {
+  var box = $("heatmap-box");
+  if (!box) return;
+  var has = !!(hm && (hm.bins || []).length);
+  box.style.display = has ? "" : "none";
+  if (!has) {
+    state.lastHeatmap = null;
+    stlSetHeatmap(null);
+    return;
+  }
+  state.lastHeatmap = hm;
+  var on = state.heatUserChoice !== false;  // on by default; user can turn off
+  $("heat-toggle").checked = on;
+  stlSetHeatmap(on ? hm : null);
+  var range = stlHeatRange();
+  $("heat-legend-max").textContent = range
+    ? "0 → " + (range.max >= 100 ? range.max.toFixed(0) : range.max.toFixed(2)) +
+      " " + range.label : "";
+  $("heat-note").textContent =
+    "bins " + hm.bins_dim + "³ · " + (hm.bin_count || (hm.bins || []).length) +
+    " 个非空体素 · cell " + (typeof hm.cell_size_mm === "number"
+      ? hm.cell_size_mm.toFixed(2) : "—") + " mm" +
+    (stlView.gl ? "" : "（3D 预览不可用——热图叠加需要 STL 预览，仅显示图例）");
+}
+$("heat-toggle").addEventListener("change", function () {
+  state.heatUserChoice = this.checked;
+  stlSetHeatmap(this.checked ? state.lastHeatmap : null);
+  if (this.checked) {
+    var range = stlHeatRange();
+    $("heat-legend-max").textContent = range
+      ? "0 → " + (range.max >= 100 ? range.max.toFixed(0) : range.max.toFixed(2)) +
+        " " + range.label : "";
+  }
+});
+$("heat-mode").addEventListener("change", function () {
+  stlSetHeatMode(this.value);
+  var range = stlHeatRange();
+  $("heat-legend-max").textContent = range
+    ? "0 → " + (range.max >= 100 ? range.max.toFixed(0) : range.max.toFixed(2)) +
+      " " + range.label : "";
+});
+
 function analyze(compare, auto) {
   if (!state.token) return Promise.resolve();
   // re-entry guard: a second analyze while one runs would race the engine on
@@ -1239,6 +1501,25 @@ function analyze(compare, auto) {
   };
   var body = { token: state.token, params: collectParams(), locks: collectLocks(), compare: !!compare };
   body.orient = $("opt-orient").checked;  // engine --optimize-orient (bonus)
+  body.fast = $("opt-fast") ? $("opt-fast").checked : false;  // --fast preview
+  // v0.8.1 diagnostics phases (bonus channels; blocks render when present)
+  body.appearance = $("opt-appearance") ? $("opt-appearance").checked : false;
+  body.rheology = $("opt-rheology") ? $("opt-rheology").checked : false;
+  // solver diagnostics (v0.8.1): est-error table + 2x-grid resolution check
+  body.est_error_profile = $("opt-esterror") ? $("opt-esterror").checked : false;
+  body.resolution_check = $("opt-rescheck") ? $("opt-rescheck").checked : false;
+  // per-run FEM grid (v0.8.1): sent only when the user typed a valid value
+  // that differs from the server default
+  var gv = parseInt($("opt-grid") ? $("opt-grid").value : "", 10);
+  if (!isNaN(gv) && gv >= 4 && gv <= 128 && gv !== state.serverGrid)
+    body.grid = gv;
+  // heatmap bins-per-axis (v0.8.1): sent only when != the engine default 16
+  var hv = parseInt($("heat-bins") ? $("heat-bins").value : "16", 10);
+  if (!isNaN(hv) && hv >= 2 && hv <= 64 && hv !== 16) body.heatmap_bins = hv;
+  // external baseline profile (v0.8.1): the JSON TEXT rides the body; the
+  // server validates + writes it to its private temp dir (never exec'd)
+  if (state.baseProfile && state.baseProfile.text)
+    body.base_profile = state.baseProfile.text;
   body.env = collectEnv();
   state.lastEnv = body.env;
   return fetch("/api/analyze", {
@@ -1247,8 +1528,12 @@ function analyze(compare, auto) {
     body: JSON.stringify(body),
     signal: ctl.signal,
   }).then(function (r) { return r.json(); }).then(function (j) {
-    if (!j.ok) throw new Error(j.error || "分析失败");
+    if (!j.ok) {
+      if (j.status === "validation_refused") renderValidationRefused(j);
+      throw new Error(j.error || "分析失败");
+    }
     renderReport(j.report, j.console || "");
+    applyHeatmap(j.heatmap || null);
     refreshHistory();
     // auto runs stay quiet — a toast after every slider release would be noise;
     // errors and cancels below still surface (they need user attention)
@@ -1267,7 +1552,10 @@ function analyze(compare, auto) {
     $("btn-compare").disabled = true;
     setPresetEnabled(false);
     $("btn-export").disabled = true;
+    $("btn-export-orca").disabled = true;
       $("btn-preview").disabled = true;
+      $("btn-supports").disabled = true;
+      $("btn-stress-modifier").disabled = true;
       $("export-hint").textContent = "先上传模型";
     }
     toast(String(e), "err");
@@ -1289,8 +1577,42 @@ function analyze(compare, auto) {
   });
 }
 
-// ---------- real-time analyze (auto mode) ----------
-// Slider/env/lock edits re-run the analysis after a debounce (engine ~1-2s
+// ---------- base profile (v0.8.1) ----------
+// Client-side read of the user's baseline JSON (flat Orca project_settings
+// keys). The TEXT is sent with every analyze body while set; the server
+// validates and stages it as a temp file for --base-profile. Model-scoped:
+// cleared on new upload / session reset.
+function clearBaseProfile() {
+  state.baseProfile = null;
+  var inp = $("base-profile-file");
+  if (inp) inp.value = "";
+  $("base-profile-note").textContent = "外挂基线：未设置";
+  $("btn-clear-base").style.display = "none";
+}
+(function wireBaseProfile() {
+  var inp = $("base-profile-file");
+  if (!inp) return;
+  inp.addEventListener("change", function () {
+    var f = inp.files && inp.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      state.baseProfile = {name: f.name, text: String(reader.result || "")};
+      $("base-profile-note").textContent =
+        "外挂基线：" + f.name + "（" + f.size + " B）";
+      $("btn-clear-base").style.display = "";
+      scheduleAuto();
+    };
+    reader.onerror = function () { toast("基线文件读取失败", "err"); };
+    reader.readAsText(f);
+  });
+  $("btn-clear-base").addEventListener("click", function () {
+    clearBaseProfile();
+    scheduleAuto();
+  });
+})();
+
+// ---------- real-time analyze (auto mode) ----------// Slider/env/lock edits re-run the analysis after a debounce (engine ~1-2s
 // per run → near-live feel). Re-entry safety: blocked while a run is in
 // flight (queued, see analyze) and while a BATCH is running (batch keeps
 // its own per-combo engine cadence; an interleaved single run would race
@@ -1307,10 +1629,11 @@ function scheduleAuto() {
 }
 
 
-// pure client-side stopwatch: the single-run analyze has NO server-side
-// progress endpoint (/api/status carries no fields, /api/history only gains
-// an entry on success), so any "progress" would be fake. Elapsed time only.
-var runTimer = null;
+// v0.8: real progress — the server streams engine --progress-json NDJSON
+// (stage boundaries, monotonic stage-plan estimates, never intra-solve) via
+// GET /api/progress. Poll it while running; the stopwatch stays as the
+// fallback display when no progress has landed yet (old engines, queue wait).
+var runTimer = null, progressTimer = null;
 function startRunIndicator() {
   var t0 = Date.now();
   var n = $("run-indicator");
@@ -1320,9 +1643,24 @@ function startRunIndicator() {
   runTimer = setInterval(function () {
     n.textContent = "分析中 " + ((Date.now() - t0) / 1000).toFixed(1) + "s";
   }, 100);
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = setInterval(function () {
+    if (!state.token) return;
+    fetch("/api/progress?token=" + encodeURIComponent(state.token))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok || !j.progress || !j.running) return;  // keep stopwatch view
+        var p = j.progress;
+        n.textContent = "分析中 " + p.pct + "%" +
+          (p.stage && p.stage !== "start" && p.stage !== "done"
+            ? " · " + p.stage : "");
+      })
+      .catch(function () {});  // transient poll errors: stopwatch keeps ticking
+  }, 500);
 }
 function stopRunIndicator() {
   if (runTimer) { clearInterval(runTimer); runTimer = null; }
+  if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
   $("run-indicator").style.display = "none";
 }
 
@@ -1552,6 +1890,32 @@ function export3mf() {
 }
 var lastExportAudit = null;
 function ct_of(r) { return r.headers.get("Content-Type") || ""; }
+
+// v0.8.1: --apply-orca export (Orca suggestions ONLY, no profile writeback).
+// No sidecar exists for this mode (probed 0.24.0) — the message notes that.
+function exportOrca() {
+  if (!state.token || !state.is3mf) return;
+  $("export-msg").textContent = "写回中…";
+  $("export-msg").className = "ok";
+  fetch("/api/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
+    body: JSON.stringify({ token: state.token, mode: "orca",
+                           strict_tier: $("strict-tier").checked }),
+  }).then(function (r) {
+    if (ct_of(r).indexOf("json") >= 0) return r.json().then(function (j) { throw new Error(j.error || "写回失败"); });
+    return r.blob();
+  }).then(function (blob) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (state.name.replace(/\.3mf$/i, "") || "model") + "_orca_suggestions.3mf";
+    document.body.appendChild(a); a.click(); a.remove();
+    $("export-msg").textContent = "已下载仅含 Orca 建议的 3MF（该通道无 sidecar 审计）";
+  }).catch(function (e) {
+    $("export-msg").className = "err";
+    $("export-msg").textContent = String(e);
+  });
+}
 
 // full audit detail from the engine's sidecar (last SUCCESSFUL write-back —
 // a preview does not refresh it). Pure data-driven render, null-gated.
@@ -1807,7 +2171,7 @@ $("auto-toggle").addEventListener("click", function () {
 // (delegated: the lock checkboxes are rebuilt by buildTuningPanel/renderHistory)
 document.addEventListener("change", function (e) {
   var t = e.target;
-  if (t && t.matches && t.matches('input[data-lock], #opt-orient')) scheduleAuto();
+  if (t && t.matches && t.matches('input[data-lock], #opt-orient, #opt-fast, #opt-appearance, #opt-rheology, #opt-esterror, #opt-rescheck, #opt-grid, #heat-bins')) scheduleAuto();
 });
 $("param-search").addEventListener("input", function () {
   var q = this.value.trim().toLowerCase();
@@ -1874,6 +2238,7 @@ $("model-file").addEventListener("change", onFile);
 $("btn-analyze").onclick = function () { analyze(false); };
 $("btn-compare").onclick = function () { analyze(true); };
 $("btn-export").addEventListener("click", export3mf);
+$("btn-export-orca").addEventListener("click", exportOrca);
 $("btn-report").addEventListener("click", function () {
   if (!state.token) return;
   fetch("/api/report?token=" + encodeURIComponent(state.token) + "&download=1")
@@ -1895,6 +2260,45 @@ $("btn-report").addEventListener("click", function () {
     .catch(function (e) { toast(String(e), "err"); });
 });
 $("btn-preview").addEventListener("click", previewExport);
+// v0.8.1 analysis-artifact downloads (support mesh / stress-modifier STL):
+// explicit actions — each runs a fresh engine analysis server-side
+(function () {
+  function fetchArtifact(kind, btn, hint) {
+    if (!state.token) return;
+    var prev = btn.textContent;
+    btn.disabled = true;
+    hint.textContent = "引擎分析中…";
+    fetch("/api/export-artifact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
+      body: JSON.stringify({ token: state.token, kind: kind }),
+    }).then(function (r) {
+      if (ct_of(r).indexOf("json") >= 0 && r.headers.get("Content-Disposition") === null) {
+        return r.json().then(function (j) { throw new Error(j.error || "导出失败"); });
+      }
+      return r.blob();
+    }).then(function (blob) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (state.name.replace(/\.(stl|3mf|obj|ply|amf)$/i, "") || "model")
+        + {supports: "_supports.stl", stress_modifier: "_stress_modifier.stl"}[kind];
+      document.body.appendChild(a); a.click(); a.remove();
+      toast("产物已下载", "ok");
+    }).catch(function (e) {
+      toast(String(e), "err");
+    }).finally(function () {
+      btn.textContent = prev;
+      btn.disabled = !state.token;
+      hint.textContent = "各需一次完整引擎分析";
+    });
+  }
+  $("btn-supports").addEventListener("click", function () {
+    fetchArtifact("supports", $("btn-supports"), $("artifact-hint"));
+  });
+  $("btn-stress-modifier").addEventListener("click", function () {
+    fetchArtifact("stress_modifier", $("btn-stress-modifier"), $("artifact-hint"));
+  });
+})();
 $("btn-capture").addEventListener("click", captureCand);
 // btn-batch is wired via onclick ONLY: runBatch swaps the handler to a
 // batch-cancel mid-run and re-installs itself in finally (same single-wiring

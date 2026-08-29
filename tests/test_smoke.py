@@ -247,19 +247,20 @@ def main():
               st == 200 and pc.get("hill48_safety_factor") is None
               and isinstance(pc.get("plastic_safety_factor"), (int, float)))
 
-        # T12 — REGRESSION (iter 5): the pattern select the UI actually builds
-        # from (params[].options, NOT the dead top-level pm.patterns field)
-        # must carry the engine's real enum, parsed from usage at startup
-        # (was: 7 hardcoded, engine 0.21.0 has 10).
+        # T12 — REGRESSION (iter 5, re-based v0.8): the pattern select the UI
+        # actually builds from (params[].options, NOT the dead top-level
+        # pm.patterns field) must carry the engine's real enum. 0.22+ serves
+        # it from the --schema channel (12 values incl. legacy spellings);
+        # pre-0.22 falls back to the usage-regex probe (10 on 0.21.0).
         st, body = request(port, "GET", "/api/params")
         pm = json.loads(body)
         pat = next((p for p in pm["params"] if p["name"] == "pattern"), {})
         opts = pat.get("options") or []
         sf = pm.get("surface") or {}
-        check("T12 pattern options synced from engine usage",
-              st == 200 and "tri-hexagon" in opts and len(opts) == 10
+        check("T12 pattern options synced from engine surface",
+              st == 200 and "tri-hexagon" in opts and len(opts) >= 10
               and "gyroid" in opts and pat.get("default") in opts
-              and sf.get("patterns_source") == "engine-usage",
+              and sf.get("patterns_source") in ("engine-schema", "engine-usage"),
               "opts=%s src=%r" % (opts, sf.get("patterns_source")))
         check("T12 presets field present (4 entries)",
               len(pm.get("presets") or []) == 4,
@@ -290,18 +291,21 @@ def main():
               and srv.LOAD_TYPES == l4,
               "loads=%r live=%r" % (l4, srv.LOAD_TYPES))
 
-        # T59 — one-click presets (v0.7): /api/params serves 4 presets in
-        # PROFILES order, each covering every PARAM_META name with a value
-        # inside the served slider range (or a legal select option).
+        # T59 — one-click presets (v0.7, re-based v0.8): /api/params serves 4
+        # presets in PROFILES order, each covering every CORE param plus
+        # layer_height (z_ratio/fill_angle deliberately unpreset — the former
+        # is material-relative, the latter a no-op at 0), with values inside
+        # the served slider range (or a legal select option).
         pres = pm.get("presets") or []
         by_name = {}
         for m in pm["params"]:
             by_name[m["name"]] = m
+        core_names = set(by_name) - {"z_ratio", "fill_angle"}
         ok59 = (len(pres) == 4
                 and [p["name"] for p in pres] == srv.PROFILES
                 and all(p.get("label") and p.get("desc") for p in pres))
         for p in pres:
-            if len(p.get("params", {})) != len(by_name):
+            if set((p.get("params") or {})) != core_names:
                 ok59 = False
             for name, val in (p.get("params") or {}).items():
                 m = by_name.get(name)
@@ -503,12 +507,15 @@ def main():
               "got %r" % inp.get("requested_fatigue_cycles"))
 
         # T25 — schema gate shapes (strict numeric equality; fail-loud on
-        # missing/unparseable — a future schema 3 must not misrender)
+        # missing/unparseable). 0.22+ reports are schema 3 (scalar +
+        # *_envelope twins); 2 stays accepted for older engines.
         ck = srv.schema_supported
         check("T25 schema gate shapes",
               ck({"schema_version": 2}) is True
               and ck({"schema_version": 2.0}) is True
-              and ck({"schema_version": 3}) is False
+              and ck({"schema_version": 3}) is True
+              and ck({"schema_version": 3.0}) is True
+              and ck({"schema_version": 4}) is False
               and ck({"schema_version": 2.9}) is False
               and ck({"schema_version": "2"}) is False
               and ck({}) is False
@@ -943,7 +950,7 @@ def main():
                            ui_header=False)
         check("T41 report endpoint lifecycle",
               st41a == 200 and j41a.get("report") is None
-              and st41b == 200 and (j41b.get("report") or {}).get("schema_version") == 2
+              and st41b == 200 and (j41b.get("report") or {}).get("schema_version") in (2, 3)
               and st41c == 200 and cd41 and "stratum-report.json" in cd41
               and st41d == 400,
               "a=%s b=%s c=%s cd=%r d=%s" % (st41a, st41b, st41c, cd41, st41d))
@@ -1235,6 +1242,527 @@ def main():
               r58.returncode in (0, 3),
               ("SKIP(no chrome)" if r58.returncode == 3 else
                (r58.stdout + r58.stderr).strip()[-200:]))
+
+        # T62 — Stratum 0.24 integration: the REAL engine report is schema 3
+        # and the gate accepts it (pre-fix this exact request 502'd); v3 shape
+        # pins: safety_factor is a SCALAR with a *_envelope twin, layer height
+        # and the raised force default echo in input.
+        st, up = upload(port, "v3.stl", STL)
+        st, an = jrequest(port, "POST", "/api/analyze", {"token": up["token"]})
+        rep = an.get("report") or {}
+        pb = rep.get("phase_b") or {}
+        inp = rep.get("input") or {}
+        check("T62 real engine analyze schema v3 end-to-end",
+              st == 200 and rep.get("schema_version") == 3
+              and isinstance(pb.get("safety_factor"), (int, float))
+              and isinstance(pb.get("safety_factor_envelope"), dict)
+              and isinstance(inp.get("layer_height_mm"), (int, float))
+              and inp.get("force_N") == 100,
+              "st=%s schema=%r sf=%r env=%r lh=%r force=%r"
+              % (st, rep.get("schema_version"), pb.get("safety_factor"),
+                 type(pb.get("safety_factor_envelope")).__name__,
+                 inp.get("layer_height_mm"), inp.get("force_N")))
+
+        # T74 — v0.8.1 render-gap batch: the render-source fields for the new
+        # ④ disclosures must exist in a REAL engine report (engine-side
+        # contract pin — a rename upstream breaks the render loudly here,
+        # not as silent "—" cells). Shapes probed 2026-08-29 on 0.24.0.
+        st, up = upload(port, "v081.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze", {"token": up["token"]})
+        rep = an.get("report") or {}
+        pb = rep.get("phase_b") or {}
+        pbd = pb.get("diagnostics") or {}
+        pc = rep.get("phase_c") or {}
+        pd = rep.get("phase_d") or {}
+        prn = rep.get("printability") or {}
+        ra = pb.get("resolution_adequacy") or {}
+        mq = pb.get("mesh_quality") or {}
+        ts = pc.get("thermal_speed") or {}
+        check("T74 real engine report carries render-gap source fields",
+              st == 200
+              and isinstance(prn.get("surface_area_mm2"), (int, float))
+              and ra.get("assessed") is True
+              and isinstance(ra.get("rel_index"), (int, float))
+              and isinstance(mq.get("element_shape"), str)
+              and isinstance(pb.get("tsai_wu_safety_factor"), (int, float))
+              and pbd.get("preconditioner") == "ic0"
+              and isinstance(pbd.get("precond_fallback_count"), int)
+              and ts.get("assessable") is True
+              and isinstance(ts.get("suggested_speed_mms"), (int, float))
+              and pd.get("weibull_ran") is True
+              and isinstance(pd.get("fatigue_life_cycles"), (int, float))
+              and isinstance(rep.get("input_overrides"), list),
+              "st=%s prn=%r ra=%r mq=%r tsai=%r ts=%r wb=%r life=%r"
+              % (st, prn.get("surface_area_mm2"), ra, mq,
+                 pb.get("tsai_wu_safety_factor"), ts.get("assessable"),
+                 pd.get("weibull_ran"), pd.get("fatigue_life_cycles")))
+
+        # T75 — v0.8.1 diagnostics phases: --appearance/--rheology body
+        # switches reach the engine and their blocks come back; a follow-up
+        # run WITHOUT them must drop both blocks (absent-not-null contract,
+        # report-v3.md — the render side gates on presence).
+        st, up = upload(port, "diag.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"],
+                           "appearance": True, "rheology": True})
+        rep = an.get("report") or {}
+        ap = rep.get("appearance") or {}
+        rh = rep.get("rheology") or {}
+        check("T75 appearance+rheology blocks on real engine round-trip",
+              st == 200
+              and isinstance(ap.get("texture_assessment"), str)
+              and isinstance(ap.get("shear_rate_1_s"), (int, float))
+              and isinstance(ap.get("suggestions"), list)
+              and isinstance(rh.get("apparent_viscosity_Pas"), (int, float))
+              and isinstance(rh.get("weld_bond_assessment"), str)
+              and isinstance(rh.get("is_stable"), bool),
+              "st=%s ap=%r rh=%r" % (st, sorted(ap), sorted(rh)))
+        st, an2 = jrequest(port, "POST", "/api/analyze", {"token": up["token"]})
+        rep2 = an2.get("report") or {}
+        check("T75 blocks absent when flags not sent (absent-not-null)",
+              st == 200 and "appearance" not in rep2 and "rheology" not in rep2,
+              "st=%s keys=%r" % (st, [k for k in rep2
+                                      if k in ("appearance", "rheology")]))
+
+        # T76 — v0.8.1 solver diagnostics: --est-error-profile/--resolution-
+        # check body switches reach the engine; blocks carry the documented
+        # keys (est_error_profile.rows[].dim/group per report-v3.md;
+        # phase_b.resolution_check coarse/fine grids).
+        st, up = upload(port, "sol.diag.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"],
+                           "est_error_profile": True, "resolution_check": True})
+        rep = an.get("report") or {}
+        ee = rep.get("est_error_profile") or {}
+        rc = ((rep.get("phase_b") or {}).get("resolution_check")) or {}
+        rows = ee.get("rows") or []
+        check("T76 est-error + resolution-check blocks on real engine",
+              st == 200 and ee.get("ran") is True and len(rows) >= 3
+              and all(set(("dim", "group", "est_ratio", "err"))
+                      <= set(r) for r in rows)
+              and any(r.get("group") == "elastic" for r in rows)
+              and rc.get("coarse_grid") == 16 and rc.get("fine_grid") == 32
+              and isinstance(rc.get("disp_delta_pct"), (int, float)),
+              "st=%s ran=%r rows=%d rc=%r"
+              % (st, ee.get("ran"), len(rows), rc))
+
+        # T77 — v0.8.1 robustness switches: voxel_vote/precond survive
+        # validated_env (bool True only; precond whitelist is the schema
+        # enum), bogus values rejected, and build_analyze_args emits the
+        # solver-diagnostic flags exactly when asked.
+        env_ok = srv.validated_env({"voxel_vote": True, "precond": "jacobi"})
+        try:
+            srv.validated_env({"precond": "bogus"})
+            bogus_rejected = False
+        except ValueError:
+            bogus_rejected = True
+        try:
+            srv.validated_env({"voxel_vote": False})
+            false_rejected = False
+        except ValueError:
+            false_rejected = True
+        argv_plain = srv.build_analyze_args("m.3mf", {}, [], False, "r.json")
+        argv_diag = srv.build_analyze_args(
+            "m.3mf", {}, [], False, "r.json", est_error=True, res_check=True,
+            env={"voxel_vote": True, "precond": "jacobi"})
+        check("T77 voxel-vote/precond env + solver-diagnostic argv",
+              env_ok.get("voxel_vote") is True
+              and env_ok.get("precond") == "jacobi"
+              and bogus_rejected and false_rejected
+              and "--est-error-profile" not in argv_plain
+              and "--resolution-check" not in argv_plain
+              and "--est-error-profile" in argv_diag
+              and "--resolution-check" in argv_diag
+              and "--voxel-vote" in argv_diag
+              and argv_diag[argv_diag.index("--precond") + 1] == "jacobi"
+              and srv.PRECOND_VALUES == ["ic0", "jacobi"],
+              "env=%r bogus=%s false=%s precond=%r"
+              % (env_ok, bogus_rejected, false_rejected, srv.PRECOND_VALUES))
+
+        # T78 — v0.8.1 send-value channels without engine echo: the
+        # retraction/travel/wipe env values survive validated_env, land in
+        # the argv, the engine accepts them (rc=0), and — pinning the HONEST
+        # semantics — the report input block still does NOT echo them. If a
+        # future engine adds an echo, this assertion fails and the UI should
+        # graduate these rows to the normal echo-synced state machine.
+        env_ok = srv.validated_env({"retraction_length": 0.8,
+                                    "retraction_speed": 40,
+                                    "travel_speed": 150})
+        try:
+            srv.validated_env({"wipe": False})
+            wipe_false_rejected = False
+        except ValueError:
+            wipe_false_rejected = True
+        argv_ret = srv.build_analyze_args(
+            "m.3mf", {}, [], False, "r.json",
+            env={"retraction_length": 0.8, "retraction_speed": 40,
+                 "travel_speed": 150, "wipe": True})
+        st, up = upload(port, "ret.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"],
+                           "env": {"retraction_length": 1.2,
+                                   "wipe": True}})
+        rep = an.get("report") or {}
+        check("T78 retraction/travel/wipe send-value (no echo) round-trip",
+              env_ok.get("retraction_length") == 0.8
+              and env_ok.get("travel_speed") == 150
+              and wipe_false_rejected
+              and "--retraction-length" in argv_ret
+              and argv_ret[argv_ret.index("--retraction-length") + 1] == "0.8"
+              and "--wipe" in argv_ret
+              and "--travel-speed" in argv_ret
+              and st == 200 and rep.get("schema_version") == 3
+              and "retraction_length" not in (rep.get("input") or {})
+              and "wipe" not in (rep.get("input") or {})
+              and isinstance((rep.get("orca_suggestions") or {}).get("items"),
+                             list),
+              "st=%s input=%r argv=%s" % (st, sorted((rep.get("input") or {})),
+                                          argv_ret[:14]))
+
+        # T79 — v0.8.1 knobs: per-run grid echo (input.grid_res), Prony
+        # duration echo (input.requested_prony_duration_s), heatmap-bins
+        # argv, and 400s for out-of-domain values.
+        argv_k = srv.build_analyze_args("m.3mf", {}, [], False, "r.json",
+                                        grid=8, heatmap_bins=8,
+                                        heatmap_path="h.json")
+        st, up = upload(port, "knobs.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"], "grid": 8,
+                           "env": {"prony_duration_s": 120}})
+        rep = an.get("report") or {}
+        inp = rep.get("input") or {}
+        st_bad, an_bad = jrequest(port, "POST", "/api/analyze",
+                                  {"token": up["token"], "grid": 300})
+        st_bins, an_bins = jrequest(port, "POST", "/api/analyze",
+                                    {"token": up["token"],
+                                     "heatmap_bins": 1})
+        check("T79 per-run grid + prony echo + heatmap-bins + domain 400s",
+              "--grid" in argv_k and argv_k[argv_k.index("--grid") + 1] == "8"
+              and "--heatmap-bins" in argv_k
+              and argv_k[argv_k.index("--heatmap-bins") + 1] == "8"
+              and st == 200 and inp.get("grid_res") == 8
+              and inp.get("requested_prony_duration_s") == 120
+              and st_bad == 400 and "4-128" in (an_bad.get("error") or "")
+              and st_bins == 400 and "2-64" in (an_bins.get("error") or ""),
+              "st=%s grid_res=%r prony=%r bad=%s/%s"
+              % (st, inp.get("grid_res"),
+                 inp.get("requested_prony_duration_s"),
+                 st_bad, st_bins))
+
+        # T80 — v0.8.1 estimator calibration: --cal-time/--cal-mass reach the
+        # engine with a compare run (estimator surface runs) → top-level
+        # `calibration` block applied:true with factors, and the candidate
+        # estimates carry calibrated:true (the ⑤ tooltip reads it). A plain
+        # run without cal values must NOT carry the block.
+        st, up = upload(port, "cal.3mf", TMF)
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"], "compare": True,
+                           "env": {"cal_time_s": 1200, "cal_mass_g": 15.5}})
+        rep = an.get("report") or {}
+        cal = rep.get("calibration") or {}
+        cands = ((rep.get("process_optimization") or {}).get("candidates")
+                 or [])
+        est0 = (cands[0].get("estimate") or {}) if cands else {}
+        st2, an2 = jrequest(port, "POST", "/api/analyze",
+                            {"token": up["token"], "compare": True})
+        rep2 = an2.get("report") or {}
+        check("T80 cal-time/cal-mass calibration block round-trip",
+              st == 200 and cal.get("applied") is True
+              and isinstance(cal.get("time_factor"), (int, float))
+              and isinstance(cal.get("mass_factor"), (int, float))
+              and cal.get("measured_time_s") == 1200
+              and est0.get("calibrated") is True
+              and st2 == 200 and "calibration" not in rep2,
+              "st=%s cal=%r est=%r st2=%s"
+              % (st, cal, est0.get("calibrated"), st2))
+
+        # T81 — v0.8.1 external baseline profile: JSON text rides the body;
+        # server validates (parse/object/size), stages a temp file, and the
+        # engine applies the values where neither CLI nor 3MF speak (STL
+        # input → walls/layer_height come from the base profile). Invalid
+        # JSON / non-object bodies are 400 with zero side effects.
+        st, up = upload(port, "baseprof.stl", STL)
+        good = json.dumps({"layer_height": 0.3, "wall_loops": 4})
+        st, an = jrequest(port, "POST", "/api/analyze",
+                          {"token": up["token"], "base_profile": good})
+        rep = an.get("report") or {}
+        inp = rep.get("input") or {}
+        st_bad, an_bad = jrequest(port, "POST", "/api/analyze",
+                                  {"token": up["token"],
+                                   "base_profile": "{not json"})
+        st_arr, an_arr = jrequest(port, "POST", "/api/analyze",
+                                  {"token": up["token"],
+                                   "base_profile": "[1,2]"})
+        check("T81 base-profile staging + validation + engine application",
+              st == 200 and inp.get("walls") == 4
+              and inp.get("layer_height_mm") == 0.3
+              and st_bad == 400 and "JSON" in (an_bad.get("error") or "")
+              and st_arr == 400 and "对象" in (an_arr.get("error") or ""),
+              "st=%s walls=%r lh=%r bad=%s arr=%s"
+              % (st, inp.get("walls"), inp.get("layer_height_mm"),
+                 st_bad, st_arr))
+
+        # T82 — v0.8.1 artifact exports: kind whitelist, real-engine
+        # round-trip produces a solid ASCII STL for both kinds (magic bytes
+        # "solid " — engine-authored content, never the request body), and a
+        # bad kind is a 400.
+        st, up = upload(port, "art.stl", STL)
+        st, data = request(port, "POST", "/api/export-artifact",
+                           json.dumps({"token": up["token"],
+                                       "kind": "stress_modifier"}),
+                           {"Content-Type": "application/json"})
+        sm_head = data[:6]
+        st2, data2 = request(port, "POST", "/api/export-artifact",
+                             json.dumps({"token": up["token"],
+                                         "kind": "supports"}),
+                             {"Content-Type": "application/json"})
+        sup_head = data2[:6]
+        st_bad, an_bad = jrequest(port, "POST", "/api/export-artifact",
+                                  {"token": up["token"], "kind": "bogus"})
+        check("T82 artifact exports (supports / stress_modifier) round-trip",
+              st == 200 and sm_head == b"solid "
+              and st2 == 200 and sup_head == b"solid "
+              and st_bad == 400,
+              "st=%s sm=%r st2=%s sup=%r bad=%s"
+              % (st, sm_head, st2, sup_head, st_bad))
+
+        # T83 — v0.8.1 --apply-orca writeback mode: 3mf+writable gates hold,
+        # the engine writes a suggestion-only 3MF (PK magic, non-empty), and
+        # a bogus mode is a 400. STL input stays gated out (no config to
+        # write suggestions into).
+        st, up3 = upload(port, "orca.3mf", TMF)
+        st, data = request(port, "POST", "/api/export",
+                           json.dumps({"token": up3["token"], "mode": "orca"}),
+                           {"Content-Type": "application/json"})
+        st_stl, up_stl = upload(port, "orca.stl", STL)
+        st_gate, an_gate = jrequest(port, "POST", "/api/export",
+                                    {"token": up_stl["token"], "mode": "orca"})
+        st_bad, an_bad = jrequest(port, "POST", "/api/export",
+                                  {"token": up3["token"], "mode": "bogus"})
+        check("T83 apply-orca writeback mode round-trip",
+              st == 200 and data[:2] == b"PK" and len(data) > 1000
+              and st_gate == 400 and st_bad == 400,
+              "st=%s magic=%r len=%d gate=%s bad=%s"
+              % (st, data[:2], len(data), st_gate, st_bad))
+
+        # T63 — status-marker contract (engine 0.22+): pure-function coverage
+        # of load_report_marker/refusal_text. The HTTP branch itself is
+        # cross-process (server is a subprocess) and gets real-engine
+        # coverage once --validate is UI-wired (v0.8 iter 2).
+        import tempfile as _tf
+        _mdir = _tf.mkdtemp(prefix="stratum_marker_")
+        refused = os.path.join(_mdir, "refused.json")
+        with open(refused, "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 3, "tool": "stratum",
+                       "status": "validation_refused",
+                       "validation": {"tier": "strict", "passed": False,
+                                      "findings": [{"code": "boundary_edges",
+                                                    "fatal": True, "count": 4,
+                                                    "hint": "watertight"}]},
+                       "mesh_topology": {"boundary_edges": 4}}, fh)
+        cancelled = os.path.join(_mdir, "cancelled.json")
+        with open(cancelled, "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 3, "tool": "stratum",
+                       "status": "cancelled",
+                       "completed_stages": ["start"], "note": "x"}, fh)
+        normal = os.path.join(_mdir, "normal.json")
+        with open(normal, "w", encoding="utf-8") as fh:
+            json.dump({"schema_version": 3, "tool": "stratum"}, fh)
+        garbage = os.path.join(_mdir, "garbage.json")
+        with open(garbage, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        m_ref = srv.load_report_marker(refused)
+        m_can = srv.load_report_marker(cancelled)
+        check("T63 status marker load + refusal text",
+              isinstance(m_ref, dict)
+              and m_ref["validation"]["findings"][0]["code"] == "boundary_edges"
+              and isinstance(m_can, dict) and m_can["status"] == "cancelled"
+              and srv.load_report_marker(normal) is None
+              and srv.load_report_marker(garbage) is None
+              and srv.load_report_marker(os.path.join(_mdir, "nope.json")) is None
+              and "strict" in srv.refusal_text(m_ref)
+              and "standard" in srv.refusal_text(m_ref))
+        import shutil as _shutil
+        _shutil.rmtree(_mdir, ignore_errors=True)
+
+        # T64 — --schema probe priority: with a real 0.22+ binary the param
+        # surface sources come from the structured schema channel (not the
+        # usage regex), nothing was charset-filtered, and the lock surface is
+        # engine-authoritative — including the retraction family, while
+        # layer_height has graduated to a slider (v0.8) and must NOT appear
+        # in the lock-only extras.
+        check("T64 --schema-driven surface probe",
+              srv.PATTERNS_SOURCE == "engine-schema"
+              and srv.MATERIALS_SOURCE == "engine-schema"
+              and srv.LOADS_SOURCE == "engine-schema"
+              and srv.SURFACE_FILTERED == []
+              and "retraction_length" in srv.EXTRA_LOCKS
+              and "layer_height" not in srv.EXTRA_LOCKS,
+              "patterns=%s filtered=%r locks=%s"
+              % (srv.PATTERNS_SOURCE, srv.SURFACE_FILTERED,
+                 srv.EXTRA_LOCKS_SOURCE))
+
+        # T65 — engine_version prefers the --schema `version` field over the
+        # bundle VERSION.txt (which can lag a synced binary — 0.21 text vs
+        # 0.24 exe, the 2026-08-28 drift); status endpoint reports it.
+        ver = srv.engine_version(srv.BINARY)
+        st65, body65 = request(port, "GET", "/api/status")
+        j65 = json.loads(body65)
+        check("T65 engine_version from --schema probe",
+              re.match(r"^\d+\.\d+\.\d+$", ver) is not None
+              and ver == srv._SCHEMA_CACHE.get("version")
+              and st65 == 200 and j65.get("engine_version") == ver
+              and j65.get("schema_supported") == [2, 3],
+              "ver=%r cache=%r status=%r" % (ver, srv._SCHEMA_CACHE.get("version"),
+                                             j65.get("engine_version")))
+
+        # T66 — v0.8 params round-trip (real engine): layer_height/z_ratio/
+        # fill_angle reach the engine and echo in the input block.
+        st, up = upload(port, "v08.stl", STL)
+        st, an = jrequest(port, "POST", "/api/analyze", {
+            "token": up["token"],
+            "params": {"layer_height": 0.28, "z_ratio": 0.6, "fill_angle": 45}})
+        inp = ((an.get("report") or {}).get("input") or {})
+        check("T66 v0.8 params echo (layer_height/z_ratio/fill_angle)",
+              st == 200 and inp.get("layer_height_mm") == 0.28
+              and inp.get("z_strength_ratio") == 0.6
+              and inp.get("requested_fill_angle_deg") == 45,
+              "lh=%r z=%r fill=%r err=%r"
+              % (inp.get("layer_height_mm"), inp.get("z_strength_ratio"),
+                 inp.get("requested_fill_angle_deg"), an.get("error")))
+
+        # T67 — v0.8 select whitelists: machine accepted (engine identifies
+        # it), unknown machine rejected 400 BEFORE the engine runs (the
+        # --load silent-fallback precedent: never forward what the engine
+        # would drop or reject mid-run).
+        st, up2 = upload(port, "mach.stl", STL)
+        st_ok, an_ok = jrequest(port, "POST", "/api/analyze", {
+            "token": up2["token"], "env": {"machine": "X1C"}})
+        ml = ((an_ok.get("report") or {}).get("machine_limits") or {})
+        st_bad, an_bad = jrequest(port, "POST", "/api/analyze", {
+            "token": up2["token"], "env": {"machine": "NOT_A_PRINTER"}})
+        check("T67 machine select whitelist + identification",
+              st_ok == 200 and ml.get("identified") == "X1C"
+              and st_bad == 400,
+              "ok=%s ml=%r bad=%s %r"
+              % (st_ok, ml.get("identified"), st_bad, an_bad.get("error")))
+
+        # T68 — validated_env unit cases (bool flags pass only True; axis
+        # whitelist; numeric type-gate unchanged).
+        ve = srv.validated_env({"fast": True, "repair_orientation": True,
+                                "torsion_axis": "y", "layer_time_s": 12.0})
+        ve_ok = (ve.get("fast") is True and ve.get("torsion_axis") == "y"
+                 and ve.get("layer_time_s") == 12)
+        try:
+            srv.validated_env({"fast": False})
+            ve_fast_false = False
+        except ValueError:
+            ve_fast_false = True
+        try:
+            srv.validated_env({"torsion_axis": "w"})
+            ve_axis_bad = False
+        except ValueError:
+            ve_axis_bad = True
+        check("T68 validated_env v0.8 kinds (bool/select/num)",
+              ve_ok and ve_fast_false and ve_axis_bad,
+              "ok=%r fastfalse=%r axisbad=%r" % (ve_ok, ve_fast_false, ve_axis_bad))
+
+        # T69 — REAL strict-validation refusal over HTTP (engine 0.22+
+        # status marker): open (non-watertight) mesh + --validate strict →
+        # rc=1, the report file is a marker, the server translates it into
+        # a structured 422 (findings ride through for the ④ inline render).
+        OPEN = os.path.join(ROOT, "test_data", "open_triangle.stl")
+        st, up3 = upload(port, "open.stl", OPEN)
+        st_ref, ref = jrequest(port, "POST", "/api/analyze", {
+            "token": up3["token"], "env": {"validate_tier": "strict"}})
+        check("T69 strict validation refusal (structured 422)",
+              st_ref == 422 and ref.get("status") == "validation_refused"
+              and isinstance(ref.get("validation"), dict)
+              and (ref["validation"].get("findings") or [{}])[0].get("code")
+                  == "boundary_edges"
+              and isinstance(ref.get("mesh_topology"), dict),
+              "st=%s status=%r val=%r"
+              % (st_ref, ref.get("status"), ref.get("validation")))
+
+        # T70 — --fast preview flag: input.fast_mode discloses the capped run
+        st, an_fast = jrequest(port, "POST", "/api/analyze", {
+            "token": up2["token"], "fast": True})
+        inp_fast = (an_fast.get("report") or {}).get("input") or {}
+        st_std, an_std = jrequest(port, "POST", "/api/analyze", {
+            "token": up2["token"]})
+        inp_std = (an_std.get("report") or {}).get("input") or {}
+        check("T70 --fast disclosed via input.fast_mode",
+              st == 200 and inp_fast.get("fast_mode") is True
+              and st_std == 200 and inp_std.get("fast_mode") is False,
+              "fast=%r std=%r" % (inp_fast.get("fast_mode"),
+                                  inp_std.get("fast_mode")))
+
+        # T71 — heatmap channel (v0.8): the engine's --heatmap-json payload
+        # rides the analyze response (sparse bins³ grid, real von Mises data).
+        st, an_hm = jrequest(port, "POST", "/api/analyze", {"token": up["token"]})
+        hm = an_hm.get("heatmap") or {}
+        vm_vals = [b.get("von_mises_max_mpa") or 0 for b in hm.get("bins", [])]
+        check("T71 heatmap passthrough on analyze",
+              st == 200 and hm.get("bins_dim") == 16
+              and isinstance(hm.get("bins"), list) and len(hm["bins"]) > 0
+              and any(v > 0 for v in vm_vals)
+              and all("center_mm" in b for b in hm.get("bins", [])),
+              "bins=%r dim=%r" % (len(hm.get("bins", [])), hm.get("bins_dim")))
+
+        # T72 — progress endpoint shapes (v0.8): idle → running false + null
+        # progress (no fake tail); unknown token → 400.
+        st_i, p_i = jrequest(port, "GET", "/api/progress?token=" + up["token"], None)
+        st_u, p_u = jrequest(port, "GET", "/api/progress?token=deadbeefdeadbeef", None)
+        check("T72 /api/progress idle + unknown-token shapes",
+              st_i == 200 and p_i.get("running") is False
+              and p_i.get("progress") is None and st_u == 400,
+              "idle=%s %r unknown=%s" % (st_i, p_i, st_u))
+
+        # T73 — real mid-run progress: the ANALYZE_DELAY slow runner emits
+        # one NDJSON progress line (stage fem, 42%); a polling client sees
+        # running=true + that exact stage mid-run, and idle again after.
+        port6 = free_port()
+        proc6 = subprocess.Popen(
+            [sys.executable, os.path.join(ROOT, "server.py")],
+            env=dict(env, STRATUM_UI_PORT=str(port6),
+                     STRATUM_UI_ANALYZE_DELAY="3"),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(50):
+                try:
+                    st, body = request(port6, "GET", "/api/status", ui_header=False)
+                    if st == 200:
+                        break
+                except OSError:
+                    time.sleep(0.2)
+            st, up6 = upload(port6, "prog.stl", STL)
+            ana6 = {}
+            def _slow6():
+                ana6["resp"] = jrequest(port6, "POST", "/api/analyze",
+                                        {"token": up6["token"]})
+            t6 = threading.Thread(target=_slow6)
+            t6.start()
+            seen = None
+            for _ in range(40):
+                time.sleep(0.15)
+                _, pj = jrequest(port6, "GET",
+                                 "/api/progress?token=" + up6["token"], None)
+                if pj.get("progress"):
+                    seen = pj
+                    break
+            t6.join(timeout=20)
+            _, pj_end = jrequest(port6, "GET",
+                                 "/api/progress?token=" + up6["token"], None)
+            check("T73 mid-run progress polled from stderr NDJSON",
+                  seen is not None and seen.get("running") is True
+                  and seen["progress"].get("stage") == "fem"
+                  and seen["progress"].get("pct") == 42
+                  and not t6.is_alive()
+                  and pj_end.get("progress") is None,
+                  "seen=%r end=%r" % (seen, pj_end.get("progress")))
+        finally:
+            proc6.terminate()
+            proc6.wait(timeout=10)
     finally:
         proc.terminate()
         proc.wait(timeout=10)

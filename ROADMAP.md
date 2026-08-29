@@ -1,11 +1,11 @@
 # Stratum-WebUI 路线图
 
 > 建立于 2026-08-18，紧随当日 40 分钟对抗迭代会话（server 输入校验 + 请求闸两轮修复，
-> 见 `loop-journal.md`）。所有契约证据来自 **引擎 0.21.0 一手源探针**（无参 usage 83 行
-> + JSON v2 报告全结构 dump），非文档转述。
+> 见 `loop-journal.md`）。契约证据来自 **引擎一手源探针**（`--schema` 机器可读输出、
+> 无参 usage、JSON 报告全结构 dump），非文档转述。
 >
 > 用法：随迭代勾销 `- [ ]`；引用代码处用函数/符号名（行号会漂移）；契约证据表注明
-> 版本，引擎升级时**必须重验**再沿用结论。
+> 版本，引擎升级时**必须重验**再沿用结论。0.24.0 重验记录见 v0.8 节。
 
 ## 0. 架构红线（所有方向不许破）
 
@@ -13,14 +13,15 @@
 2. **引擎是唯一事实源**：Python/JS 不复制任何评分/钳制/锁定规则，只渲染引擎 JSON；
    UI 侧编排（多次调用、批量候选）不算复制规则。
 
-## 1. 契约现状证据（引擎 0.21.0，实测于 2026-08-18）
+## 1. 契约现状证据（【v0.8 已按引擎 0.24.0 重验，2026-08-28】）
 
 | # | 发现 | 证据 | 含义 |
 |---|---|---|---|
-| E1 | 报告大量字段未被 UI 消费 | 【2026-08-19 已大部分解决】`phase_c`/`phase_d`/`trust`/`warnings` 面板均已入 UI（会话 2）；仍遗留：sidecar diff/pareto 已入 ⑥ 面板，`findley` 渲染就位但触发条件未知（引擎侧），`--layer-time`/`--explain` flag 未接 | 屈曲/疲劳/分层正是"可打印性风险"工具的核心产出——零引擎改动即可大幅扩容价值 |
-| E2 | 参数面已漂移 | 【2026-08-19 已解决】`PATTERNS` 现由引擎 usage 探针运行时解析（`_probe_surface`），7 种硬编码仅作 fallback；README 参数面描述改为动态探针口径 | 静态硬编码契约必漂移；usage 还暴露 `--layer-time` `--strict-tier` `--explain` `--sidecar-json` `--dry-run` 等 UI 未接 flag |
-| E3 | lock 面远大于 UI 参数面 | usage 明示 lock 接受 layer_height / load / outer_wall_speed / retraction_length / retraction_speed / wipe / travel_speed 及 **OrcaSlicer 键**（brim_width、support_angle…）；实测 `--lock layer_height` rc=0、`--lock nozzle` rc=1（lock 命名空间=参数名，非 flag 名） | lock 只做类型闸不收紧白名单的既有决策（loop-journal 迭代 1）继续成立；锁 layer_height 等 UI 侧即可做 |
-| E4 | 引擎错误信息 doc 漂移 | `--lock` 报错让用户 `run with --help`，但 `--help` 被当模型文件名解析；真正的发现面是**无参 usage** | 已列引擎队压力点 #1 |
+| E1 | 报告大量字段未被 UI 消费 | 【2026-08-19 已解决 + 0.24 新面已接】v0.8 接入 `machine_limits`/`mesh_topology`/热图/`fast_mode`/`input.layer_height_mm` 等新块；仍未消费：`est_error_profile`（需 `--est-error-profile`）、gcode 调优通道 | 核心产出均已入 UI |
+| E2 | 参数面漂移 | 【0.24 重验】`--schema`（0.22+）成为一手源：12 pattern 值（含 legacy 拼写）、4 材料、11 机型、4 校验档；server 优先 `--schema` JSON，usage 正则降为旧引擎回退（`probe_schema`） | 结构化契约终结了正则解析时代 |
+| E3 | lock 面远大于 UI 参数面 | 【0.24 重验】`lockable_parameters` 现含完整 Orca 键面（brim_width、pressure_advance…）；`layer_height` 已升级为滑杆（v0.8），从 lock-only 退役 | lock 复选框仍为类型闸不收紧白名单 |
+| E4 | 引擎错误信息 doc 漂移 | 【0.24 未变】无参 usage 仍是发现面；`--schema` 出现后 UI 主路径已不依赖错误文本 | — |
+| E5 | 【v0.8 新】schema v2→v3 破坏性变更 | 5 个不确定度字段 plain 名变标量、区间移入 `*_envelope` 孪生（`docs/schema/report-v3.md`）；`status:"validation_refused"/"cancelled"` 标记替换报告文件；`--force` 默认 10→100 N | 消费者 keyed on v2 会静默拿错类型——schema 闸 + numEnv 双形态是硬防线 |
 
 ## 2. 方向与里程碑（推荐序；决策点 D1 可能调整 2/3 顺序）
 
@@ -130,14 +131,109 @@
   browser E2E 新增预设 3 项（4 按钮渲染且启用、简单模式滑杆隐藏而预设面板可见、
   点击「安全」→ walls=5 并重分析）；README 记 0 参数流程
 
+### v0.8 — 引擎 0.24.0 全量接入（2026-08-28，三迭代会话）
+
+> 起点状态：`bin/stratum.exe` 已被 sync 到 0.24.0，但 schema 闸仍是 `(2,)`——
+> 每次分析 502，WebUI 实际处于不可用状态（E5）。本节即"解阻塞 + 全量接入"。
+
+- [x] a) **解阻塞（iter 1）**：`SUPPORTED_SCHEMA=(2,3)`；`status:"validation_refused"`
+      /`"cancelled"` 标记在 rc!=0 路径优先识别（`load_report_marker`/`send_marker_response`，
+      结构化 422）；`numEnv/fmtUnit` v2 对象与 v3 标量+孪生双形态；`cp-lh` 改用
+      `input.layer_height_mm` 回显（候选 diff 抓取降为旧引擎回退）；`--schema` 探针
+      （`probe_schema`，usage 正则降为回退）；`engine_version` 优先 schema `version`
+      字段（修复 VERSION.txt 0.21 文本 vs 0.24 二进制漂移）；fixture `report-v3.json`
+      重生成（旧 v2 `report.json` 保留作双形态渲染回归样本）；UI 0.8.0
+- [x] b) **参数面扩容（iter 2）**：滑杆 += layer_height/z_ratio/fill_angle（域来自
+      `--schema` value_flags，`_apply_schema_domains` 覆盖层）；③b += layer-time/
+      扭转轴/机器型号（含自动档）/校验档位/修复朝向；① += 快速预览 `--fast`；
+      `validated_env` 扩 select 白名单（machine/axis/validate，防静默回退/引擎 400）
+      与 bool 白名单；预设表加 layer_height（0.16/0.2/0.28/0.12；z_ratio/fill_angle
+      有意不预设）；④ 新增 mesh_topology 审计与 machine_limits（identified/source/
+      clamps from→to）面板；④ validation_refused 内联 findings 渲染
+- [x] c) **进度 + 热图（iter 3）**：`--progress-json` stderr NDJSON → 增量泵线程
+      （`_run_proc_with_inflight` 重写：stderr 泵 + Timer 超时，旧 `communicate`
+      无法增量读）→ `GET /api/progress`（运行代际闸防旧泵覆盖新 run）→ 客户端
+      500ms 轮询「分析中 42% · fem」（无进度回退秒表）；`--heatmap-json` → 响应
+      `heatmap` 字段（缺失/坏文件 = 降级不阻塞）→ `stlSetHeatmap` 体素立方体渲染
+      （着色器加 aColor/uHeat；热图激活时替换网格视图——bins 填充零件内部，叠加
+      会被表面遮挡）+ ④ 面板开关/着色源切换/图例；`_FALLBACK_FLAGS` += 两个新通道
+      flag（旧引擎剥离重试）
+- 验证：`tests/test_smoke.py` 92/92（T62-T73 新增：v3 端到端、状态标记、schema
+  探针、新参数回显、机器白名单、validated_env、真引擎 strict 拒绝 422、fast 披露、
+  热图透传、进度端点形状、慢钩子中段进度轮询）；`browser_render_check.js` 新增
+  v3 fixture 渲染/numEnv 拒绝盒/新滑杆/机器与拓扑面板/真引擎热图像素级断言；
+  截图 `gui-test-screenshots/v08-*.png`（热图开/网格视图/简单模式）
+- 明确不做（backlog）：`--gcode-in/out` 应力调优、`--apply-orca` 独立写回、
+  `--base-profile`、`--precond`、`--voxel-vote`/`--resolution-check` 开关、
+  retraction 族滑杆（引擎不回显 input）、预设加 z_ratio（材料相对值）
+
+### v0.8.1 — 引擎 0.24 全契约面补齐（2026-08-29，本节即缺口表 + 完成记录）
+
+> 方法：以 `bin/stratum.exe --schema`（26 value + 8 enum + 21 bool + 11 path +
+> 3 number + 76 lockable）、`--help`、全 flag 真跑报告 + 8 个可选块实测为一手源，
+> 逐项 diff「引擎有什么 vs UI 接了什么」，产出缺口表后按价值排序逐项补齐。
+> 兼容性中立：v0.8 遗留垫片（usage 正则回退、flag 剥离重试、schema v2 闸）不碍事
+> 全部保留，不为清理而清理。
+
+缺口表（契约项 / UI 现状 → 处置）：
+
+- [x] **渲染面批量**（报告已带回、UI 未消费）：`input.fast_mode` ④ 预览级标签；
+      `filament_slots`+`analysis_material_note`（② 多喷嘴披露）；`input_overrides`
+      回退清单；`printability` 量化行；`phase_c.thermal_speed`（热-速闭环）与
+      `weld_infill_aware`；`phase_b.resolution_adequacy`(ZZ-SPR)/`tsai_wu_safety_factor`/
+      `mesh_quality`/`diagnostics.preconditioner+precond_fallback_count`；
+      `phase_d.skipped_reasons`/`fatigue_life_cycles+damage_per_cycle`/
+      `weibull_R+Pf+size_factor+sigma_eff_mpa`；建议项 `confidence`+
+      `est_safety_factor+est_max_stress`；候选 `policy_applied`+
+      `verification_dimensions`+校准悬停（同名陷阱：顶层 `calibrated`=SF 外推
+      含义恒 false，cal 校准在 `estimate.calibrated`——GUI 冒烟抓出，T 渲染检查
+      钉住）；机器限制层高带 0/0 未知不再渲染（2026-08-29 完成）
+- [x] **`--appearance` + `--rheology`**：① 开关 → ④「外观评估」「流变诊断」面板
+      （引擎评估串 verbatim，absent-not-null 整块隐藏）；body 级开关，批量同
+      orient 的整批开关模式（T75 round-trip + 缺省断言）
+- [x] **`--est-error-profile` + `--resolution-check`**：① 开关 → ④ 误差表
+      （elastic/process 组分列、`-1` 哨兵显示「—」、`process_dims_note` 原文）+
+      Phase B 校验行（粗/细网格 delta、capped、收敛态）（T76）
+- [x] **`--voxel-vote` + `--precond`**：③b 行（bool + select 自动档不发 flag；
+      precond 枚举来自 `--schema` enum_flags 探针 `_enum_values`）（T77）
+- [x] **retraction/travel/wipe 发送值通道**：③b 行，诚实语义（行悬停 + 面板脚注
+      明示「引擎不回显、设值即钉住」；T78 钉住 no-echo 契约——引擎将来补回显时
+      该断言失败，提醒升级为常规回显状态机）
+- [x] **`--prony-duration` + `--heatmap-bins` + 每次运行 `--grid`**：③b（有回显）
+      / ④ 热图面板 bins 旋钮（2..64）/ ① 网格直输（4..128 服务端 400 预检；
+      批量同 grid 整批开关）（T79）
+- [x] **`--cal-time`/`--cal-mass`**：③b 数字直输（0=不发送 `zeroUnset`；range
+      滑杆 step 吸附会发 1201/16——GUI 冒烟抓出后改直输）→ ④「估算校准」面板
+      （applied/reason/factors/measured/predicted/notes）+ ⑤ 候选悬停（T80）
+- [x] **`--base-profile`**：① 面板 JSON 文件上传 → 客户端读文本随 body 发送 →
+      服务端预检（非空/256KB/JSON 对象）落私有临时盘 → 传路径；STL/裸 3MF 上
+      walls/layer_height 等空位被填充；键面合法性引擎裁定（T81）
+- [x] **导出族 `--generate-supports` + `--stress-modifier`**：④ 下载按钮行 →
+      `POST /api/export-artifact`（kind 白名单，整跑一次引擎分析后回传 STL；
+      空支撑也导出空实体——引擎语义）（T82）
+- [x] **`--apply-orca` 写回模式**：⑤「仅写回 Orca 建议」→ `/api/export` body
+      `mode:"orca"`；3MF+writable 闸、`--strict-tier` 复用；引擎该通道不产
+      sidecar（0.24.0 实测），UI 文案如实标注（T83）
+- [ ] **挂账（未接，含原因）**：`--gcode-in/out`+`--gcode-vm-floor/m-hot/p-hi`
+      应力调优工作流（最重：G-code 上传+成对 flag+`<out>.tune.json` 审计渲染，
+      本轮裁决挂账）；`--vtk` ParaView 导出（④ 已有热图，用户面窄）；
+      `--phase-a` 仅几何模式（`--fast` 已覆盖快扫；phase-a 会让 ④ 大半面板
+      空转，需成套空态处理）；`--drucker-prager`（引擎 no-op 兼容位）、
+      `--report`（文本通道）、`--optimize`（`--compare-profiles` 子集）= 非缺口
+
+验证：`tests/test_smoke.py` 103/103（T74-T83 新增，全部真引擎 round-trip 为准）；
+`report_render_check.js` 53 项（v0.8.1 新块 20 项，形状取自 2026-08-29 真跑探针）；
+`browser_render_check.js` 全绿；GUI 冒烟截图 `gui-test-screenshots/v081-*.png`
+（开关行/③b 新行/诊断面板/估算校准，无头 Chrome CDP 管线）。UI 0.8.1。
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 - [x] a) WebUI 侧可先行（2026-08-19 完成主体）：STL WebGL 预览（自研 ~240 行，零依赖保红线 1；
       包围盒定中心/拖拽旋转/滚轮缩放）+ **方向候选箭头 overlay**（iter 63：④ 表行点击 ↔ 预览
       箭头高亮，readPixels 像素级验证；遗留子项：点击自动旋转对齐——rx*ry Euler 反解 + z-up
       交换为 iter 42 高危区，留专项轮；3MF 几何预览超零依赖红线待评估）
-- [ ] b) 风险热图：**需引擎扩 JSON 逐区域/几何定位字段**（现 risks 只有文本
-      `key_points`、phase_b 是标量）——依赖引擎队压力点 #3
+- [x] b) 风险热图：【v0.8 已落地】引擎 0.22+ 提供 `--heatmap-json`（bins³ 聚合），
+      压力点解除——3D 体素视图 + 图例见 v0.8 c)
 - 争议：内嵌 three.js（破红线 1，inline ~600KB）vs 自研最小 WebGL STL 渲染
   （~200 行，红线可保）——见 D2
 

@@ -1,17 +1,18 @@
-Stratum SDK 0.21.0 (Windows x64, MSVC 2022)
+Stratum SDK 0.24.0 (Windows x64, MSVC 2022)
 ============================================
 FDM Structural Printability Analyzer
 
 Build:  cmake -B build_msvc -DSTRATUM_BUILD_SHARED=ON
         cmake --build build_msvc --config Release
-        cmake --install build_msvc --prefix stratum-sdk-0.21.0
+        cmake --install build_msvc --prefix stratum-sdk-0.24.0
 
 Contents (see docs/sdk/MANIFEST.md for the canonical capability list):
   include/stratum/                - public C++ headers (umbrella: stratum.h)
   include/stratum/stratum_physics/ - 5 lightweight physics headers
   bin/
     stratum.exe                   - CLI: stratum <model> --phase-c --json report.json
-                                    (UI / scripts subprocess this for the JSON v2 report)
+                                    (UI / scripts subprocess this for the JSON v3 report;
+                                     schema surfaced via `stratum --schema`)
     stratum_shared.dll            - full C++ API + C API (shared, ~3300+ exports)
   lib/
     stratum_core.lib              - core engine (static)

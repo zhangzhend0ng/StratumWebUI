@@ -102,6 +102,56 @@ async function main() {
            await evalJs("(function(){var t=document.querySelectorAll('#cand-body td[title]');for (var i=0;i<t.length;i++){if(t[i].title.indexOf('材料 ')>=0)return true}return false})()"));
     expect("real page: SF source tooltip",
            await evalJs("(function(){var t=document.querySelectorAll('#cand-body td[title]');for (var i=0;i<t.length;i++){if(t[i].title.indexOf('SF 来源')>=0)return true}return false})()"));
+
+    // (v0.8 iter 1) schema v3 fixture (real 0.24 engine output): the v3 rule
+    // is "plain field = scalar, band = *_envelope twin". numEnv must show the
+    // KPI band from the TWIN (not "—"/NaN), layer height must come from the
+    // input echo (not the old candidate-diff scrape), and a successful render
+    // must keep/hide the --validate refusal box.
+    const report3 = fs.readFileSync(
+      path.join(ROOT, "test_data", "real3mf-results", "report-v3.json"), "utf8");
+    await evalJs("window.__r3 = " + report3 + "; 1");
+    const threw3 = await evalJs(
+      "(function(){try{renderReport(window.__r3,'');return 'no'}catch(e){return String(e)}})()");
+    expect("v3 fixture: renderReport did not throw", threw3 === "no", threw3);
+    expect("v3 fixture: res-sf band from *_envelope twin",
+           await evalJs("document.getElementById('res-sf').textContent.indexOf('(') >= 0"));
+    expect("v3 fixture: cp-lh from input.layer_height_mm echo",
+           await evalJs("document.getElementById('cp-lh').textContent.indexOf('0.2 mm') >= 0"));
+    expect("v3 fixture: refusal box hidden after clean render",
+           await evalJs("document.getElementById('validate-refused').style.display === 'none'"));
+    // --validate refusal rendering (server 422 payload shape)
+    const vr = JSON.parse(await evalJs(
+      "(function(){renderValidationRefused({status:'validation_refused'," +
+      "error:'x',validation:{tier:'strict',passed:false,findings:[" +
+      "{code:'boundary_edges',fatal:true,count:4,hint:'non-watertight'}]}," +
+      "mesh_topology:{boundary_edges:4}});" +
+      "var b=document.getElementById('validate-refused');" +
+      "return JSON.stringify({shown:b.style.display!=='none'," +
+      "fatal:b.textContent.indexOf('致命')>=0," +
+      "code:b.textContent.indexOf('boundary_edges')>=0," +
+      "tier:b.textContent.indexOf('strict')>=0})})()"));
+    expect("v3 fixture: renderValidationRefused lists findings inline",
+           vr.shown && vr.fatal && vr.code && vr.tier, JSON.stringify(vr));
+
+    // (v0.8 iter 2) new surface wiring on the real page
+    expect("v0.8: layer_height slider rendered",
+           await evalJs("!!document.querySelector('input[data-param=layer_height]')"));
+    expect("v0.8: machine select rendered with auto option",
+           await evalJs("(function(){var s=document.querySelector('select[data-env=machine]');return !!s && s.options.length>=2 && s.options[0].value===''})()"));
+    await evalJs(
+      "(function(){var d=window.__r3;" +
+      "d.machine_limits={identified:'X1C',source:'flag',max_speed_mm_s:500,min_layer_mm:0.08,max_layer_mm:0.4,clamps:[{parameter:'print_speed',from:1000,to:500}]};" +
+      "d.mesh_topology.validation_findings=[{code:'boundary_edges',fatal:false,count:2}];" +
+      "renderReport(d,'')})()");
+    expect("v0.8: machine-limits box renders identified + clamps",
+           await evalJs("(function(){var b=document.getElementById('machine-limits-box');" +
+             "return b.style.display!== 'none' && b.textContent.indexOf('X1C')>=0 && " +
+             "b.textContent.indexOf('print_speed')>=0 && b.textContent.indexOf('500')>=0})()"));
+    expect("v0.8: mesh-topology box renders tier + findings",
+           await evalJs("(function(){var b=document.getElementById('mesh-topology-box');" +
+             "return b.style.display!=='none' && b.textContent.indexOf('boundary_edges')>=0 && " +
+             "b.textContent.indexOf('提示')>=0})()"));
     // (iter 79) stlParse in the REAL page: the iter 67/73/74 parser changes
     // were node-stub-verified only. Feed a malformed ASCII STL through the
     // page's own function (base64 → bytes → stlParse) and assert the guard
@@ -154,6 +204,50 @@ async function main() {
              && e2e.ex === 100000,
              JSON.stringify({ft: e2e.ft, ftT: e2e.ftT, ex: e2e.ex}));
     }
+
+    // (v0.8 iter 3) REAL heatmap end-to-end: the analyze response carries the
+    // engine's bins³ payload; applyHeatmap wires the ④ box, legend, and the
+    // 3D cube view; the mode switch re-colors without re-running. Pixels:
+    // the jet colormap tops out warm (r > b) — the plain mesh view has no
+    // warm pixels at all.
+    const hmE2e = JSON.parse(await evalJs("(async function(){" +
+      "function warmCount(){var gl2=stlView.gl;" +
+      "var w=gl2.drawingBufferWidth,h=gl2.drawingBufferHeight;" +
+      "var px=new Uint8Array(w*h*4);" +
+      "gl2.readPixels(0,0,w,h,gl2.RGBA,gl2.UNSIGNED_BYTE,px);" +
+      "var warm=0;for(var i=0;i<w*h;i+=37){var r=px[i*4],b=px[i*4+2];" +
+      "if(r>110&&r>b+30)warm++}return warm}" +
+      "var b=atob('" + stlB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var up=await fetch('/api/upload?name=hm.stl',{method:'POST'," +
+      "headers:{'X-Stratum-UI':'1'},body:u.buffer}).then(function(r){return r.json()});" +
+      "if(!up.ok)return JSON.stringify({stage:'upload',err:up.error});" +
+      "loadStlPreview({token:up.token,name:'hm.stl'});" +
+      "for(var tries=0;tries<60&&!stlView.n;tries++){" +
+      "await new Promise(function(res){setTimeout(res,50)})}" +
+      "if(!stlView.n)return JSON.stringify({stage:'preview',err:'stlView.n stayed 0'});" +
+      "var an=await fetch('/api/analyze',{method:'POST'," +
+      "headers:{'Content-Type':'application/json','X-Stratum-UI':'1'}," +
+      "body:JSON.stringify({token:up.token})}).then(function(r){return r.json()});" +
+      "if(!an.ok)return JSON.stringify({stage:'analyze',err:an.error});" +
+      "try{renderReport(an.report,an.console||'');applyHeatmap(an.heatmap||null)}" +
+      "catch(e){return JSON.stringify({stage:'heat',err:String(e)})}" +
+      "var box=document.getElementById('heatmap-box');" +
+      "var on=document.getElementById('heat-toggle').checked;" +
+      "var warmOn=on?warmCount():-1;" +
+      "var legend=document.getElementById('heat-legend-max').textContent;" +
+      "document.getElementById('heat-toggle').checked=false;" +
+      "document.getElementById('heat-toggle').dispatchEvent(new Event('change'));" +
+      "var warmOff=warmCount();" +
+      "document.getElementById('heat-toggle').checked=true;" +
+      "document.getElementById('heat-toggle').dispatchEvent(new Event('change'));" +
+      "return JSON.stringify({stage:'ok',shown:box.style.display!=='none'," +
+      "toggleOn:on,legend:legend,warmOn:warmOn,warmOff:warmOff})})()"));
+    expect("e2e: heatmap box + legend + warm pixels from real engine run",
+           hmE2e.stage === "ok" && hmE2e.shown && hmE2e.toggleOn
+           && hmE2e.legend.length > 0
+           && hmE2e.warmOn > 0 && hmE2e.warmOff === 0,
+           JSON.stringify(hmE2e).slice(0, 220));
 
     // (iter 84) REAL user-flow error paths: inject files via DataTransfer →
     // the page's own onFile handler → server rejects/accepts → assert the
