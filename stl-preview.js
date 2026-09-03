@@ -473,7 +473,12 @@ function loadStlPreview(j) {
         }
         stlView.prog = prog;
         gl.enable(gl.DEPTH_TEST);
-        gl.clearColor(0.086, 0.11, 0.16, 1);  // --panel2
+        gl.clearColor(0.086, 0.11, 0.16, 1);
+        // Deliberately NOT --surface-2: v0.11 switched the UI to a light
+        // theme but kept this as the fixed dark model-viewport (like CAD/
+        // slicer apps); rgb(22,28,41) is pinned by the browser e2e lit-check
+        // (browser_render_check.js, 3-channel Manhattan sum <= 40 of this
+        // value) — do not move it without updating that constant.
         // interactions: drag rotate + wheel zoom (explicit non-passive so
         // preventDefault is legal on the element)
         var drag = null;

@@ -333,6 +333,40 @@
   reload 记忆）；截图 `gui-test-screenshots/product-p1/p2/p3-*.png` ×7
   （`tests/product_shots.js` 可复跑）
 
+### v0.11.0 — 亮色专业主题视觉重做（2026-09-03，独立对抗审查 APPROVE 后实现）
+
+> 背景：v0.10.0 产品化后观感仍偏"工程控制台"（深底 + 双色渐变铺满 + 11-13px 密排 +
+> 全站 uppercase 微标签）。方向经用户确认改走**亮色专业 SaaS**（Stripe/Notion 式）。
+> 实现前派独立对抗子 agent 证伪方案（REFUTE）：抓出 2 实错（WebGL lit 判定是
+> **三通道曼哈顿和**非每通道差——空画布会假绿；`#summary-cards:empty`/`#cand-bars:empty`
+> 是承重隐藏规则，report.js 从不写其内联 display）+ 6 处遗漏（warm 分类器第二道 WebGL
+> 门、rgba 字面量同步清单、favicon 与徽标同源、非 var 硬编码色清扫、全站去 uppercase
+> 枚举不全、clear color 注释已失真），全部修订入实现。
+
+- [x] **亮色 token 全量重设**（`:root`，变量名全保留只改值——JS 内联 var() 为承重引用）：
+  浅灰底 `#f4f6fa`/白卡/`#f3f6fb` 下沉面/边框 `#d9dfeb`；单靛蓝 `#4f46e5` 收敛
+  （渐变仅留字标与状态色淡阶）；语义色按 **WCAG AA ≥4.5:1（12px 对 #fff）核算选定**
+  （text 15.6 / muted 5.8 / green 5.5 / amber 5.0 / red 4.8 / violet 5.7 / accent 6.3；
+  核算表见 `docs/reviews/visual-v011-2026-09-03.md`）；新增 line-strong / soft-chip 对 /
+  console 深色 token
+- [x] **排版与密度**：全站去 uppercase（panel h2 / details summary / table th /
+  sum-card h3 等扫净）、字号阶梯重建（panel h2 13→14.5、表格 12.5→13、KPI 22→24、
+  header 17→18）；等宽字体收敛到数值/表格/控制台（.sub/.tag/.cb-name 出列）；
+  圆角/阴影/间距微放大
+- [x] **组件现代化**：主按钮/预设/CTA/引导圆点双色斜渐变 → 单色靛蓝（hover 提亮 +
+  克制阴影）；卡片扁平化 + verdict 三卡顶部语义色条（soft 淡阶渐变）；slider thumb
+  白心单色；sf-band/对比条/进度改浅色同色相渐变；`:focus-visible` 全覆盖 +
+  细滚动条/::selection
+- [x] **深色视口与终端的显式例外**：STL 预览视口（WebGL clear color rgb(22,28,41)）与
+  引擎控制台/导出预览**保持深色**（CAD/切片惯例；clear color 被 browser e2e 曼哈顿和
+  测试 pin 死，stl-preview.js 注释改写为显式契约说明）；导出预览改用 --console-* token
+- 验证：smoke **106/106**；`report_render_check.js` **95 项**；`browser_render_check.js`
+  **46 项**（含 WebGL 两道门：lit>2% 曼哈顿和 + warm 分类器）全绿；截图
+  `gui-test-screenshots/product-*.png` ×7 重拍为亮色（`tests/product_shots.js` 复跑）
+- 自检报告 `docs/reviews/visual-v011-2026-09-03.md`（harness 逐条 + 对比度核算表 +
+  对抗审查修订记录）；改动面：index.html `<style>` 整体重写 + 静态内联样式点 +
+  stl-preview.js 注释 + server.py UI_VERSION
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 

@@ -69,6 +69,7 @@ def _validated_int(raw, lo, hi):
 # this, two installs of different vintages were indistinguishable (D1
 # groundwork, iter 65). Bump on user-visible change; the engine version is
 # reported separately (it moves independently).
+# 0.11.0 — ROADMAP v0.11 (light professional theme visual refresh).
 # 0.8.1 — engine 0.24 full-surface pass: render-gap batch (fast_mode/
 #         filament_slots/input_overrides/printability/thermal_speed/weld/
 #         ZZ-SPR/Tsai-Wu/mesh_quality/precond/skipped_reasons/fatigue-life/
@@ -83,7 +84,7 @@ def _validated_int(raw, lo, hi):
 # 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.10.0"
+UI_VERSION = "0.11.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
