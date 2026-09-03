@@ -395,10 +395,33 @@ def main():
              lambda r: r[0]["applicable"] is False and "超出滑杆域" in r[0]["reason"]),
             ("renamed key NOT whitelisted (wall_count)",
              {"recommendations": {"items": [mk_item("wall_count", cur=2, rec=5)]}},
-             lambda r: r[0]["applicable"] is False and "白名单" in r[0]["reason"]),
+             lambda r: r[0]["applicable"] is False and "不可一键应用" in r[0]["reason"]),
             ("select key NOT whitelisted (infill_pattern)",
              {"recommendations": {"items": [mk_item("infill_pattern", rec="line")]}},
              lambda r: r[0]["applicable"] is False),
+            # v0.9.1 (engine 0.25.0 alignment): walls/infill are engine-NATIVE
+            # recommendation keys with a delivered real sample — they must be
+            # applicable end-to-end (percent space, step-snap included).
+            ("native key walls applicable",
+             {"recommendations": {"items": [mk_item("walls", action="increase",
+                                                    cur=2, rec=3)]}},
+             lambda r: r[0]["applicable"] is True and r[0]["ui_key"] == "walls"
+                       and r[0]["recommended_value"] == 3),
+            ("native key infill applicable (percent space)",
+             {"recommendations": {"items": [mk_item("infill", action="increase",
+                                                    cur=15, rec=35.000001)]}},
+             lambda r: r[0]["applicable"] is True and r[0]["ui_key"] == "infill"
+                       and r[0]["recommended_value"] == 35),
+            ("engine-delivered walls/infill sample unlocks",
+             {"recommendations": {"items": [
+                 {"action": "increase", "parameter": "walls", "reason": "r",
+                  "current_value": 2.0, "recommended_value": 3.0,
+                  "confidence": 0.95, "priority": 1},
+                 {"action": "increase", "parameter": "infill", "reason": "r",
+                  "current_value": 15.000001, "recommended_value": 35.000001,
+                  "confidence": 0.85, "priority": 1}]}},
+             lambda r: [e["ui_key"] for e in r] == ["walls", "infill"]
+                       and all(e["applicable"] for e in r)),
             ("action not set-value shaped",
              {"recommendations": {"items": [mk_item("cooling_fan", action="check", rec=60)]}},
              lambda r: r[0]["applicable"] is False and "非设值型" in r[0]["reason"]),
@@ -448,6 +471,29 @@ def main():
         check("T85 applyable top-level sibling, report unpolluted, pairing",
               ok85, "n_items=%s n_applyable=%s" % (len(items85),
                                                    len(ap85) if isinstance(ap85, list) else ap85))
+
+        # T86 — v0.9.1: engine-delivered real sample (0.25.0, L-bracket 500N,
+        # docs/webui-alignment-response-2026-09.md) unlocks walls/infill on
+        # the full projection: native keys, percent space, step-snap, P1
+        # priorities preserved. Fixture copied from the engine repo verbatim.
+        import json as _json
+        _sample = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "test_data", "webui-alignment-2026-09",
+            "report-walls-infill-suggestions.json")
+        if not os.path.exists(_sample):
+            check("T86 engine walls/infill sample projection", False,
+                  "missing fixture: %s" % _sample)
+        else:
+            with open(_sample, encoding="utf-8") as f:
+                rep86 = _json.load(f)
+            res86 = srv.applyable_suggestions(rep86)
+            ok86 = ([e["ui_key"] for e in res86] == ["walls", "infill"]
+                    and all(e["applicable"] for e in res86)
+                    and res86[0]["recommended_value"] == 3
+                    and res86[1]["recommended_value"] == 35
+                    and res86[0]["priority"] == 1 and res86[1]["priority"] == 1)
+            check("T86 engine walls/infill sample projection", ok86,
+                  "res=%r" % res86)
 
         # T14/T15 — REGRESSION (iter 6): invalid startup env must fail fast
         # with a friendly message, never an import traceback. (Pre-fix PORT

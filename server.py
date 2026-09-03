@@ -83,7 +83,7 @@ def _validated_int(raw, lo, hi):
 # 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.9.0"
+UI_VERSION = "0.10.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -1004,15 +1004,19 @@ def presets_for(materials, patterns):
 
 # v0.9 "applyable" — server-derived, executable view of the engine's
 # recommendation items. Name-space evidence (0.24.0 real runs,
-# test_data/real3mf-results/report.json:645-647): every observed
+# test_data/real3mf-results/report.json:645-647): observed
 # recommendations.items[].parameter (nozzle_diameter / print_speed /
-# cooling_fan) is IDENTITY with its PARAM_META slider key. Renamed keys that
-# exist only in the process_optimization baseline/candidate space
-# (wall_count→walls, infill_pct→infill, infill_pattern→pattern) have ZERO
-# observed recommendation samples — and infill_pct's unit space (percent vs
-# fraction) is indistinguishable on current fixtures — so wiring them would
-# mean inventing the engine's name/unit mapping. They stay text-only until a
-# real sample proves both name AND unit (ROADMAP v0.9 backlog).
+# cooling_fan) is IDENTITY with its PARAM_META slider key. Engine 0.25.0
+# alignment (docs/webui-alignment-response-2026-09.md, 2026-09-02):
+# recommendations.items[].parameter uses the engine-native keys walls /
+# infill / pattern (the wall_count / infill_pct / infill_pattern rename
+# space belongs to process_optimization only — those keys are correctly
+# rejected below), infill is percent (0-100; fraction appears only in the
+# input echo input.infill_density), and a real walls/infill sample now
+# exists (test_data/webui-alignment-2026-09/report-walls-infill-
+# suggestions.json: walls 2->3 P1, infill 15->35 P1). The whitelist below is
+# therefore the FULL PARAM_META numeric-slider face; selects stay excluded
+# (their action space is change, no real sample yet — pattern/material).
 # Everything below is UI-side orchestration (ROADMAP red line 2 allows it):
 # filtering by the UI's OWN control semantics (slider range/step/no-op) —
 # no engine scoring/clamping rule is copied or re-implemented.
@@ -1056,12 +1060,14 @@ def applyable_suggestions(report):
                 entry[k] = v
         if isinstance(it.get("priority"), int) and not isinstance(it["priority"], bool):
             entry["priority"] = it["priority"]
-        # identity whitelist, numeric sliders only (selects have no real
-        # sample yet — see block comment above)
+        # PARAM_META numeric-slider face: engine-native key + numeric slider
+        # (selects have no real sample yet — see block comment above). Keys
+        # from other engine spaces (wall_count/infill_pct/infill_pattern) are
+        # not PARAM_META names and land here as reasoned refusals.
         meta = next((m for m in PARAM_META
                      if m["name"] == name and m["kind"] != "select"), None)
         if meta is None:
-            entry["reason"] = "参数不在可执行白名单（该名暂无真实样本实证）"
+            entry["reason"] = "参数不可一键应用（UI 无对应数值滑杆）"
             continue
         if entry["action"] not in _APPLYABLE_ACTIONS:
             entry["reason"] = "非设值型建议（action=%s）" % (entry["action"],)

@@ -617,12 +617,12 @@ expect("v0.9: CTA rendered with count",
 // applicable items
 const app24b = JSON.parse(JSON.stringify(app24));
 app24b[0].applicable = false;
-app24b[0].reason = "参数不在可执行白名单（该名暂无真实样本实证）";
+app24b[0].reason = "参数不可一键应用（UI 无对应数值滑杆）";
 app24b[1].applicable = false;
 app24b[1].reason = "已等于当前值";
 rerender(d24c, app24b);
 expect("v0.9: non-applicable reason shown inline, no checkbox",
-       boxText("rec-items").indexOf("不可一键应用: 参数不在可执行白名单") >= 0 &&
+       boxText("rec-items").indexOf("不可一键应用: 参数不可一键应用") >= 0 &&
        boxText("rec-items").indexOf("不可一键应用: 已等于当前值") >= 0);
 expect("v0.9: CTA counts only applicable items",
        boxText("rec-items").indexOf("应用勾选建议 (1)") >= 0);
@@ -641,5 +641,181 @@ expect("v0.9: ABS WLF rendered in internals box, box visible",
        boxText(C_INT).indexOf("ABS WLF: 移位因子 1.2345") >= 0 &&
        elements["phase-c-solver"].style.display === "",
        boxText(C_INT));
+// 24g. v0.9.1 engine alignment: cooling-fan suggestion + huge residual
+// margin → inline hint surfaced; absent residual SF / other params → no hint
+const d24g = JSON.parse(JSON.stringify(d24c));
+d24g.phase_c.residual_safety_factor = 422.15918;  // real v2 sample value
+rerender(d24g, app24);
+expect("v0.9.1: cooling_fan hint shown when residual SF > 100",
+       boxText("rec-items").indexOf("残余应力安全系数 422.2") >= 0 &&
+       boxText("rec-items").indexOf("此项建议对强度的收益可能有限") >= 0,
+       boxText("rec-items").slice(0, 200));
+const d24g2 = JSON.parse(JSON.stringify(d24c));
+rerender(d24g2, app24);  // phase_c present but residual_safety_factor null
+expect("v0.9.1: no fan hint when residual SF absent",
+       boxText("rec-items").indexOf("此项建议对强度的收益可能有限") < 0);
+const d24g3 = JSON.parse(JSON.stringify(d24g));
+d24g3.recommendations.items = [{parameter: "print_speed", action: "decrease",
+                                current_value: 60, recommended_value: 36,
+                                priority: 2}];
+rerender(d24g3, [{parameter: "print_speed", action: "decrease",
+                  current_value: 60, recommended_value: 36,
+                  priority: 2, applicable: true, reason: "", ui_key: "print_speed"}]);
+expect("v0.9.1: no fan hint for non-cooling_fan suggestion",
+       boxText("rec-items").indexOf("此项建议对强度的收益可能有限") < 0);
+
+// 25. (v0.10) productization render surface: verdict-first summary cards /
+// SF display band / warnings card toggle / term glossary tooltips /
+// candidate comparison bars / actionable error card / empty-guide lifecycle
+function findTitle(node, sub) {
+  if (!node) return null;
+  if (node.title && String(node.title).indexOf(sub) >= 0) return node.title;
+  let hit = null;
+  (node.children || []).forEach(function (c) { if (!hit) hit = findTitle(c, sub); });
+  return hit;
+}
+function findBtn(node, label) {
+  let hit = null;
+  (function walk(n) {
+    (n.children || []).forEach(function (c) {
+      if (hit) return;
+      if (c.tagName === "button" && String(c.textContent).indexOf(label) >= 0) hit = c;
+      else walk(c);
+    });
+  })(node);
+  return hit;
+}
+function findFillWidths(node, out) {
+  (function walk(n) {
+    (n.children || []).forEach(function (c) {
+      if (c.tagName === "i" && c.style && c.style.width) out.push(c.style.width);
+      walk(c);
+    });
+  })(node);
+  return out;
+}
+rerender(real3);
+expect("v0.10: empty-guide hidden by a successful render",
+       elements["empty-guide"] && elements["empty-guide"].style.display === "none");
+expect("v0.10: three summary cards rendered (verdict/risk/advice)",
+       elements["summary-cards"] &&
+       elements["summary-cards"].children.length === 3,
+       String(elements["summary-cards"] && elements["summary-carts"]));
+expect("v0.10: verdict card carries the engine assessment verbatim",
+       textOf(elements["summary-cards"].children[0]).indexOf("✅ 安全 — 结构强度充足") >= 0,
+       textOf(elements["summary-cards"].children[0]));
+expect("v0.10: SF KPI gets a display-band class (engine number present)",
+       /^v sf-(low|mid|high)$/.test(elements["res-sf"].className),
+       elements["res-sf"].className);
+expect("v0.10: SF band fill rendered inside the verdict card",
+       findFillWidths(elements["summary-cards"].children[0], []).some(
+         function (w) { return parseInt(w, 10) > 0; }),
+       String(findFillWidths(elements["summary-cards"].children[0], [])));
+const d25a = JSON.parse(JSON.stringify(real3));
+d25a.phase_b.safety_factor = null;
+rerender(d25a);
+expect("v0.10: no engine SF → no band class, no guess",
+       elements["res-sf"].className === "v" &&
+       findFillWidths(elements["summary-cards"].children[0], []).length === 0,
+       elements["res-sf"].className);
+
+// warnings card: badge count + user-owned open state survives re-renders
+rerender(real);
+expect("v0.10: warnings card shown with a numeric count",
+       elements["warnings-card"].style.display === "" &&
+       /^\d+$/.test(elements["warnings-count"].textContent) &&
+       parseInt(elements["warnings-count"].textContent, 10) > 0,
+       elements["warnings-count"].textContent);
+expect("v0.10: warnings list collapsed until opened (progressive disclosure)",
+       elements["warning-list"].style.display === "none");
+elements["warnings-card"].dataset.open = "1";
+// NOTE: no rerender() here — the vm harness recreates stub elements on
+// rerender, which would drop the user-owned dataset flag. Direct call keeps
+// the same stubs, matching the REAL DOM where #warnings-card persists.
+ctx.renderReport(real, "");
+expect("v0.10: open flag survives a re-render",
+       elements["warning-list"].style.display === "");
+elements["warnings-card"].dataset.open = "0";
+rerender(real);
+expect("v0.10: risk card surfaces top warnings verbatim",
+       textOf(elements["summary-cards"].children[1]).indexOf("网格含 41 个几何部件") >= 0,
+       textOf(elements["summary-cards"].children[1]));
+
+// advice card: applyable CTA front and center + appendix-C grid action
+rerender(d24c, app24);
+expect("v0.10: advice card CTA with count",
+       textOf(elements["summary-cards"].children[2]).indexOf("应用可行建议 (3)") >= 0,
+       textOf(elements["summary-cards"].children[2]).slice(0, 120));
+const sumCta = findBtn(elements["summary-cards"], "应用可行建议");
+expect("v0.10: summary CTA wired to applyCheckedSuggestions",
+       !!sumCta && typeof sumCta.onclick === "function");
+rerender(real);
+const gridBtn = findBtn(elements["summary-cards"], "提高网格精度");
+expect("v0.10: part_visibility_warning → grid-precision action button",
+       textOf(elements["summary-cards"].children[2]).indexOf("网格分辨率不足") >= 0 &&
+       !!gridBtn && typeof gridBtn.onclick === "function",
+       textOf(elements["summary-cards"].children[2]).slice(0, 160));
+
+// term glossary hover tooltips (≥6 core terms across static + dynamic rows)
+rerender(real3);
+expect("v0.10: Hill48 hint carries the anisotropy glossary",
+       findTitle(elements["phase-c-detail"], "各向异性") !== null);
+const d25t = JSON.parse(JSON.stringify(real3));
+d25t.phase_c.run = true;
+d25t.phase_c.max_delamination_risk = 0.000123;
+d25t.phase_c.hill48_safety_factor = 2.5;
+d25t.phase_d.weibull_ran = true;
+rerender(d25t);
+expect("v0.10: delamination hint carries the interlaminar glossary",
+       findTitle(elements["phase-c-detail"], "层间强度") !== null);
+expect("v0.10: phase-d Weibull row carries the reliability glossary",
+       findTitle(elements["phase-d-detail"], "缺陷分布") !== null);
+
+// candidate comparison bars: relative CSS widths, feasible rows only
+const d25b = JSON.parse(JSON.stringify(real3));
+d25b.process_optimization.candidates = [
+  {name: "alpha", goal: "strength", feasible: true, scores: {},
+   search_est_safety_factor: 8,
+   estimate: {print_time_min: 100, material_volume_mm3: 10000}},
+  {name: "beta", goal: "speed", feasible: true, scores: {},
+   search_est_safety_factor: 4,
+   estimate: {print_time_min: 50, material_volume_mm3: 6000}},
+  {name: "nofeas", goal: "speed", feasible: false, scores: {}}];
+rerender(d25b);
+expect("v0.10: cand bars render feasible candidates only",
+       boxText("cand-bars").indexOf("alpha") >= 0 &&
+       boxText("cand-bars").indexOf("beta") >= 0 &&
+       boxText("cand-bars").indexOf("nofeas") < 0,
+       boxText("cand-bars").slice(0, 120));
+const widths = findFillWidths(elements["cand-bars"], []).map(
+  function (w) { return Math.round(parseFloat(w)); });
+expect("v0.10: bar widths normalized against the in-set max (100/50)",
+       widths.indexOf(100) >= 0 && widths.indexOf(50) >= 0,
+       JSON.stringify(widths));
+rerender(real);
+expect("v0.10: cand bars skip sets without ≥2 FEASIBLE rows",
+       elements["cand-bars"].children.length === 0 ||
+       boxText("cand-bars").indexOf("nofeas") < 0);
+
+// actionable error card (1.4): verbatim error + next-step buttons
+ctx.renderAnalyzeError({status: "validation_refused",
+                        error: "输入拓扑校验拒绝（--validate strict）：网格含 41 个几何部件"});
+expect("v0.10: error card shows the verbatim engine error",
+       elements["analyze-error"].style.display === "block" &&
+       boxText("analyze-error").indexOf("输入拓扑校验拒绝") >= 0,
+       boxText("analyze-error").slice(0, 120));
+const tierBtn = findBtn(elements["analyze-error"], "校验档位");
+const gridErrBtn = findBtn(elements["analyze-error"], "提高网格精度");
+expect("v0.10: refusal error carries standard-tier rerun button",
+       !!tierBtn && typeof tierBtn.onclick === "function");
+expect("v0.10: grid/multi-part error carries grid-×2 rerun button",
+       !!gridErrBtn && typeof gridErrBtn.onclick === "function");
+rerender(real3);
+expect("v0.10: a successful render clears the error card",
+       elements["analyze-error"].style.display === "none" &&
+       elements["analyze-error"].children.length === 0);
+ctx.renderAnalyzeError(null);
+expect("v0.10: null payload → card hidden, no throw",
+       elements["analyze-error"].style.display === "none");
 
 process.exit(fails ? 1 : 0);

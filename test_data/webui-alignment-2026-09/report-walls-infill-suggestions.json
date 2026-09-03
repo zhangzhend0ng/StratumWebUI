@@ -1,0 +1,204 @@
+{
+  "schema_version": 3,
+  "tool": "stratum",
+  "report_mode": "full",
+  "model": {
+    "path": "models/lbracket.stl"
+  },
+  "input": {
+    "material": "PLA",
+    "nozzle_mm": 0.400000,
+    "walls": 2,
+    "layer_height_mm": 0.200000,
+    "fast_mode": false,
+    "infill_density": 0.150000,
+    "infill_pattern": "gyroid",
+    "nozzle_temperature_c": 200.000000,
+    "bed_temperature_c": 60.000000,
+    "tg_c": 62.000000,
+    "warping_ambient_c": 20.000000,
+    "narrow_connection_area_limit_mm2": 20.000000,
+    "narrow_connection_slice_step_mm": 1.354352,
+    "thin_wall_threshold_mm": 0.800000,
+    "warping_aspect_ratio": 4.000000,
+    "cantilever_slenderness": 3.000000,
+    "overhang_angle_deg": 45.000000,
+    "print_direction": null,
+    "print_speed_mms": 50.000000,
+    "cooling_fan_pct": 100.000000,
+    "force_N": 500.000000,
+    "grid_res": 16,
+    "z_strength_ratio": 0.460000,
+    "service_time_s": null,
+    "service_temp_c": null,
+    "anneal_hours": null,
+    "ambient_temp_c": 25.000000,
+    "ambient_humidity_pct": null,
+    "load_type": "bending",
+    "torsion_axis": null,
+    "requested_fatigue_cycles": null,
+    "requested_prony_duration_s": 0.000000,
+    "applied_prony_duration_s": 0.000000,
+    "requested_fill_angle_deg": 0.000000,
+    "applied_fill_angle_deg": 0.000000,
+    "locked_parameters": [],
+    "nozzle_pinned_clamp": false,
+    "layer_time_s": 8.000000
+  },
+  "trust": {
+    "material": "PLA",
+    "modules": {
+            "phase_a_geometric": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "纯几何检测，无需物理参数"}
+,            "phase_b_linear": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "E_z/E_xy 0.55-0.65 (Somireddy 2016), infill beta (Cerda-Avila 2021)"}
+,            "extrusion_rheology": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "Sanchez 2019 (10.1007/s00170-019-04376-9) eta_0=11000; Tabakova 2023 lambda=0.026; Carreau-Yasuda model verified; n~0.35 ±20% (grade-dependent)"}
+,            "phase_c_screening": {"level": "partial", "label": "部分验证", "decision_safe": false, "source": "Post-elastic conservative screening, not full nonlinear; 25% uncertainty"}
+,            "hill48_plasticity": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "Li/Xu/Fang 2024 Thin-Walled Structures, air gap=0 parameters"}
+,            "weibull_reliability": {"level": "partial", "label": "部分验证", "decision_safe": false, "source": "Hachimi 2025 F&SI 19(73): m=53.24 (0 deg), sigma0=44.69 MPa, n=6/orient, XY-plane only (no Z Weibull)"}
+,            "viscoelastic_prony": {"level": "not_for_decision", "label": "不建议用于决策", "decision_safe": false, "source": "Gebrehiwot 2023 JMEP OA DMTA + Huang 2022 DMA exist, but no PLA WLF/Prony constants implemented (ABS-only compute); iter 305 downgrade"}
+,            "fracture_toughness": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "K_IC XY ~5 (Song 2017), J_IC 0.75-3.9 (Lambiase 2023), DCB G_IC(z) (Composite Structures 2023 117213)"}
+,            "thermal_residual_stress": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "Morvayova et al. 2023 IJAMT 129: PLA/wood FEM 9.52% error validation"}
+,            "layer_residual": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "Issametova 2024 Polymers OA: 42.9 MPa tensile, 88.9 MPa compressive"}
+,            "orthotropic_shear": {"level": "verified", "label": "已验证", "decision_safe": true, "source": "Huang/Lin 2022 Appl Sci 12,6812: full orthotropic constants incl G_xz/G_yz/nu_xz"}
+    }
+  },
+  "phase_runs": {
+    "phase_a": true,
+    "phase_b": true,
+    "phase_c": true,
+    "phase_d": false
+  },
+  "warnings": [],
+  "input_overrides": [],
+  "phase_a": {
+    "overall_risk": 1.000000,
+    "overall_risk_envelope": {"nominal": 1.000000, "lo": 0.850000, "hi": 1.105000},
+    "assessment": "高风险模型，标注区域可能发生结构失效",
+    "risk_count": 2,
+    "risks": [
+      {"type": "overhang", "severity": 5, "score": 1.000000, "description": "悬垂区 1200 mm², 法向离垂直 0° (极高)", "suggestion": "该区域需支撑或调整打印方向", "key_points": [[34.999981, -0.000003, 5.000000]]},
+      {"type": "interlaminar_shear", "severity": 2, "score": 0.000000, "description": "悬空面积 1200 mm2, 倾角约 0 deg (中低)", "suggestion": "可调整朝向", "key_points": [[34.999981, -0.000003, 5.000000]]}
+    ]
+  },
+  "printability": {
+    "overhang_pct": 0.166667,
+    "overhang_area_mm2": 1200.000000,
+    "bridge_area_mm2": 0.000000,
+    "surface_area_mm2": 7200.000000,
+    "bed_contact_area_mm2": 1200.000000
+  },
+  "support_volume_mm3": 0.000000,
+  "support_volume_available": true,
+  "phase_b": {
+    "grid": {"nx": 17, "ny": 5, "nz": 17, "nodes": 1944},
+    "max_stress_mpa": 7.700924,
+    "max_stress_mpa_envelope": {"nominal": 7.700924, "lo": 5.775693, "hi": 9.048586},
+    "max_displacement_mm": 96.931244,
+    "max_displacement_mm_envelope": {"nominal": 96.931244, "lo": 67.851871, "hi": 117.286805},
+    "safety_factor": 0.088016,
+    "safety_factor_envelope": {"nominal": 0.088016, "lo": 0.070413, "hi": 0.100338},
+    "assessment": "🔴 危险 — 强烈建议加强结构",
+    "tsai_wu_safety_factor": 0.085364,
+    "load_adequacy": "adequate",
+    "max_stress_to_yield_ratio": 0.1400,
+    "resolution_adequacy": {"assessed": true, "eta_rms_mpa": 0.6732, "eta_max_mpa": 3.061, "rel_index": 0.3356},
+    "mesh_quality": {"element_shape": "uniform_cubic_voxel", "scaled_jacobian": 1.0, "aspect_ratio": 1.0, "by_construction": true},
+    "diagnostics": {
+      "active_nodes": 858,
+      "active_dofs": 2250,
+      "fixed_dofs": 324,
+      "cg_iterations": 83,
+      "cg_relative_residual": 4.855e-05,
+      "cg_converged": true,
+      "cg_breakdown_reason": 0,
+      "preconditioner": "ic0",
+      "precond_fallback_count": 0,
+      "solid_components": 1,
+      "mesh_parts": 2,
+      "part_visibility_warning": "网格含 2 个几何部件, 当前分辨率下合并/丢失为 1 个连通区域 — 分辨率不足以分离部件, 物理结论不覆盖全部部件; 请分开分析各部件或提高 --grid",
+      "part_resolution": null,
+      "largest_component_fraction": 1,
+      "warning": ""
+    },
+    "per_part": null
+  },
+  "object_settings_overrides": null,
+  "phase_c": {
+    "run": true,
+    "yielded_elements": 0,
+    "max_plastic_strain": 0.000000,
+    "max_hill48_yield_index": 0.063750,
+    "hill48_safety_factor": 3.960577,
+    "plastic_safety_factor": 7.142000,
+    "max_thermal_stress_mpa": 0.159947,
+    "max_thermal_stress_mpa_envelope": {"nominal": 0.159947, "lo": 0.111963, "hi": 0.193535},
+    "thermal_is_upper_bound": true,
+    "layer_thermal": {"tau_s": 15.000000, "layer_time_s": 8.000000, "ambient_c": 25.000000, "per_layer_dep_c": [200.000000, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086, 127.663086]},
+    "max_layer_residual_stress_mpa": 0.559813,
+    "mean_layer_residual_stress_mpa": 0.233420,
+    "residual_safety_factor": 6.658001,
+    "moisture_uptake_pct": null,
+    "modulus_retention": null,
+    "strength_retention": null,
+    "is_degraded": null,
+    "aging_safety_factor": null,
+    "thermal_speed": {"assessable": true, "t_sub_current_c": 125.596320, "cap_c": 62.000000, "overheated": true, "suggested_speed_mms": 18.323989, "suggested_layer_time_s": 21.829308, "tier": "Gap", "rationale": "PLA: T_sub(8s)=125.6°C > Tg 62°C — bulk rubbery when the next layer lands; t* = 21.8s ⇒ v* = 18.3mm/s (Newton cooling Costa 2017 R²=0.980; t∝1/v mapping is a v1 approximation)"},
+    "weld_infill_aware": {"a_eff": 0.036042, "bond_quality_eff": 0.036042, "disclosure": "non-decision-grade"},
+    "max_delamination_risk": 0.239492,
+    "delamination_risk_layers": 0,
+    "weibull_failure_probability": 0.000000,
+    "weibull_reliability_factor": 1.000000,
+    "abs_wlf_shift_factor": null,
+    "abs_wlf_reduced_time_s": null,
+    "abs_viscoelastic_creep_risk": null,
+    "crystallinity_modulus_factor": null,
+    "max_fracture_peel_risk": 4.442651,
+    "max_fracture_shear_risk": 0.015416
+  },
+  "phase_d": {
+    "run": false,
+    "buckling_safety_factor": null,
+    "fatigue_safety_factor": null,
+    "fatigue_infinite_life": null,
+    "fatigue_assessment": null,
+    "fatigue_life_cycles": null,
+    "fatigue_expected_cycles": null,
+    "fatigue_damage_per_cycle": null,
+    "fatigue_lcf_cycles": null,
+    "fracture_safety_factor": null,
+    "fracture_risk_detected": null,
+    "fracture_assessment": null,
+    "buckling_slenderness": null,
+    "buckling_warning": null,
+    "weibull_ran": false,
+    "weibull_grade": null,
+    "weibull_R": null,
+    "weibull_Pf": null,
+    "weibull_size_factor": null,
+    "weibull_sigma_eff_mpa": null,
+    "findley_ran": false,
+    "findley_sf": null,
+    "skipped_reasons": []
+  },
+  "recommendations": {
+    "ran": true,
+    "overall_score": 73.000000,
+    "summary": "2 suggestions, 2 urgent",
+    "items": [
+      {"action": "increase", "parameter": "walls", "reason": "safety factor 0.1 is below 1.0", "current_value": 2.000000, "recommended_value": 3.000000, "confidence": 0.95, "priority": 1, "effect_note": "SF 0.09 -> ~0.11", "tradeoff_note": "raises strength and stiffness; costs material and time", "est_safety_factor": 0.114421, "est_max_stress": 5.923788},
+      {"action": "increase", "parameter": "infill", "reason": "increase infill for strength", "current_value": 15.000001, "recommended_value": 35.000001, "confidence": 0.85, "priority": 1, "effect_note": "SF 0.09 -> ~0.09", "tradeoff_note": "raises global stiffness and margin; costs material and time", "est_safety_factor": 0.092595, "est_max_stress": 7.320058}
+    ]
+  },
+  "process_optimization": {
+    "writeback_profile": null,
+    "baseline": {"infill_pct": 15.000001, "wall_count": 2, "print_speed": 50.000000, "nozzle_temperature": 200.000000, "bed_temperature": 60.000000, "cooling_fan": 100.000000, "infill_pattern": "gyroid"},
+    "baseline_scores": {"quality": 82, "strength": 21.52, "strength_assessable": true, "time": 50, "material": 50, "reliability": 69.13, "reliability_assessable": true, "overall": 51.938218},
+    "candidates": [
+      {"name": "safe", "goal": "strength", "feasible": false, "note": "基础安全系数不足，无法优化", "profile": {"infill_pct": 15.000001, "wall_count": 2, "print_speed": 50.000000, "nozzle_temperature": 200.000000, "bed_temperature": 60.000000, "cooling_fan": 100.000000, "infill_pattern": "gyroid"}, "scores": {"quality": 82, "strength": 21.52, "strength_assessable": true, "time": 50, "material": 50, "reliability": 69.13, "reliability_assessable": true, "overall": 51.938218}, "estimate": {"assessable": true, "calibrated": false, "model": "v1-geometric", "solid_volume_mm3": 1.881e+04, "material_volume_mm3": 1.34e+04, "material_mass_g": 16.62, "print_time_s": 4449, "print_time_min": 74.14, "filament_length_mm": 5573}, "search_est_safety_factor": null, "sf_source": "extrapolated", "policy_applied": false, "calibrated": false, "verification_dimensions": "wall/infill/pattern (speed/lh 不进入弹性求解器)", "diff": []},
+      {"name": "balanced", "goal": "balanced", "feasible": false, "note": "基础安全系数不足，无法优化", "profile": {"infill_pct": 15.000001, "wall_count": 2, "print_speed": 50.000000, "nozzle_temperature": 200.000000, "bed_temperature": 60.000000, "cooling_fan": 100.000000, "infill_pattern": "gyroid"}, "scores": {"quality": 82, "strength": 21.52, "strength_assessable": true, "time": 50, "material": 50, "reliability": 69.13, "reliability_assessable": true, "overall": 51.938218}, "estimate": {"assessable": true, "calibrated": false, "model": "v1-geometric", "solid_volume_mm3": 1.881e+04, "material_volume_mm3": 1.34e+04, "material_mass_g": 16.62, "print_time_s": 4449, "print_time_min": 74.14, "filament_length_mm": 5573}, "search_est_safety_factor": null, "sf_source": "extrapolated", "policy_applied": false, "calibrated": false, "verification_dimensions": "wall/infill/pattern (speed/lh 不进入弹性求解器)", "diff": []},
+      {"name": "fast", "goal": "speed", "feasible": false, "note": "基础安全系数不足，无法优化", "profile": {"infill_pct": 15.000001, "wall_count": 2, "print_speed": 50.000000, "nozzle_temperature": 200.000000, "bed_temperature": 60.000000, "cooling_fan": 100.000000, "infill_pattern": "gyroid"}, "scores": {"quality": 82, "strength": 21.52, "strength_assessable": true, "time": 50, "material": 50, "reliability": 69.13, "reliability_assessable": true, "overall": 51.938218}, "estimate": {"assessable": true, "calibrated": false, "model": "v1-geometric", "solid_volume_mm3": 1.881e+04, "material_volume_mm3": 1.34e+04, "material_mass_g": 16.62, "print_time_s": 4449, "print_time_min": 74.14, "filament_length_mm": 5573}, "search_est_safety_factor": null, "sf_source": "extrapolated", "policy_applied": false, "calibrated": false, "verification_dimensions": "wall/infill/pattern (speed/lh 不进入弹性求解器)", "diff": []},
+      {"name": "appearance", "goal": "quality", "feasible": false, "note": "基础安全系数不足，无法优化", "profile": {"infill_pct": 15.000001, "wall_count": 2, "print_speed": 50.000000, "nozzle_temperature": 200.000000, "bed_temperature": 60.000000, "cooling_fan": 100.000000, "infill_pattern": "gyroid"}, "scores": {"quality": 82, "strength": 21.52, "strength_assessable": true, "time": 50, "material": 50, "reliability": 69.13, "reliability_assessable": true, "overall": 51.938218}, "estimate": {"assessable": true, "calibrated": false, "model": "v1-geometric", "solid_volume_mm3": 1.881e+04, "material_volume_mm3": 1.34e+04, "material_mass_g": 16.62, "print_time_s": 4449, "print_time_min": 74.14, "filament_length_mm": 5573}, "search_est_safety_factor": null, "sf_source": "extrapolated", "policy_applied": false, "calibrated": false, "verification_dimensions": "wall/infill/pattern (speed/lh 不进入弹性求解器)", "diff": []}
+    ]
+  }
+,
+  "machine_limits": {"identified": null, "source": "3mf", "clamps": []},
+  "mesh_topology": {"analyzed": true, "boundary_edges": 1124, "nonmanifold_edges": 160, "nonmanifold_vertices": 0, "inconsistent_faces": 0, "degenerate_edges": 0, "signed_volume": 2000.000000, "welded_vertices": 39042, "welded_undirected_edges": 116162, "welded_components": 2, "euler_characteristic": 0, "manifold": false, "consistently_oriented": true, "repaired_faces": 0, "part_signed_volumes_mm3": [0.000000, 2000.000000], "validation_tier": "standard", "validation_findings": [{"code": "boundary_edges", "fatal": false, "count": 1124}, {"code": "nonmanifold_edges", "fatal": false, "count": 160}]}}

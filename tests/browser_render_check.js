@@ -601,6 +601,60 @@ async function main() {
                               done: presetDone }));
     }
 
+    // (v0.10) productization UI on the real page: empty-guide lifecycle,
+    // summary cards, SF band class, term tooltips, param plain-language
+    // hints, warnings card toggle, first-run guide show/close + persistence.
+    expect("v0.10: empty-guide hidden + 3 summary cards after render",
+           await evalJs("document.getElementById('empty-guide').style.display==='none' && document.getElementById('summary-cards').children.length===3"));
+    expect("v0.10: SF KPI carries a display-band class from the engine number",
+           await evalJs("/^v sf-(low|mid|high)$/.test(document.getElementById('res-sf').className)"),
+           await evalJs("document.getElementById('res-sf').className"));
+    expect("v0.10: static term glossary tooltips (安全系数/Weibull/壁数/填充率)",
+           await evalJs("(function(){function f(sel,sub){var es=document.querySelectorAll(sel);" +
+             "for(var i=0;i<es.length;i++){if(es[i].title&&es[i].title.indexOf(sub)>=0)return true}" +
+             "return false}" +
+             "return f('.ui-kpi .k','安全系数')&&f('#structural-summary .k','Weibull')" +
+             "&&f('#current-params .k','外壁圈数')&&f('#current-params .k','填充')})()"));
+    expect("v0.10: param row plain-language hint on walls slider",
+           await evalJs("(function(){var i=document.querySelector('[data-param=walls]');" +
+             "if(!i)return false;var l=i.parentNode.querySelector('.lbl');" +
+             "return !!(l&&l.title&&l.title.indexOf('外壁圈数')===0)})()"));
+    // render the v2 fixture (carries the 41-part warning) so the badge has
+    // real content to count/toggle on — the page was reloaded since __r was
+    // first set (session-restore step), so re-inject the JSON
+    await evalJs("window.__r = " + report + "; renderReport(window.__r,'')");
+    const wToggle = JSON.parse(await evalJs(
+      "(function(){var c=document.getElementById('warnings-card');" +
+      "var before=getComputedStyle(document.getElementById('warning-list')).display==='none';" +
+      "document.getElementById('warnings-toggle').click();" +
+      "var after=getComputedStyle(document.getElementById('warning-list')).display!=='none';" +
+      "return JSON.stringify({shown:c.style.display!=='none'," +
+      "count:document.getElementById('warnings-count').textContent," +
+      "collapsedBefore:before,openAfter:after})})()"));
+    expect("v0.10: warnings badge + click-to-expand",
+           wToggle.shown && /^\d+$/.test(wToggle.count)
+           && parseInt(wToggle.count, 10) > 0
+           && wToggle.collapsedBefore && wToggle.openAfter,
+           JSON.stringify(wToggle));
+    // first-run guide: visible on a fresh profile, closable, and the
+    // dismissal persists across a reload via localStorage (ui.guide-done)
+    const g1 = JSON.parse(await evalJs(
+      "(function(){var g=document.getElementById('first-guide');" +
+      "var vis=getComputedStyle(g).display!=='none';" +
+      "document.getElementById('guide-close').click();" +
+      "return JSON.stringify({vis:vis,afterHidden:g.style.display==='none'," +
+      "stored:localStorage.getItem('ui.guide-done')})})()"));
+    expect("v0.10: first-run guide visible, closes, persists flag",
+           g1.vis === true && g1.afterHidden === true && g1.stored === "1",
+           JSON.stringify(g1));
+    await send("Page.reload", {});
+    for (let i = 0; i < 50; i++) {
+      if (await evalJs("typeof renderReport") === "function") break;
+      await sleep(200);
+    }
+    expect("v0.10: guide stays dismissed after reload",
+           await evalJs("getComputedStyle(document.getElementById('first-guide')).display==='none'"));
+
     ws.close(); cleanup();
     console.log(fails ? "%d FAIL".replace("%d", fails) : "browser E2E all green");
     process.exit(fails ? 1 : 0);

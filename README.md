@@ -50,9 +50,13 @@ python server.py
 5. **④ 分析结果** — 几何风险、安全系数、参数建议、引擎推荐行；Phase C/D 结构细节
    （Hill48/热应力/层间残余/分层/老化、屈曲/疲劳/断裂/Weibull，含 1e10→∞ 哨兵判别）、
    warnings、⑥ 模块可信度徽章；顶部为引擎亲笔结论行（`phase_b.assessment` verbatim）
-   与「应用勾选建议」：引擎建议中可一键执行的项（v0.9 白名单：喷嘴直径/打印速度/冷却
-   风扇——参数名与单位均以真实引擎样本实证为准）带勾选框，点 CTA 即写滑杆并重新分析，
-   应用后与引擎回显比对、被引擎按域调整时如实提示。求解器内部量（CG 收敛/网格/离散
+   与「应用勾选建议」：引擎建议中可一键执行的项（v0.9.1 起白名单=PARAM_META 全部数值滑杆键，
+   含引擎原生 walls/infill——0.25.0 对齐已确认键名与 percent 单位，真实样本见
+   `test_data/webui-alignment-2026-09/`；select 键 pattern/material 仍待 change 样本）带勾选框，
+   点 CTA 即写滑杆并重新分析，应用后与引擎回显比对、被引擎按域调整时如实提示（infill 建议按
+   percent↔fraction 换算比对）。冷却风扇建议在残余应力安全系数极高时（>100）附"收益可能有限"
+   提示（引擎 0.25.0 自述风扇档为无文献源启发式，见 docs/engine-feedback-prompt.md 差异项 2）。
+   求解器内部量（CG 收敛/网格/离散
    误差/本构细节）收进高级模式的折叠详情，结论与安全系数永远在主区
 6. **⑤ 候选档位对比** — safe/balanced/fast/appearance 对比表（Goal/EstTime/EstMat/EstSF）
 7. **写回下载** — 仅 `.3mf` 输入可用：`--optimize-3mf <profile>` 下载新 3MF，

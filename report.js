@@ -4,8 +4,26 @@
 // All helpers ($, el, num, numEnv, state, ...) are globals resolved
 // at CALL time — this file only declares functions, runs nothing.
 
+// ---------- v0.10 static term glossary ----------
+// Plain-language hover explanations for the engine's technical vocabulary.
+// STATIC COPY ONLY (sources: docs/parameter-research-2026-09.md consensus +
+// engine schema docs) — never derived from, nor overriding, engine output.
+var TERM_INFO = {
+  hill48: "Hill48 屈服准则：考虑 FDM 打印各向异性（X/Y/Z 方向强度不同）的屈服判定，比各向同性的 von Mises 更贴近层间真实强度。",
+  weibull: "Weibull 统计强度：把材料内部缺陷分布计入的可靠性模型。Pf=失效概率，R=可靠度；等级 A+ 为最优。",
+  interlaminar: "层间强度（Z/XY）：FDM 件层与层之间靠热融合连接，Z 方向（垂直于层平面）通常只有 XY 的 30–60%，是最常见的失效面。",
+  delamination: "分层（delamination）：层间结合失效，载荷沿层界面拉开——FDM 件在 Z 向载荷下的典型失效模式；与层间强度 Z/XY 直接相关。",
+  thermal_stress: "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。",
+};
+
 // ---------- render ----------
 function renderReport(d, consoleText, applyable) {
+  // v0.10: a successful render supersedes the empty-state guide (④) and any
+  // error card from a previous failed run
+  var eg = $("empty-guide");
+  if (eg) eg.style.display = "none";
+  var aerr = $("analyze-error");
+  if (aerr) { aerr.style.display = "none"; aerr.innerHTML = ""; }
   // a successful render supersedes any --validate refusal listing (④)
   var vr = $("validate-refused");
   if (vr) { vr.style.display = "none"; vr.innerHTML = ""; }
@@ -278,6 +296,31 @@ function renderReport(d, consoleText, applyable) {
     warnBox.appendChild(w3);
   }
 
+  // v0.10 warnings card: count badge + click-to-expand (progressive
+  // disclosure — the summary risk card above shows the first 3 in plain
+  // sight; the full engine list unrolls on demand). open state is user-owned
+  // and survives re-renders via the data-open flag.
+  var wc = $("warnings-card");
+  if (wc) {
+    var wcount = warnBox.childNodes.length;
+    wc.style.display = wcount ? "" : "none";
+    var wcnt = $("warnings-count");
+    if (wcnt) wcnt.textContent = String(wcount);
+    warnBox.style.display = wc.dataset.open === "1" ? "" : "none";
+  }
+  // snapshot for the summary risk card (built at the end of this render)
+  var warnTexts = [];
+  function deepText(n) {
+    var t = n.textContent || "";
+    // HTMLCollection has no .forEach (only NodeList does) — use the call form
+    Array.prototype.forEach.call(n.children || [], function (c) { t += deepText(c); });
+    return t;
+  }
+  Array.prototype.forEach.call(warnBox.childNodes, function (c) {
+    var t = deepText(c);
+    if (t) warnTexts.push(t);
+  });
+
   // Phase C (plasticity / thermal / layer residual / delamination / fracture
   // / aging). Every row is null-gated on the engine's own value — a null IS
   // information ("not evaluated for this input"), never rendered as 0.
@@ -327,8 +370,10 @@ function renderReport(d, consoleText, applyable) {
     pcd.innerHTML = "";
     if (pc.run) {
     if (pc.hill48_safety_factor != null) {
-      pcd.appendChild(el("div", "hint",
-        "Hill48 SF: " + numEnv(pc.hill48_safety_factor, 1)));
+      var h48 = el("div", "hint",
+        "Hill48 SF: " + numEnv(pc.hill48_safety_factor, 1));
+      h48.title = TERM_INFO.hill48;  // v0.10 term glossary hover
+      pcd.appendChild(h48);
     }
     if (pc.plastic_safety_factor != null) {
       pcd.appendChild(el("div", "hint",
@@ -337,10 +382,12 @@ function renderReport(d, consoleText, applyable) {
           ? "（最大塑性应变 " + numEnv(pc.max_plastic_strain, 4) + "）" : "")));
     }
     if (pc.max_thermal_stress_mpa != null) {
-      pcd.appendChild(el("div", "hint",
+      var ths = el("div", "hint",
         "热应力: " + numEnv(pc.max_thermal_stress_mpa, 3,
                            pc.max_thermal_stress_mpa_envelope) + " MPa" +
-        (pc.thermal_is_upper_bound === true ? "（上界）" : "")));
+        (pc.thermal_is_upper_bound === true ? "（上界）" : ""));
+      ths.title = TERM_INFO.thermal_stress;
+      pcd.appendChild(ths);
     }
     if (pc.max_layer_residual_stress_mpa != null) {
       pcd.appendChild(el("div", "hint",
@@ -350,10 +397,12 @@ function renderReport(d, consoleText, applyable) {
           ? "（SF " + numEnv(pc.residual_safety_factor, 1) + "）" : "")));
     }
     if (pc.max_delamination_risk != null) {
-      pcd.appendChild(el("div", "hint",
+      var dlr = el("div", "hint",
         "分层风险: " + numEnv(pc.max_delamination_risk, 6) +
         (pc.delamination_risk_layers != null
-          ? "（" + pc.delamination_risk_layers + " 层）" : "")));
+          ? "（" + pc.delamination_risk_layers + " 层）" : ""));
+      dlr.title = TERM_INFO.delamination;
+      pcd.appendChild(dlr);
     }
     if (pc.max_fracture_peel_risk != null || pc.max_fracture_shear_risk != null) {
       pcd.appendChild(el("div", "hint",
@@ -363,9 +412,11 @@ function renderReport(d, consoleText, applyable) {
     // Weibull numbers live in phase_c too; the A+ grade shows in the summary
     // via phase_d — these rows keep the numeric Pf/R from being lost.
     if (pc.weibull_failure_probability != null) {
-      pcd.appendChild(el("div", "hint",
+      var wbr = el("div", "hint",
         "Weibull: Pf " + numEnv(pc.weibull_failure_probability, 6) +
-        " / R " + numEnv(pc.weibull_reliability_factor, 4)));
+        " / R " + numEnv(pc.weibull_reliability_factor, 4));
+      wbr.title = TERM_INFO.weibull;
+      pcd.appendChild(wbr);
     }
     // (iter 72) yielded_elements: 0 is meaningful information ("no element
     // yielded"), not a sentinel — render the raw count when the engine
@@ -467,7 +518,9 @@ function renderReport(d, consoleText, applyable) {
         wb += "，尺寸因子 " + num(pd.weibull_size_factor, 3);
       if (typeof pd.weibull_sigma_eff_mpa === "number")
         wb += "，σ_eff " + num(pd.weibull_sigma_eff_mpa, 1) + " MPa";
-      pdd.appendChild(el("div", "hint", wb));
+      var wbd = el("div", "hint", wb);
+      wbd.title = TERM_INFO.weibull;
+      pdd.appendChild(wbd);
     }
     if (pd.findley_ran && pd.findley_sf != null) {
       pdd.appendChild(el("div", "hint", "Findley SF: " + num(pd.findley_sf, 1)));
@@ -898,6 +951,19 @@ function renderReport(d, consoleText, applyable) {
         "建议值下估算: SF " + num(it.est_safety_factor, 1) + " / 最大应力 " +
         num(it.est_max_stress, 3) + " MPa"));
     }
+    // v0.9.1 engine alignment (docs/webui-alignment-response-2026-09.md):
+    // cooling-fan suggestions come from the warping heuristic band (engine
+    // self-declared uncalibrated, autosuggest.cpp iter 244) and do NOT read
+    // the residual-stress margin. When this sample's residual safety factor
+    // is enormous the fan cut buys little strength — surface that instead
+    // of letting the tradeoff note carry the whole story.
+    if (it.parameter === "cooling_fan"
+        && typeof pc.residual_safety_factor === "number"
+        && pc.residual_safety_factor > 100) {
+      li.appendChild(el("div", "hint",
+        "注：本样本残余应力安全系数 " + num(pc.residual_safety_factor, 1) +
+        "，此项建议对强度的收益可能有限（打印质量权衡见上）"));
+    }
     recBox.appendChild(li);
   });
   if (applyCta && nApplicable > 0) {
@@ -993,6 +1059,57 @@ function renderReport(d, consoleText, applyable) {
     body.appendChild(sv);
   }
 
+  // v0.10 candidate comparison bars — pure-CSS relative widths within THIS
+  // report's candidate set (zero dependencies; display only — the engine's
+  // own ranking/order stays authoritative, the UI re-sorts nothing). Bars are
+  // normalized per-metric against the max of the feasible rows.
+  var cbBox = $("cand-bars");
+  if (cbBox) {
+    cbBox.innerHTML = "";
+    var feas = cands.filter(function (c) { return c.feasible !== false; });
+    if (feas.length >= 2) {
+      var mx = { sf: 0, t: 0, m: 0 };
+      feas.forEach(function (c) {
+        var e = c.estimate || {};
+        if (typeof c.search_est_safety_factor === "number")
+          mx.sf = Math.max(mx.sf, c.search_est_safety_factor);
+        if (typeof e.print_time_min === "number")
+          mx.t = Math.max(mx.t, e.print_time_min);
+        if (typeof e.material_volume_mm3 === "number")
+          mx.m = Math.max(mx.m, e.material_volume_mm3);
+      });
+      feas.forEach(function (c) {
+        var e = c.estimate || {};
+        var row = el("div", "cbar");
+        row.appendChild(el("span", "cb-name", c.name || "?"));
+        var track = el("div", "cb-track");
+        [["SF", typeof c.search_est_safety_factor === "number"
+            ? c.search_est_safety_factor : null, mx.sf, "var(--green)"],
+         ["时间", typeof e.print_time_min === "number"
+            ? e.print_time_min : null, mx.t, "var(--amber)"],
+         ["材料", typeof e.material_volume_mm3 === "number"
+            ? e.material_volume_mm3 : null, mx.m, "var(--cyan)"]]
+          .forEach(function (m) {
+            var lab = el("span", "cb-lab", m[0]);
+            var bar = el("div", "cb-bar");
+            var fill = el("i");
+            if (m[1] !== null && m[2] > 0)
+              fill.style.width = Math.max(2, (m[1] / m[2]) * 100) + "%";
+            fill.style.background = m[3];
+            bar.appendChild(fill);
+            var line = el("div", "cb-row");
+            line.appendChild(lab);
+            line.appendChild(bar);
+            track.appendChild(line);
+          });
+        row.appendChild(track);
+        cbBox.appendChild(row);
+      });
+      cbBox.appendChild(el("p", "hint",
+        "条长为各候选在本组内的相对值（绿=安全系数、琥珀=时间、蓝=材料）——纯展示，排序仍以引擎为准。"));
+    }
+  }
+
   // init tuning sliders from the values the engine used (except layer_height)
   setParamValue("walls", inp.walls);
   setParamValue("infill", inp.infill_density != null ? (inp.infill_density * 100) : 15);
@@ -1046,10 +1163,114 @@ function renderReport(d, consoleText, applyable) {
       oBox.appendChild(row);
     });
 
+    // ---------- v0.10 verdict-first summary cards ----------
+  // Three plain-language cards above the KPI row: 结论 (engine assessment
+  // verbatim + SF band) / 风险 (first 3 warnings) / 建议 (apply CTA front and
+  // center). Red line: the verdict text is the engine's own — the SF band
+  // colors are a DISPLAY mapping of the engine's own number (<1 / 1–3 / >3);
+  // no SF → no color, no guess. Cards are rebuilt every render (empty box =
+  // hidden via CSS :empty).
+  var scBox = $("summary-cards");
+  if (scBox) {
+    scBox.innerHTML = "";
+    // verdict card — edge color keyed ONLY on the engine's own emoji prefix
+    var vc = el("div", "sum-card sum-verdict");
+    vc.appendChild(el("h3", null, "结论"));
+    var verdictTxt = typeof pb.assessment === "string" && pb.assessment
+      ? pb.assessment : "";
+    if (verdictTxt.indexOf("✅") >= 0) vc.className += " ok";
+    else if (verdictTxt.indexOf("❌") >= 0) vc.className += " bad";
+    else if (verdictTxt.indexOf("⚠") >= 0) vc.className += " warn";
+    vc.appendChild(el("div", "big", verdictTxt
+      || "引擎未给出结论短语 — 见下方各项数值。"));
+    // SF band: engine scalar (v2 object shape → nominal); display-only
+    var sfNum = (pb.safety_factor !== null && pb.safety_factor !== undefined
+                 && typeof pb.safety_factor === "object")
+      ? pb.safety_factor.nominal : pb.safety_factor;
+    var sfCls = null;
+    if (typeof sfNum === "number" && isFinite(sfNum))
+      sfCls = sfNum < 1 ? "low" : sfNum <= 3 ? "mid" : "high";
+    var rsEl = $("res-sf");
+    if (rsEl) rsEl.className = "v" + (sfCls ? " sf-" + sfCls : "");
+    if (sfCls) {
+      var band = el("div", "sf-band sf-" + sfCls);
+      var bi = el("i");
+      bi.style.width = Math.max(6, Math.min(100, (sfNum / 6) * 100)) + "%";
+      band.appendChild(bi);
+      vc.appendChild(band);
+      vc.appendChild(el("div", "hint",
+        sfNum < 1 ? "安全系数低于 1 — 应力已超过材料强度"
+        : sfNum <= 3 ? "安全系数 1–3 — 有余量但不宽裕"
+        : "安全系数 > 3 — 余量充足"));
+    }
+    scBox.appendChild(vc);
+    // risk card — first 3 warning lines, verbatim
+    var rcard = el("div", "sum-card");
+    rcard.appendChild(el("h3", null, "风险"));
+    if (warnTexts.length) {
+      var ul = el("ul", "sum-lines");
+      warnTexts.slice(0, 3).forEach(function (t) {
+        var li = el("li");
+        li.appendChild(document.createTextNode(t));
+        ul.appendChild(li);
+      });
+      rcard.appendChild(ul);
+      if (warnTexts.length > 3)
+        rcard.appendChild(el("div", "hint",
+          "还有 " + (warnTexts.length - 3) + " 条 — 点上方「N 条提示」展开完整列表"));
+    } else {
+      rcard.appendChild(el("div", "big", "无警告。"));
+    }
+    scBox.appendChild(rcard);
+    // advice card — apply CTA front and center
+    var acard = el("div", "sum-card");
+    acard.appendChild(el("h3", null, "建议"));
+    var nRecs = (rec.items || []).length;
+    if (nApplicable > 0) {
+      acard.appendChild(el("div", "big",
+        "引擎建议 " + nRecs + " 项参数调整（" + nApplicable + " 项可一键应用）"));
+      var sumCta = el("button", "sum-cta", "应用可行建议 (" + nApplicable + ")");
+      sumCta.title = "按下方列表的勾选状态写入参数滑杆并立即重新分析";
+      sumCta.onclick = function () {
+        var picked = [];
+        var ri = $("rec-items");
+        var cbs = ri && ri.querySelectorAll ? ri.querySelectorAll("input[data-apply-idx]") : [];
+        for (var i = 0; i < cbs.length; i++) {
+          if (cbs[i].checked && applyable[cbs[i].getAttribute("data-apply-idx")])
+            picked.push(applyable[cbs[i].getAttribute("data-apply-idx")]);
+        }
+        if (typeof applyCheckedSuggestions === "function")
+          applyCheckedSuggestions(picked);
+      };
+      acard.appendChild(sumCta);
+    } else if (nRecs) {
+      acard.appendChild(el("div", "big",
+        "引擎建议 " + nRecs + " 项（无可一键应用项，见下方明细）"));
+    } else {
+      acard.appendChild(el("div", "big", "无参数建议。"));
+    }
+    // 3.4 engine appendix C: part_visibility_warning → actionable grid hint
+    if (pbd && typeof pbd.part_visibility_warning === "string"
+        && pbd.part_visibility_warning) {
+      acard.appendChild(el("div", "hint",
+        "网格分辨率不足以覆盖全部几何部件 — 可提高网格精度（--grid）后重跑："));
+      var gbtn = el("button", null, "提高网格精度（--grid ×2）并重跑");
+      gbtn.onclick = function () {
+        var inp = $("opt-grid");
+        var cur = parseInt(inp && inp.value, 10);
+        if (isNaN(cur))
+          cur = (typeof state !== "undefined" && state.serverGrid) || 16;
+        if (inp) inp.value = Math.min(128, cur * 2);
+        if (typeof analyze === "function") analyze(false);
+      };
+      acard.appendChild(gbtn);
+    }
+    scBox.appendChild(acard);
+  }
+
     // trust badges — level styling keyed on the engine's own levels; the
   // citation string rides along in the title (hover)
-  var trust = d.trust || {};
-  $("trust-material").textContent = trust.material || "";
+  var trust = d.trust || {};  $("trust-material").textContent = trust.material || "";
   var tBox = $("trust-list");
   tBox.innerHTML = "";
   var levels = Object.keys(trust.modules || {});
@@ -1065,4 +1286,51 @@ function renderReport(d, consoleText, applyable) {
     row.appendChild(document.createTextNode(" " + k));
     tBox.appendChild(row);
   });
+}
+
+// ---------- v0.10 actionable error card ----------
+// Renders a failed analyze payload into ④ with NEXT-STEP buttons instead of
+// a bare toast. The error/findings text is verbatim; the actions only flip
+// UI knobs the user already owns (validate tier select, per-run --grid box)
+// and re-run the standard analyze channel — no new endpoints.
+function renderAnalyzeError(j) {
+  var box = $("analyze-error");
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "none";
+  if (!j || !j.error) return;
+  // "block" (not "") — the element's stylesheet default is display:none, so
+  // an empty inline value would fall back to hidden
+  box.style.display = "block";
+  box.appendChild(el("div", "err", String(j.error)));
+  var acts = el("div", "actions");
+  function act(label, fn) {
+    var b = el("button", null, label);
+    b.onclick = fn;
+    acts.appendChild(b);
+  }
+  // --validate strict/paranoid refusal → one click back to standard + rerun
+  if (j.status === "validation_refused") {
+    act("把校验档位改回 standard 并重跑", function () {
+      var sel = (typeof document !== "undefined" && document.querySelector)
+        ? document.querySelector('[data-env="validate_tier"]') : null;
+      if (sel) sel.value = "standard";
+      if (typeof markChanged === "function") markChanged("validate_tier");
+      if (typeof analyze === "function") analyze(false);
+    });
+  }
+  // grid / resolution / multi-part errors → double --grid and rerun (the
+  // engine's own appendix-C guidance surfaced as a button)
+  var msg = String(j.error);
+  if (/网格|分辨率|部件|grid|resolution/i.test(msg)) {
+    act("提高网格精度（--grid ×2）并重跑", function () {
+      var inp = $("opt-grid");
+      var cur = parseInt(inp && inp.value, 10);
+      if (isNaN(cur))
+        cur = (typeof state !== "undefined" && state.serverGrid) || 16;
+      if (inp) inp.value = Math.min(128, cur * 2);
+      if (typeof analyze === "function") analyze(false);
+    });
+  }
+  if (acts.childNodes.length) box.appendChild(acts);
 }

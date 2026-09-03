@@ -263,8 +263,75 @@
   `browser_render_check.js` 39 项（真引擎 e2e 断言 applyable 顶层 + CTA 渲染）；截图
   `gui-test-screenshots/v09-*.png`（简单模式结论行+CTA / 高级折叠展开 / 应用后 dirty+toast，
   真引擎 STL 全流程；一次性脚本用后即删）
-- 挂账（backlog）：改名键白名单扩表（需真实 rec 样本）；infill_pct 单位空间探针；`overall_band`
+- 挂账（backlog）：~~改名键白名单扩表（需真实 rec 样本）~~【v0.9.1 闭环：引擎 0.25.0 对齐——
+  recommendations 原生键即 walls/infill/pattern（wall_count/infill_pct/infill_pattern 仅
+  process_optimization 空间），infill 单位=percent（fraction 仅 input 回显）；真实样本已交付
+  `test_data/webui-alignment-2026-09/report-walls-infill-suggestions.json`，白名单=PARAM_META
+  数值滑杆全量（select 仍挂账待 change 样本），回显比对扩 walls/infill（percent↔fraction 换算）；
+  我方样本"零样本"根因=grid_res=4 触发实心件抑制（分辨率伪影，非能力缺失）——小件/薄壁建议
+  提升 `--grid`≥16（默认已 16）】；`overall_band`
   契约缺口（UI 不自造分数色带，需引擎出枚举）；applyable 兜底规则与 presets_for 分叉已成文（本节 a）
+
+### v0.9.1 — 引擎 0.25.0 对齐闭环（2026-09-02，调研驱动）
+
+> 背景：`docs/parameter-research-2026-09.md` 调研（30+ 行业来源 + 聚合物物理文献）→ 差异项回提
+> 引擎团队（`docs/engine-feedback-prompt.md`）→ 引擎回复 `C:\build\Stratum\docs\webui-alignment-response-2026-09.md`。
+> 本迭代落地回复中"WebUI 侧无需等引擎"的 3 项（附录 C）。
+
+- [x] a) **applyable 白名单扩表**（`applyable_suggestions` 注释+文案；PARAM_META 数值滑杆全量，
+      walls/infill 原生键解锁；wall_count 等 process_optimization 键仍拒绝）；前端
+      `APPLY_ECHO_KEYS` 扩 walls/infill（infill 回显 fraction→percent 换算，`reconcileApplied`
+      支持 [echoKey, factor] 形态）；引擎交付真实样本复制为 fixture
+      （`test_data/webui-alignment-2026-09/report-walls-infill-suggestions.json`）
+- [x] b) **风扇建议降级展示**（report.js）：cooling_fan 建议且 `phase_c.residual_safety_factor`
+      > 100 时附「此项建议对强度的收益可能有限」提示（引擎 warping 分支自述无文献源，
+      iter 244；低残余应力场景降幅未门控，0.26 `motivation` 字段前 UI 侧如实披露）
+- [x] c) **--grid 验证**：默认已 16（`GRID`，`STRATUM_UI_GRID` env 可覆写），满足引擎
+      "小件/薄壁建议提升 --grid≥16" 建议，无代码改动；我方样本 grid_res=4 为 fixture 显式指定
+- 验证：`tests/test_smoke.py` 106/106（T84 敌意矩阵扩 3 case：walls/infill 原生键解锁 +
+  percent 吸附 + 引擎交付样本全链路；T86 新样本 projection 断言）；`report_render_check.js`
+  69 项（24d 文案同步 + 24g 风扇降级提示三态：高 SF 出现/缺 SF 不出现/非风扇参数不出现）；
+  `browser_render_check.js` 39 项无回归（T58 真引擎 e2e 通过）
+
+### v0.10.0 — 产品化三阶段（易用性 × 视觉 × 信任，2026-09-02）
+
+> 背景：`docs/productization-prompt-2026-09.md`（基于 v0.9.1 现状的产品化路线，三原则：
+> 30 秒首价值 / 渐进披露 / 可行动性）。Phase 1-3 一次会话完成，UI_VERSION → 0.10.0。
+
+- [x] **Phase 1 易用性闭环**
+  - 空状态产品化：④「三步得到强度结论」引导卡（3 步 + 3 条能力亮点），首次成功渲染后隐藏
+    （renderReport 起手置 none）
+  - verdict-first 三卡（`#summary-cards`）：结论卡（引擎 assessment verbatim + SF 色带）/
+    风险卡（warnings 前 3 条）/ 建议卡（「应用可行建议 (N)」CTA 前置；引擎无 assessment
+    时不编造）；原 KPI 行降为次级
+  - 术语解释层：静态 `TERM_INFO` 词汇表（Hill48/Weibull/层间强度 Z-XY/分层/热应力）挂在
+    动态 hint 行 title；静态 label（安全系数/载荷判定/最大应力/屈曲/疲劳/Weibull/壁数/
+    填充率/层高）在 index.html 带 title——只做静态文案映射，不碰引擎输出
+  - 错误可行动化：`renderAnalyzeError`（report.js）——422 validation_refused →
+    「校验档位改回 standard 并重跑」按钮；错误文本含 网格/分辨率/部件 →
+    「提高网格精度（--grid ×2）并重跑」按钮；成功渲染自动清除。注意 CSS display:none
+    默认的元素要置 `style.display="block"`（置 "" 会回落隐藏，已踩坑修复）
+  - 移动端：640px 上传拖拽区大卡片化 + 单列 summary/empty 卡；420px KPI 单列
+- [x] **Phase 2 视觉产品化**
+  - 品牌首屏：header 字标渐变（`.hero-mark`）+ 副标改「强度分析工作台」
+  - SF 色带：`sf-low/mid/high`（<1 红 / 1–3 琥珀 / >3 绿）纯展示映射——引擎无 SF 时
+    `className="v"` 不上色不猜测；verdict 卡内条形 band（宽 = SF/6 封顶）
+  - 候选档位对比条形图（`#cand-bars`）：纯 CSS 相对宽度（SF/时间/材料对 feasible 组内
+    归一化），引擎排序不动，feasible<2 不渲染
+  - 微交互：建议应用后参数行 `.flash` 高亮 1.4s；KPI `.skeleton` 脉冲 + `#run-progress`
+    进度条接 NDJSON /api/progress（pct 驱动宽度）；全部受 prefers-reduced-motion 抑制
+- [x] **Phase 3 引导与信任**
+  - 首次 3 步引导条（`#first-guide`，localStorage `ui.guide-done` 可关闭、reload 后不再出现）
+  - 参数行人话解释：`PARAM_HINT`（12 参数，数据源 parameter-research §2 共识，悬停 title）
+  - warnings 卡可点开（`#warnings-card` 徽章 N 条 → click 展开；open 态存 dataset、
+    跨渲染保留；summary 风险卡展示前 3 条作默认视图）
+  - 引擎附录 C 落地：`phase_b.diagnostics.part_visibility_warning` 存在 → 建议卡
+    「提高网格精度（--grid ×2）并重跑」按钮（与 1.4 错误卡同款动作）
+- 验证：smoke **106/106**；`report_render_check.js` **95 项**（+26：三卡/SF 色带两态/
+  warnings 开合/术语 title/cand-bars 归一化/错误卡三按钮/空态隐藏）；`browser_render_check.js`
+  **46 项**（+7：真页面三卡/色带/静态+动态术语/参数 hint/warnings 开合/引导条出现-关闭-
+  reload 记忆）；截图 `gui-test-screenshots/product-p1/p2/p3-*.png` ×7
+  （`tests/product_shots.js` 可复跑）
 
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
