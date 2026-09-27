@@ -35,6 +35,7 @@ import atexit
 import glob
 import io
 import json
+import logging
 import os
 import re
 import secrets
@@ -42,11 +43,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 import zipfile
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, quote, urlparse
 
 HOST = "127.0.0.1"
@@ -84,7 +87,23 @@ def _validated_int(raw, lo, hi):
 # 0.7.0 — ROADMAP v0.7 (one-click presets, simple-mode "0 参数" entry).
 # 0.6.0 — ROADMAP v0.6 (UI v3 visual + auto real-time analysis) complete;
 # bumped from 0.5.0 which had drifted behind the milestone (iter 67).
-UI_VERSION = "0.11.0"
+# 0.12.0 — UX interaction alignment (task-language panel titles, grouped
+# sliders, collapsible analysis options, mode switch, run-delta chips).
+# 0.13.0 — task-flow layout (simple-mode single column + step strip,
+# sticky verdict bar, dirty-count chip, preset-comparison opened to simple).
+# 0.14.0 — risk disclosure: summary risk card aggregates phase_a.risks +
+# warnings (severity-ranked), geometric risk list collapses behind a
+# count/max-severity toggle, verdict-gated default (⚠/❌ expand, ✅ fold),
+# engine severity 1..5 shown verbatim (was clamped to 3).
+# 0.15.0 — one-click zh⇄en UI language toggle (header button, persisted);
+# engine-authored report text stays Chinese by design (single source of
+# truth); 500 errors now carry the real exception for diagnosis.
+# 0.16.0 — engine 0.26 suggestion channel (motivation badges + suppression
+# disclosures, forward-compatible tokens), self-contained HTML report
+# snapshot export (client-side Blob, zero new endpoints), run-history
+# per-row param diff + SF/score inline-SVG sparklines, persistent rolling
+# log (%LOCALAPPDATA%\StratumWebUI\logs, 5MB×3) + 「打开日志目录」button.
+UI_VERSION = "0.16.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -217,6 +236,80 @@ WORK_DIR = tempfile.mkdtemp(prefix="stratum_ui_")
 # run in-process cleanup; those orphans are reclaimed by the startup sweep in
 # main() instead). Runs during interpreter shutdown: ignore_errors mandatory.
 atexit.register(shutil.rmtree, WORK_DIR, ignore_errors=True)
+
+# v0.16 persistent log: stderr stays the live channel; this rolling file is
+# the post-mortem one (bug reports from a distributed install need the
+# request/engine trail after the console is gone). %LOCALAPPDATA%\StratumWebUI\
+# logs, 5 MB x 3 files (stratum-webui.log + .1 + .2). STRATUM_UI_LOG_DIR and
+# STRATUM_UI_LOG_MAX_BYTES exist so the test suite never touches the real
+# profile dir. Any setup failure degrades to console-only — the file is a
+# bonus channel, never a startup blocker (same contract as the heatmap).
+LOG_DIR = os.environ.get(
+    "STRATUM_UI_LOG_DIR",
+    os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+                 "StratumWebUI", "logs"))
+LOG_MAX_BYTES = _validated_int(
+    os.environ.get("STRATUM_UI_LOG_MAX_BYTES", str(5 * 1024 * 1024)),
+    1000, 100 * 1024 * 1024) or (5 * 1024 * 1024)
+LOG_FILE = None  # None = file logging degraded/off
+
+
+class _TeeStderr(object):
+    """sys.stderr wrapper: every existing stderr write lands in the console
+    AND the rolling file — zero call-site changes, engine subprocess stderr
+    (captured via PIPE before it ever reaches sys.stderr) stays out."""
+
+    def __init__(self, orig, logger):
+        self._orig = orig
+        self._logger = logger
+
+    def write(self, s):
+        try:
+            self._orig.write(s)
+        except Exception:
+            pass  # console gone (window closed): file copy still matters
+        if s and s.strip():
+            try:
+                self._logger.critical(s.rstrip("\r\n"))
+            except Exception:
+                pass  # disk full / file held open elsewhere — console copy went
+        return len(s)
+
+    def flush(self):
+        try:
+            self._orig.flush()
+        except Exception:
+            pass
+
+    def __getattr__(self, name):  # isatty / encoding / fileno passthrough
+        return getattr(self._orig, name)
+
+
+def _setup_file_logging():
+    global LOG_FILE
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        # raiseExceptions=False: on a rollover failure (another instance
+        # holds the file — Windows rename needs exclusive access) logging's
+        # handleError would write to sys.stderr, which is the tee, which
+        # logs again → unbounded recursion. Silently dropping that one
+        # record is the honest degradation for a bonus channel.
+        logging.raiseExceptions = False
+        handler = RotatingFileHandler(
+            os.path.join(LOG_DIR, "stratum-webui.log"),
+            maxBytes=LOG_MAX_BYTES, backupCount=2, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        logger = logging.getLogger("stratum.webui.file")
+        logger.addHandler(handler)
+        logger.setLevel(logging.CRITICAL)
+        logger.propagate = False
+        LOG_FILE = handler.baseFilename
+        sys.stderr = _TeeStderr(sys.stderr, logger)
+    except Exception:
+        LOG_FILE = None
+# Installed in main(), NOT at import time: tests import this module for
+# helpers (_sweep_orphan_workdirs) and must not touch the real profile dir;
+# only an actually-running server logs to file.
 # owner tag for the startup orphan sweep (dead-owner dirs get reclaimed;
 # note: token*/out_token* evict globs never match "owner.pid")
 try:
@@ -1131,7 +1224,7 @@ ENV_FLAGS = {
     "machine": ("--machine", "select"),
     # --validate: input-topology ENFORCEMENT tier (standard = audit only;
     # strict/paranoid refuse → status:"validation_refused" marker, rendered
-    # inline in ④).
+    # inline in 「分析结果」).
     "validate_tier": ("--validate", "select"),
     # bool flags (no value in argv; validated_env only passes True through)
     "repair_orientation": ("--repair-orientation", "bool"),
@@ -1159,7 +1252,7 @@ ENV_FLAGS = {
     # --- v0.8.1 misc knobs ---
     # --prony-duration: Prony load duration for the long-term (viscoelastic)
     # modulus; requested/applied echo in input.requested_prony_duration_s /
-    # applied_prony_duration_s (echo-synced like other ③b numeric rows).
+    # applied_prony_duration_s (echo-synced like other 「环境与载荷」 numeric rows).
     "prony_duration_s": ("--prony-duration", "float"),
     # --- v0.8.1 estimator calibration (iter 582 surface) ---
     # --cal-time/--cal-mass: measured print time / material mass from a real
@@ -1449,6 +1542,9 @@ class StratumHandler(BaseHTTPRequestHandler):
                 "schema_supported": list(SUPPORTED_SCHEMA),
                 "allow_any_schema": ALLOW_ANY_SCHEMA,
                 "history_cap": MAX_HISTORY,
+                # v0.16: where the rolling log lives (tooltip copy); null
+                # when file logging degraded to console-only
+                "log_dir": LOG_DIR if LOG_FILE else None,
             })
         elif path == "/api/params":
             # surface tells the UI where the enums came from; drift lists
@@ -1468,7 +1564,7 @@ class StratumHandler(BaseHTTPRequestHandler):
                     "extra_locks": EXTRA_LOCKS,
                     "extra_locks_source": EXTRA_LOCKS_SOURCE,
                     # v0.8 select surfaces (schema-probed when available —
-                    # the client builds the ③b selects from these, not from
+                    # the client builds the 「环境与载荷」 selects from these, not from
                     # hardcoded copies)
                     "axis_values": AXIS_VALUES,
                     "machine_values": MACHINE_VALUES,
@@ -1601,6 +1697,11 @@ class StratumHandler(BaseHTTPRequestHandler):
             else:
                 _send_json(self, 200, {"ok": True, "entries": entries,
                                        "batch": batch})
+        elif path == "/api/logs-dir":
+            # v0.16: diagnostics disclosure — where the rolling log lives.
+            # file:None honestly reports the console-only degraded mode.
+            _send_json(self, 200, {"ok": True, "dir": LOG_DIR,
+                                   "file": LOG_FILE})
         else:
             _send_json(self, 404, {"ok": False, "error": "not found"})
 
@@ -1649,6 +1750,8 @@ class StratumHandler(BaseHTTPRequestHandler):
                 self._upload()
             elif path == "/api/analyze":
                 self._analyze()
+            elif path == "/api/open-logs":
+                self._open_logs()
             elif path == "/api/export":
                 self._export()
             elif path == "/api/export-artifact":
@@ -1674,8 +1777,12 @@ class StratumHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             _send_json(self, 400, {"ok": False, "error": str(exc)})
         except Exception as exc:  # defensive: never crash the worker
-            self._log("error: %r" % exc)
-            _send_json(self, 500, {"ok": False, "error": "internal error"})
+            # full stack to the console; the repr rides the 500 body so the
+            # UI red card (and bug reports) carry the real cause — a bare
+            # "internal error" is undiagnosable from the outside
+            self._log("error: %s" % traceback.format_exc().strip())
+            _send_json(self, 500, {"ok": False,
+                                   "error": "internal error: %r" % (exc,)})
 
     def _upload(self):
         if BINARY is None:
@@ -1812,7 +1919,7 @@ class StratumHandler(BaseHTTPRequestHandler):
             if name not in PARAM_FLAGS:
                 raise ValueError("unknown parameter: %r" % name)
         env = validated_env(body.get("env") or {})
-        if body.get("fast") is True:  # ① 「快速预览」--fast (preview-grade run)
+        if body.get("fast") is True:  # 「快速预览」--fast (preview-grade run)
             env["fast"] = True  # constant literal: already whitelist-valid
         # Keyed on the server-generated hex token, not the user-supplied name:
         # two concurrent sessions with the same filename no longer overwrite
@@ -1957,7 +2064,7 @@ class StratumHandler(BaseHTTPRequestHandler):
         # (profile + Orca suggestions); "orca" = --apply-orca (Orca
         # suggestions ONLY — brim/support/PA/weld, no profile writeback).
         # Both need a writable project 3MF. --apply-orca accepts but does
-        # not write --sidecar-json (probed 0.24.0), so orca mode has no
+        # not write --sidecar-json (probed 0.24.0 and 0.26.0), so orca mode has no
         # sidecar audit — the download itself is the product.
         mode = body.get("mode") or "optimize"
         if mode not in ("optimize", "orca"):
@@ -2356,6 +2463,30 @@ class StratumHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the console clean; use _log for real events
 
+    def _open_logs(self):
+        """v0.16: open the log directory in Explorer (「打开日志目录」 button).
+        os.startfile receives ONLY the server-computed LOG_DIR — no client
+        input reaches the shell. STRATUM_UI_LOG_OPEN=0 is the test-mode skip
+        (opening real windows during CI is noise, not coverage); non-Windows
+        degrades honestly instead of failing loud."""
+        if os.environ.get("STRATUM_UI_LOG_OPEN") == "0":
+            _send_json(self, 200, {"ok": True, "opened": False,
+                                   "dir": LOG_DIR, "skipped": "test-mode"})
+            return
+        if not hasattr(os, "startfile"):
+            _send_json(self, 200, {"ok": True, "opened": False,
+                                   "dir": LOG_DIR, "skipped": "no-startfile"})
+            return
+        try:
+            os.startfile(LOG_DIR)
+        except OSError as exc:
+            self._log("open-logs failed: %r" % exc)
+            _send_json(self, 500, {"ok": False, "error": str(exc),
+                                   "dir": LOG_DIR})
+            return
+        self._log("open-logs: %s" % LOG_DIR)
+        _send_json(self, 200, {"ok": True, "opened": True, "dir": LOG_DIR})
+
 
 def _open_browser_later():
     """Open the default browser once the server is about to accept requests.
@@ -2367,6 +2498,7 @@ def _open_browser_later():
 
 
 def main():
+    _setup_file_logging()  # see note at the def: import-time would leak into test imports
     problems = []
     if PORT is None:
         problems.append("STRATUM_UI_PORT=%r 无效（需 1-65535 整数）" % PORT_RAW)
@@ -2403,7 +2535,7 @@ def main():
         # serve anyway: the UI's first-run wizard (POST /api/set-binary) is
         # the guided path; /api/upload already answers 503 until then
         sys.stderr.write(
-            "stratum.exe 未找到——浏览器打开后在 ① 面板粘贴 stratum.exe 路径完成设置，\n"
+            "stratum.exe 未找到——浏览器打开后在「模型」面板粘贴 stratum.exe 路径完成设置，\n"
             "或设置 STRATUM_BIN / 放到 bin/ 下后重启。\n")
     # reclaim stratum_ui_* dirs orphaned by force kills (iter 40)
     _sweep_orphan_workdirs()

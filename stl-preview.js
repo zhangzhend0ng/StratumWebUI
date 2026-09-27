@@ -276,7 +276,7 @@ function stlOrientToDir(d) {
   stlDraw();
 }
 
-// highlight one rank (0 = none); called by the ④ orientation table rows
+// highlight one rank (0 = none); called by the 「分析结果」 orientation table rows
 function stlSelectOrient(rank) {
   stlView.orientSel = rank;
   stlDraw();
@@ -425,7 +425,7 @@ function loadStlPreview(j) {
   var ext = (j.name.split(".").pop() || "").toLowerCase();
   if (ext !== "stl") {
     // also clears a previous session's last frame (canvas hidden = no stale)
-    degrade(ext === "3mf" ? "3MF 预览暂不支持（结构优化请看 ④⑤ 面板）"
+    degrade(ext === "3mf" ? "3MF 预览暂不支持（结构优化请看 「分析结果」与「档位对比」面板）"
                           : "预览仅支持 STL");
     return;
   }

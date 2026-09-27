@@ -99,14 +99,64 @@
   .badge.ok { color: var(--green); border-color: var(--green-line); background: var(--green-soft); }
   .badge.err { color: var(--red); border-color: var(--red-line); background: var(--red-soft); }
 
-  /* segmented-control styling for the mode toggle (behavior unchanged) */
-  #mode-toggle {
-    margin-left: auto; cursor: pointer; font-size: 12.5px; font-weight: 500;
-    background: var(--surface-1); color: var(--text);
-    border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 15px;
-    transition: border-color var(--dur-fast), background var(--dur-fast), color var(--dur-fast);
+  /* mode toggle as a real switch (Material-style track+thumb; checkbox
+     underneath keeps keyboard/focus semantics for free). Behavior unchanged:
+     same MODE_KEY persistence, same body class flip. */
+  .sw {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none; font-size: 12.5px; font-weight: 500;
+    color: var(--text);
   }
-  #mode-toggle:hover { border-color: var(--accent); background: var(--accent-a10); }
+  .sw input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .sw .sw-track {
+    width: 34px; height: 19px; border-radius: 999px; flex: none;
+    background: var(--line-strong); position: relative;
+    transition: background var(--dur-fast);
+  }
+  .sw .sw-track::after {
+    content: ""; position: absolute; top: 2.5px; left: 2.5px;
+    width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .3);
+    transition: left var(--dur-fast);
+  }
+  .sw input:checked + .sw-track { background: var(--accent); }
+  .sw input:checked + .sw-track::after { left: 17.5px; }
+  .sw input:focus-visible + .sw-track {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  /* v0.12 upload-panel option group: primary actions stay out front; the
+     6 analysis checkboxes + grid input collapse behind one disclosure */
+  details.opt-group { margin-top: 4px; }
+  details.opt-group > summary {
+    cursor: pointer; color: var(--muted); font-size: 12.5px;
+    padding: 4px 0; user-select: none;
+  }
+  details.opt-group > summary:hover { color: var(--text); }
+  details.opt-group[open] > summary { margin-bottom: 2px; }
+  /* v0.12 slider grouping: chunked headers inside #tuning-panel. The header
+     carries a data-search covering all its rows so the existing search
+     filter hides empty groups with zero extra logic. */
+  .param-group-h {
+    font-size: 11.5px; font-weight: 600; color: var(--muted);
+    letter-spacing: .3px; margin: 10px 0 2px;
+    padding-bottom: 3px; border-bottom: 1px solid var(--line);
+  }
+  .param-group-h:first-child { margin-top: 2px; }
+  /* v0.12 run-delta chips on the verdict card: "what changed since the last
+     run" (SF / overall score). Rendered ONLY when both sides are finite
+     numbers — first run or missing fields show nothing. */
+  .run-delta {
+    margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;
+    font-size: 11.5px; color: var(--muted);
+  }
+  .delta-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--surface-1); font-family: var(--mono);
+  }
+  .delta-chip.up { color: var(--green); border-color: var(--green-line); background: var(--green-soft); }
+  .delta-chip.down { color: var(--red); border-color: var(--red-line); background: var(--red-soft); }
+  .delta-chip.flat { color: var(--muted); }
   /* one-click presets — the simple-mode "0 参数" entry; also handy in
      advanced mode as a fast multi-param setup (sets all 9 sliders at once) */
   #preset-buttons {
@@ -139,6 +189,11 @@
     background: var(--accent); }
 
   .grid { display: grid; grid-template-columns: 460px 1fr; gap: var(--sp-4); align-items: start; }
+  /* min-width:0 on the grid ITEMS is the canonical grid-blowout fix: without
+     it the right column's min-content (e.g. a KPI envelope value that can't
+     break, or any wide unbreakable run) expands the 1fr track past the
+     viewport and gives the whole page a horizontal scrollbar. */
+  .grid > div { min-width: 0; }
   @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
 
   /* ============ cards / panels ============ */
@@ -163,7 +218,7 @@
   .panel h2 .tag { font-size: 11.5px; color: var(--muted); font-weight: 400;
     font-family: var(--mono); }
 
-  /* collapsible groups (③ 调参 / ③b 环境与载荷) */
+  /* collapsible groups (「调参」 / 「环境与载荷」) */
   details.ui-group { border: 1px solid var(--line); border-radius: var(--r-md);
     padding: 0 var(--sp-3); margin-bottom: var(--sp-3); background: var(--surface-2); }
   details.ui-group > summary {
@@ -186,12 +241,12 @@
   details.ui-group > :not(summary) { margin-bottom: var(--sp-3); }
   details.ui-group > :last-child { margin-bottom: var(--sp-3); }
 
-  /* ============ KPI cards (④ top) ============ */
+  /* ============ KPI cards (「分析结果」 top) ============ */
   .ui-kpis {
-    display: grid; grid-template-columns: repeat(4, 1fr);
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: var(--sp-3); margin-bottom: var(--sp-5);
   }
-  @media (max-width: 640px) { .ui-kpis { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 640px) { .ui-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .ui-kpi {
     background: var(--surface-1);
     border: 1px solid var(--line); border-radius: var(--r-md);
@@ -362,6 +417,12 @@
   tbody tr:hover { background: var(--accent-a10); }
   tr.infeasible td { color: var(--muted); }
   .goal-tag { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); }
+  /* v0.16 engine-0.26 motivation badge: which goal a suggestion serves
+     (accent-tinted to read as metadata, not an action tag) */
+  .mot-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px;
+    margin-left: 6px; vertical-align: 1px; white-space: nowrap;
+    background: var(--accent-a10); border: 1px solid var(--accent-a25);
+    color: var(--accent); }
   .goal-strength { color: var(--red); border-color: var(--red-line); background: var(--red-soft); }
   .goal-speed { color: var(--green); border-color: var(--green-line); background: var(--green-soft); }
   .goal-quality { color: var(--violet); border-color: var(--violet-line); background: var(--violet-soft); }
@@ -372,6 +433,8 @@
   .risk-item:last-child { border-bottom: none; }
   .sev { display: inline-block; width: 46px; text-align: center; border-radius: 999px;
          font-size: 11px; padding: 2px 0; margin-right: 8px; font-weight: 700; }
+  .sev-5 { background: var(--red); color: #fff; font-weight: 700; }
+  .sev-4 { background: var(--red-soft); color: var(--red); font-weight: 600; }
   .sev-3 { background: var(--red-soft); color: var(--red); }
   .sev-2 { background: var(--amber-soft); color: var(--amber); }
   .sev-1 { background: var(--green-soft); color: var(--green); }
@@ -398,6 +461,74 @@
 
   /* simple/advanced mode: advanced-only blocks hidden until toggled on */
   body.mode-simple .advanced-only { display: none !important; }
+
+  /* ============ v0.13 task-flow layout ============ */
+  /* simple mode = single-column task flow (模型 → 预设 → 结论). The two-column
+     dashboard is the advanced-mode workspace. DOM order already reads
+     模型→预设→结果 once .advanced-only panels hide — pure CSS, no node moves. */
+  body.mode-simple .grid { grid-template-columns: 1fr; }
+  body.mode-simple .grid > div:first-child {
+    max-width: 760px; margin: 0 auto; width: 100%;
+  }
+  /* inverse of .advanced-only: flow-only chrome (step strip) — hidden
+     whenever advanced mode is on */
+  body:not(.mode-simple) .simple-only { display: none !important; }
+  /* persistent step strip (simple mode): "where am I" in the 3-step flow.
+     .done steps flip to a check mark via JS textContent; states are driven
+     by updateFlowSteps() at the upload / render / mode-switch hooks. */
+  #flow-steps {
+    display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap;
+    padding: 8px 16px; margin-bottom: var(--sp-4);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    background: var(--surface-1); box-shadow: var(--shadow-1);
+    font-size: 12.5px; color: var(--muted);
+  }
+  #flow-steps .fs-step { display: flex; align-items: center; gap: 7px; }
+  #flow-steps .fs-n {
+    width: 20px; height: 20px; border-radius: 50%; flex: none;
+    border: 1.5px solid var(--line-strong); color: var(--muted);
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color var(--dur-fast), background var(--dur-fast),
+                color var(--dur-fast);
+  }
+  #flow-steps .fs-step.active .fs-n { border-color: var(--accent); color: var(--accent); }
+  #flow-steps .fs-step.active { color: var(--text); }
+  #flow-steps .fs-step.done .fs-n {
+    border-color: var(--green-line); background: var(--green-soft);
+    color: var(--green);
+  }
+  #flow-steps .fs-step.done { color: var(--text); }
+  #flow-steps .fs-sep { color: var(--line-strong); }
+  /* sticky verdict bar: SF/score/delta stay visible while scrolling either
+     column (the right .grid child spans the whole results stack, so a
+     sticky element inside it survives left-column scrolling too). */
+  #sticky-verdict {
+    display: none;  /* JS-controlled like #analyze-error — CSS default none */
+    position: sticky; top: 8px; z-index: 30;
+    align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 8px 14px; margin-bottom: 10px;
+    border: 1px solid var(--line-strong); border-radius: var(--r-md);
+    background: var(--surface-1); box-shadow: var(--shadow-2);
+    font-size: 13px;
+  }
+  #sticky-verdict .sv-lbl { color: var(--muted); font-size: 11.5px; }
+  #sticky-verdict .sv-val { font-family: var(--mono); font-weight: 650; font-size: 15px; }
+  #sticky-verdict .sv-val.sf-low { color: var(--red); }
+  #sticky-verdict .sv-val.sf-mid { color: var(--amber); }
+  #sticky-verdict .sv-val.sf-high { color: var(--green); }
+  /* dirty-count chip in the primary action row: a span, NOT a button — the
+     E3 suite pins that row to exactly 3 <button>s. Keyboard support via
+     tabindex + keydown in JS. */
+  #dirty-chip {
+    display: none; align-self: center; cursor: pointer; user-select: none;
+    font-size: 12px; padding: 4px 11px; border-radius: 999px;
+    border: 1px solid var(--accent); color: var(--accent);
+    background: var(--accent-a10);
+    transition: background var(--dur-fast);
+  }
+  #dirty-chip:hover { background: var(--accent-a15); }
+  #dirty-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* ============ toasts ============ */
   /* toasts: transient analyze/compare/download messages only — persistent
@@ -558,6 +689,14 @@
   }
   /* warnings expandable card (3.3) */
   #warnings-card { margin-bottom: 8px; }
+  .lang-btn {
+    font-size: 12.5px; font-weight: 700; padding: 4px 12px;
+    border: 1px solid var(--line-strong); border-radius: 999px;
+    background: var(--panel2); color: var(--text); cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+  .lang-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .lang-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .warnings-toggle {
     width: 100%; text-align: left; font-size: 13.5px; font-weight: 600;
     display: flex; align-items: center; gap: 8px;
@@ -613,7 +752,13 @@
     <span class="sub">强度分析工作台 · UI <span id="ui-ver">…</span> · 引擎版本 <span id="engine-ver">…</span></span>
     <span id="bin-badge" class="badge">引擎未就绪</span>
     <span id="model-badge" class="badge" style="display:none"></span>
-    <button id="mode-toggle" title="显示或隐藏高级内容（参数滑杆调参、环境载荷、候选对比、可信度、Orca 建议、运行历史等）">高级模式：关</button>
+    <!-- v0.15 i18n: one-click zh<->en for UI chrome (engine-authored report
+         text stays Chinese — single source of truth red line) -->
+    <button id="lang-toggle" type="button" class="lang-btn" title="Switch UI text to English (engine output stays Chinese)">EN</button>
+    <!-- v0.16: open the rolling-log folder (diagnostics for bug reports;
+         actual path filled in from /api/status) -->
+    <button id="btn-logs" type="button" class="lang-btn" title="打开运行日志目录">日志</button>
+    <label class="sw" title="显示或隐藏高级内容（参数滑杆调参、环境载荷、可信度、Orca 建议、运行历史等）"><input type="checkbox" id="mode-toggle"><span class="sw-track" aria-hidden="true"></span><span>高级选项</span></label>
   </header>
 
   <!-- v0.10 (3.1) first-run 3-step guide bar — localStorage ui.guide-done -->
@@ -624,11 +769,21 @@
     <button class="fg-x" id="guide-close" title="不再显示（记住此选择）">知道了 ✕</button>
   </div>
 
+  <!-- v0.13 persistent step strip (simple mode only): where-am-I in the
+       upload → preset → verdict flow. States via updateFlowSteps(). -->
+  <div class="simple-only" id="flow-steps" style="display:none">
+    <div class="fs-step" data-fs="1"><span class="fs-n">1</span>上传模型</div>
+    <span class="fs-sep">→</span>
+    <div class="fs-step" data-fs="2"><span class="fs-n">2</span>选预设</div>
+    <span class="fs-sep">→</span>
+    <div class="fs-step" data-fs="3"><span class="fs-n">3</span>看结论</div>
+  </div>
+
   <div class="grid">
     <!-- ================= left column ================= -->
     <div>
       <div class="panel">
-        <h2>① 模型上传</h2>
+        <h2>模型</h2>
         <div class="ui-drop" id="dropzone">
           <span class="ui-drop-icon" aria-hidden="true">⬆</span>
           拖放模型文件到此处，或点击选择<br>
@@ -639,15 +794,27 @@
           <button id="btn-analyze" class="primary" disabled>分析</button>
           <button id="btn-compare" disabled>优化对比</button>
           <button id="btn-report" disabled>下载报告 JSON</button>
-          <label class="lock-cb" style="align-self:center"><input type="checkbox" id="opt-orient">方向优化</label>
-          <label class="lock-cb" style="align-self:center" title="快速预览：FEM 网格封顶 12³，结果为预览级（报告 fast_mode:true 披露）"><input type="checkbox" id="opt-fast">快速预览</label>
-          <label class="lock-cb" style="align-self:center" title="外观质量评估（--appearance）：光泽/纹理/层纹/台阶纹/表面翘曲，结果在 ④「外观评估」面板"><input type="checkbox" id="opt-appearance">外观评估</label>
-          <label class="lock-cb" style="align-self:center" title="熔体流变诊断（--rheology）：剪切率/黏度/压力降/稳定性/胀大，结果在 ④「流变诊断」面板"><input type="checkbox" id="opt-rheology">流变诊断</label>
-          <label class="lock-cb" style="align-self:center" title="估算误差剖析（--est-error-profile）：引擎按多维度重跑 FEM，对比代理模型估算与真实解的外推误差（结果在 ④「估算误差剖析」表）"><input type="checkbox" id="opt-esterror">估算误差剖析</label>
-          <label class="lock-cb" style="align-self:center" title="分辨率校验（--resolution-check）：以 2 倍网格重跑 FEM 并披露位移/应力偏差（约 2 倍求解时间；结果在 ④ Phase B 详情）"><input type="checkbox" id="opt-rescheck">分辨率校验</label>
-          <label class="lock-cb" style="align-self:center" title="FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。">网格 <input type="number" id="opt-grid" min="4" max="128" step="1" placeholder="默认" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"></label>
+          <button id="btn-snapshot" disabled
+                  title="把当前渲染后的「分析结果」区导出为自包含单文件 HTML（内联样式、无外部资源、离线可开；数据截至导出时刻）">下载 HTML 快照</button>
+          <span id="dirty-chip" role="button" tabindex="0"
+                title="与本次上传基线有差异的参数数；点击立即分析。「重置全部修改」可回到基线"></span>
           <span id="run-indicator" class="hint" style="display:none; align-self:center"></span>
         </div>
+        <!-- v0.12: 6 个诊断/加速开关 + 网格收进折叠组——主行动只有「分析」。
+             默认收起（progressive disclosure）；开启中的选项在 summary 徽标计数，
+             收起也不丢失"有选项开着"的可见性 -->
+        <details class="opt-group" id="opt-details">
+          <summary>分析选项<span class="tag" id="opt-count" style="display:none; margin-left:6px"></span></summary>
+          <div class="actions" style="gap:6px 14px">
+          <label class="lock-cb" style="align-self:center"><input type="checkbox" id="opt-orient">方向优化</label>
+          <label class="lock-cb" style="align-self:center" title="快速预览：FEM 网格封顶 12³，结果为预览级（报告 fast_mode:true 披露）"><input type="checkbox" id="opt-fast">快速预览</label>
+          <label class="lock-cb" style="align-self:center" title="外观质量评估（--appearance）：光泽/纹理/层纹/台阶纹/表面翘曲，结果在「外观评估」折叠区"><input type="checkbox" id="opt-appearance">外观评估</label>
+          <label class="lock-cb" style="align-self:center" title="熔体流变诊断（--rheology）：剪切率/黏度/压力降/稳定性/胀大，结果在「流变诊断」折叠区"><input type="checkbox" id="opt-rheology">流变诊断</label>
+          <label class="lock-cb" style="align-self:center" title="估算误差剖析（--est-error-profile）：引擎按多维度重跑 FEM，对比代理模型估算与真实解的外推误差（结果在「估算误差剖析」表）"><input type="checkbox" id="opt-esterror">估算误差剖析</label>
+          <label class="lock-cb" style="align-self:center" title="分辨率校验（--resolution-check）：以 2 倍网格重跑 FEM 并披露位移/应力偏差（约 2 倍求解时间；结果在 Phase B 详情）"><input type="checkbox" id="opt-rescheck">分辨率校验</label>
+          <label class="lock-cb" style="align-self:center" title="FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。">网格 <input type="number" id="opt-grid" min="4" max="128" step="1" placeholder="默认" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"></label>
+          </div>
+        </details>
         <div id="wizard" style="display:none; margin-top:8px">
           <div class="hint">未检测到 stratum.exe。粘贴 stratum.exe 的完整路径（SDK 发布物 bin/ 内）：</div>
           <div class="actions" style="margin-top:6px">
@@ -671,7 +838,7 @@
       </div>
 
       <div class="panel advanced-only">
-        <h2>② 当前参数 <span class="tag">来自引擎 JSON 报告</span></h2>
+        <h2>当前参数 <span class="tag" title="面板数值取自引擎 JSON 报告的 input 回显，非 UI 自记">以引擎回显为准</span></h2>
         <div class="kv" id="current-params">
           <span class="k">材料</span><span class="v" id="cp-material">—</span>
           <span class="k">喷嘴</span><span class="v" id="cp-nozzle">—</span>
@@ -693,12 +860,12 @@
       <div class="panel" id="preset-panel">
         <h2>快速预设 <span class="tag">一键设置全部参数并分析</span></h2>
         <div class="actions" id="preset-buttons"></div>
-        <div class="hint">上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开「高级模式」。</div>
+        <div class="hint">上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。</div>
       </div>
 
       <div class="panel">
         <details class="ui-group advanced-only" open>
-          <summary>③ 调参 <span class="tag">滑杆 + 锁定（--lock）</span></summary>
+          <summary>调参 <span class="tag" title="滑杆 + 锁定（引擎 --lock 语义）：锁定即冻结该维度，档位搜索不再漂移它">逐项微调 · 未动项沿用引擎默认</span></summary>
           <div class="actions" style="gap:8px; margin:6px 0">
             <input type="text" id="param-search" placeholder="搜索参数（名称/标签，含环境与锁定项）…">
             <button id="btn-reset-all" title="把所有已修改项恢复到本次会话基线（上传/引擎回显值）">重置全部修改</button>
@@ -710,7 +877,7 @@
           <div class="hint">层高等无滑杆项也可锁定（--lock 面）；锁定即所有档位搜索冻结该维度。层高数值本身仍只能经档位间接改变（CLI 无 --layer-height）。</div>
         </details>
         <details class="ui-group advanced-only">
-          <summary>③b 环境与载荷 <span class="tag">未触碰项不发送，用引擎默认</span></summary>
+          <summary>环境与载荷 <span class="tag">未动项不发送，用引擎默认</span></summary>
           <div id="env-panel"></div>
           <div class="hint">载荷大小为数字直输（引擎域 0..1e6 N）；疲劳寿命为 10ⁿ 指数滑杆。服役时长/温度/湿度/退火供老化与 WLF 模型（部分材料未标定时引擎回 null）。回抽/空走/擦除为「发送值」通道：只进 Orca 建议与外观通道、设值即钉住，且引擎报告不回显——UI 无法替你核实，写回审计里看实际效果。</div>
         </details>
@@ -720,7 +887,10 @@
     <!-- ================= right column ================= -->
     <div>
       <div class="panel">
-        <h2>④ 分析结果</h2>
+        <h2>分析结果</h2>
+        <!-- v0.13 sticky verdict bar: SF/score/delta stay in view while the
+             user scrolls sliders or the long results stack -->
+        <div id="sticky-verdict" aria-live="polite"></div>
         <div id="run-progress" aria-hidden="true"><i></i></div>
         <div id="analyze-error"></div>
         <!-- v0.10 (1.1) empty-state guide: shown until the first render -->
@@ -762,7 +932,7 @@
           <span class="k" title="Weibull 统计强度评级：把材料内部缺陷分布计入的可靠性模型，A+ 为最优（悬停详情行有解释）">Weibull 等级</span><span class="v" id="res-weibull">—</span>
         </div>
         <div class="kv" id="printability-line" style="display:none; margin-bottom:8px"></div>
-        <div id="phase-b-assessment" class="rec-line" style="display:none"></div>
+        <div id="phase-b-assessment" class="rec-line" style="display:none" data-i18n-skip="1"></div>
         <div id="phase-b-detail"></div>
         <details id="phase-b-solver" class="advanced-only" style="display:none; margin-top:6px">
           <summary class="hint" style="cursor:pointer">求解器与网格详情 <span class="tag">CG 收敛 / 网格 / 离散误差 / 预条件子</span></summary>
@@ -821,29 +991,35 @@
         </details>
         <details id="engine-console" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">引擎控制台输出（含跳过项理由）</summary>
-          <pre id="engine-console-pre" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--console-bg);border:1px solid var(--console-line);border-radius:6px;padding:8px;margin-top:6px;color:var(--console-text)"></pre>
+          <pre id="engine-console-pre" data-i18n-skip="1" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--console-bg);border:1px solid var(--console-line);border-radius:6px;padding:8px;margin-top:6px;color:var(--console-text)"></pre>
         </details>
-        <div id="risk-list"><div class="ui-empty">分析后显示几何风险</div></div>
+        <!-- v0.14: geometric risks collapsed behind a count/max-severity
+             toggle (real models can carry hundreds of per-location items —
+             the summary risk card above carries the top lines). Same
+             user-owned open flag as the warnings card. -->
+        <div id="risk-card" style="display:none">
+          <button class="warnings-toggle" id="risk-toggle" type="button">
+            ⚠ <span class="wcount" id="risk-count">0</span> 条几何风险 · 最高
+            <span class="sev" id="risk-max-sev">S1</span>
+            <span class="hint">点击展开 / 收起</span>
+          </button>
+          <div id="risk-list"><div class="ui-empty">分析后显示几何风险</div></div>
+        </div>
         <div id="rec-items"><div class="ui-empty">分析后显示参数建议</div></div>
         <div class="rec-line" id="engine-recommendation" style="display:none"></div>
         <h2 class="advanced-only" style="margin-top:14px">运行历史 <span class="tag" id="history-cap-note">本会话最近 10 次（仅 nominal 值）</span></h2>
+        <!-- v0.16 SF/评分趋势迷你图（纯内联 SVG，随 renderHistory 重建） -->
+        <div id="history-spark" class="advanced-only hint" style="margin:6px 0"></div>
         <div id="history-list" class="advanced-only"><div class="ui-empty">分析后显示</div></div>
         <div id="ab-diff" class="advanced-only"></div>
       </div>
 
-      <div class="panel advanced-only">
-        <h2>⑥ 模块可信度 <span class="tag" id="trust-material"></span></h2>
-        <div id="trust-list"><div class="ui-empty">分析后显示</div></div>
-      </div>
-
-      <div class="panel advanced-only">
-        <h2>⑦ Orca 工艺建议 <span class="tag">--orca-suggest · 引擎 JSON 结构化输出</span></h2>
-        <div id="orca-list"><div class="ui-empty">分析后显示</div></div>
-        <div class="hint">decision 档=可安全采纳的工艺决策；display 档=引擎声明为无文献依据的启发式，仅供展示。置信度与 grounding 模块来自引擎自带字段。</div>
-      </div>
-
-      <div class="panel advanced-only">
-        <h2>⑤ 候选档位对比</h2>
+      <!-- v0.13: 档位对比 moved up beside the results and opened to simple
+           mode — the four-preset comparison answers the novice's FIRST
+           question ("which preset should I pick?"). The capture/batch/
+           writeback tooling below the table stays advanced-only. -->
+      <div class="panel" id="cand-panel">
+        <h2>档位对比 <span class="tag">安全 / 均衡 / 高速 / 外观</span></h2>
         <div id="cand-bars"></div>
         <div class="scroll">
           <table id="cand-table">
@@ -855,31 +1031,44 @@
             <tbody id="cand-body"><tr><td colspan="15" class="muted">分析后显示。</td></tr></tbody>
           </table>
         </div>
-        <div style="margin-top:10px">
-          <input type="text" id="cand-label" placeholder="候选名（≤40 字）"
-                 style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:13px;width:150px">
-          <button id="btn-capture">捕获当前滑杆为自定义候选</button>
-          <button id="btn-batch" disabled>批量运行</button>
-          <span class="hint" id="cand-count"></span>
+        <div class="advanced-only">
+          <div style="margin-top:10px">
+            <input type="text" id="cand-label" placeholder="候选名（≤40 字）"
+                   style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:13px;width:150px">
+            <button id="btn-capture">捕获当前滑杆为自定义候选</button>
+            <button id="btn-batch" disabled>批量运行</button>
+            <span class="hint" id="cand-count"></span>
+          </div>
+          <div id="cand-chips" class="actions" style="gap:6px"></div>
+          <div id="batch-results"></div>
+          <div class="actions" id="export-row">
+            <select id="export-profile">
+              <option value="safe">safe</option>
+              <option value="balanced" selected>balanced</option>
+              <option value="fast">fast</option>
+              <option value="appearance">appearance</option>
+            </select>
+            <button id="btn-preview" disabled>预览写回（dry-run）</button>
+            <button id="btn-export" disabled>写回下载 3MF</button>
+            <button id="btn-export-orca" disabled title="--apply-orca：只把 Orca 建议（底边/支撑/PA/焊接）写进新 3MF，不做结构优化写回；无 sidecar 审计">仅写回 Orca 建议</button>
+            <label class="lock-cb"><input type="checkbox" id="strict-tier">严格可信层</label>
+            <span class="hint" id="export-hint">先上传模型</span>
+          </div>
+          <pre id="export-preview" data-i18n-skip="1" style="display:none"></pre>
+          <div id="export-msg"></div>
+          <div id="sidecar-detail"></div>
         </div>
-        <div id="cand-chips" class="actions" style="gap:6px"></div>
-        <div id="batch-results"></div>
-        <div class="actions" id="export-row">
-          <select id="export-profile">
-            <option value="safe">safe</option>
-            <option value="balanced" selected>balanced</option>
-            <option value="fast">fast</option>
-            <option value="appearance">appearance</option>
-          </select>
-          <button id="btn-preview" disabled>预览写回（dry-run）</button>
-          <button id="btn-export" disabled>写回下载 3MF</button>
-          <button id="btn-export-orca" disabled title="--apply-orca：只把 Orca 建议（底边/支撑/PA/焊接）写进新 3MF，不做结构优化写回；无 sidecar 审计">仅写回 Orca 建议</button>
-          <label class="lock-cb"><input type="checkbox" id="strict-tier">严格可信层</label>
-          <span class="hint" id="export-hint">先上传模型</span>
-        </div>
-        <pre id="export-preview" style="display:none"></pre>
-        <div id="export-msg"></div>
-        <div id="sidecar-detail"></div>
+      </div>
+
+      <div class="panel advanced-only">
+        <h2>可信度 <span class="tag" id="trust-material"></span></h2>
+        <div id="trust-list"><div class="ui-empty">分析后显示</div></div>
+      </div>
+
+      <div class="panel advanced-only">
+        <h2>切片软件建议（Orca）<span class="tag" title="引擎 --orca-suggest 的结构化输出，逐条渲染">引擎结构化输出</span></h2>
+        <div id="orca-list"><div class="ui-empty">分析后显示</div></div>
+        <div class="hint">decision 档=可安全采纳的工艺决策；display 档=引擎声明为无文献依据的启发式，仅供展示。置信度与 grounding 模块来自引擎自带字段。</div>
       </div>
     </div>
   </div>
@@ -935,12 +1124,12 @@ var ENV_META = [
     optionsKey: "axisValues", default: "z", echo: "torsion_axis" },
   // machine: firmware-limit clamp identity; "" = auto (3MF printer_model)
   // and NOTHING is sent. No engine input echo — the detected machine is
-  // disclosed in report.machine_limits instead (④).
+  // disclosed in report.machine_limits instead (「分析结果」).
   { name: "machine", label: "机器型号", kind: "select",
     optionsKey: "machineValues", autoOption: "自动（3MF 识别）",
     default: "", echo: null },
   // validate tier: input-topology enforcement (standard = audit only;
-  // strict/paranoid refuse → ④ inline findings). Echo lives in
+  // strict/paranoid refuse → 「分析结果」 inline findings). Echo lives in
   // mesh_topology.validation_tier, not input — no slider bounce.
   { name: "validate_tier", label: "校验档位", kind: "select",
     optionsKey: "validateTiers", default: "standard", echo: null },
@@ -980,8 +1169,8 @@ var ENV_META = [
     echo: "requested_prony_duration_s",
     hint: "0=不发送（引擎域 0..1e308 s）；粘弹性长期模量的载荷时长；回显 requested_prony_duration_s" },
   // v0.8.1 estimator calibration: measured time/mass from a real print →
-  // engine calibrates its estimates (top-level `calibration` block in ④;
-  // ⑤ 候选行悬停显示 calibrated)。引擎域 1..1e6 s / 0.01..1e6 g。
+  // engine calibrates its estimates (top-level `calibration` block in 「分析结果」;
+  // 「档位对比」 候选行悬停显示 calibrated)。引擎域 1..1e6 s / 0.01..1e6 g。
   { name: "cal_time_s", label: "实测打印时长", kind: "num", widget: "number",
     min: 1, max: 1000000, step: 60, unit: "s", default: 0, zeroUnset: true,
     echo: null,
@@ -1076,11 +1265,16 @@ Promise.all([
     $("history-cap-note").textContent =
       "本会话最近 " + st.history_cap + " 次（仅 nominal 值）";
   }
+  // v0.16: real log path on the 「日志」 button tooltip (null = console-only
+  // degraded mode — show the default location hint, not a fabricated path)
+  var logsBtn = $("btn-logs");
+  if (logsBtn && st.log_dir)
+    logsBtn.title = "打开运行日志目录\n" + st.log_dir;
   state.materials = pm.materials || [];
   state.extraLocks = ((pm.surface || {}).extra_locks) || [];
   state.loads = ((pm.surface || {}).loads)
     || ["compression", "bending", "torsion", "cantilever"];
-  // v0.8 select surfaces (schema-probed server-side; the ③b selects build
+  // v0.8 select surfaces (schema-probed server-side; the 「环境与载荷」 selects build
   // from these — no client-side hardcoded copies of the engine enums)
   state.axisValues = ((pm.surface || {}).axis_values) || ["x", "y", "z"];
   state.machineValues = ((pm.surface || {}).machine_values) || [];
@@ -1172,6 +1366,7 @@ function updateRowState(name) {
   row.classList.toggle("dirty", !!state.dirty[name]);
   var b = row.querySelector(".p-reset");
   if (b) b.disabled = !state.dirty[name];
+  updateDirtyChip();  // v0.13: every dirty mutation lands here or in the resets
 }
 function resetOne(name) {
   var input = findRowInput(name);
@@ -1200,14 +1395,46 @@ function resetOne(name) {
 }
 function resetAllTuning() {
   Object.keys(state.dirty).forEach(resetOne);
+  updateDirtyChip();  // resetOne only fires per surviving row; ensure the chip clears
   // lastEnv decides which env keys the next echo may bounce — cleared so a
   // fresh analyze re-echoes nothing stale
   state.lastEnv = {};
 }
+// v0.12 param grouping (Hick's-law chunking): the flat 12-slider list renders
+// under ≤3 plain-language group headers matched to how users think about
+// print settings (strength / material & temps / speed & cooling).
+// Presentation only — PARAM_META stays the one owner of slider semantics
+// (server-side). Any param not covered by a group falls into a trailing
+// "其他" bucket, so schema-drift additions can never vanish from the panel.
+var PARAM_GROUP = [
+  ["结构强度", ["walls", "infill", "pattern", "layer_height", "z_ratio", "fill_angle"]],
+  ["材料与温度", ["material", "nozzle_diameter", "nozzle_temperature", "bed_temperature"]],
+  ["速度与冷却", ["print_speed", "cooling_fan"]],
+];
 function buildTuningPanel() {
   var box = $("tuning-panel");
   box.innerHTML = "";
-  state.params.forEach(function (m) {
+  var seen = {};
+  var addGroup = function (title, rows) {
+    if (!rows.length) return;
+    var h = el("div", "param-group-h", title);
+    // the header joins its rows' search strings, so the shared #param-search
+    // filter hides empty groups with zero extra logic
+    h.dataset.search = (title + " " + rows.map(function (m) {
+      return m.name + " " + m.label;
+    }).join(" ")).toLowerCase();
+    box.appendChild(h);
+    rows.forEach(function (m) { seen[m.name] = true; box.appendChild(makeParamRow(m)); });
+  };
+  PARAM_GROUP.forEach(function (g) {
+    addGroup(g[0], state.params.filter(function (m) {
+      return g[1].indexOf(m.name) >= 0;
+    }));
+  });
+  addGroup("其他", state.params.filter(function (m) { return !seen[m.name]; }));
+}
+
+function makeParamRow(m) {
     var row = el("div", "param-row");
     row.dataset.search = (m.name + " " + m.label).toLowerCase();
     var lbl = el("span", "lbl", m.label);
@@ -1253,8 +1480,7 @@ function buildTuningPanel() {
     row.appendChild(val);
     row.appendChild(makeResetBtn(m.name));
     row.appendChild(lock);
-    box.appendChild(row);
-  });
+    return row;
 }
 
 // ---------- one-click presets (simple-mode "0 参数" entry) ----------
@@ -1411,7 +1637,7 @@ function buildExtraLocks() {
     box.appendChild(lb);
   });
   // v3 layout: #extra-locks lives inside the <details> group shared with the
-  // sliders — hide ONLY this row (parentNode here would collapse ③ 调参 too)
+  // sliders — hide ONLY this row (parentNode here would collapse 「调参」 too)
   if (!(state.extraLocks || []).length) box.style.display = "none";
 }
 
@@ -1618,6 +1844,9 @@ function resetTuningState() {
   // model is analyzed on its own baseline (engine defaults / 3MF config).
   // Both param and env widgets snap back to their defaults visually.
   state.dirty = {};
+  state.hasReport = false;  // v0.13: flow restarts at step 2 for the new model
+  updateDirtyChip();
+  updateFlowSteps();
   state.lastEnv = {};
   state.baseline = {};
   state.ab = [];
@@ -1679,6 +1908,7 @@ function applySession(j) {
   $("btn-compare").disabled = false;
   setPresetEnabled(true);
   $("btn-report").disabled = true;  // per-session: re-enabled by renderReport
+  $("btn-snapshot").disabled = true;  // same gate as btn-report
   $("btn-supports").disabled = true;
   $("btn-stress-modifier").disabled = true;
   $("export-hint").textContent = !j.is_3mf ? "写回需要 .3mf 输入"
@@ -1687,7 +1917,86 @@ function applySession(j) {
   $("btn-export-orca").disabled = !j.is_3mf || !state.writable;
   $("btn-preview").disabled = !j.is_3mf;
   $("export-msg").textContent = "";
+  updateFlowSteps();  // v0.13: step 1 (upload) done
   loadStlPreview(j);
+}
+
+// ---------- v0.13 task-flow chrome: step strip / sticky verdict / dirty chip ----------
+// Step strip (simple mode): where-am-I in upload → preset → verdict. Pure
+// display of session state — no flow enforcement, the dashboard stays free.
+function updateFlowSteps() {
+  var bar = $("flow-steps");
+  if (!bar) return;
+  bar.style.display = "flex";  // CSS .simple-only keeps it hidden in advanced
+  var hasModel = !!state.token;
+  var hasReport = !!state.hasReport;
+  var st = {
+    1: hasModel ? "done" : "active",
+    2: hasReport ? "done" : (hasModel ? "active" : ""),
+    3: hasReport ? "done" : (state.running && hasModel ? "active" : "")
+  };
+  [1, 2, 3].forEach(function (n) {
+    var node = bar.querySelector('.fs-step[data-fs="' + n + '"]');
+    if (!node) return;
+    node.classList.toggle("done", st[n] === "done");
+    node.classList.toggle("active", st[n] === "active");
+    var dot = node.querySelector(".fs-n");
+    if (dot) dot.textContent = st[n] === "done" ? "✓" : String(n);
+  });
+  // NOTE: the first-run education bar is NOT auto-retired here even though it
+  // visually doubles the step strip — its dismissal is the user's choice
+  // (ui.guide-done is only written by the close button), and the overlap is
+  // transient (first visit until closed; the strip shows WHERE you are, the
+  // guide teaches WHAT to do).
+}
+// Sticky verdict bar: mirrors the KPI values the engine already rendered
+// (#res-sf / #res-overall — class + text reused, no re-derived thresholds).
+// Delta chips are cloned from the verdict card's .run-delta (built by
+// showRunDelta immediately before this on the success path).
+function updateStickyVerdict(running) {
+  var sv = $("sticky-verdict");
+  if (!sv) return;
+  if (running) {
+    sv.innerHTML = "";
+    sv.appendChild(el("span", "sv-lbl", "分析中"));
+    sv.appendChild(el("span", "sv-val", "⟳ 引擎运行中…"));
+    sv.style.display = "flex";
+    return;
+  }
+  var sfEl = $("res-sf"), scEl = $("res-overall");
+  var sfTxt = sfEl ? String(sfEl.textContent).trim() : "";
+  var scTxt = scEl ? String(scEl.textContent).trim() : "";
+  if (!sfTxt || sfTxt === "—" || !scTxt || scTxt === "—") {
+    sv.style.display = "none";  // no report yet — nothing to pin
+    return;
+  }
+  sv.innerHTML = "";
+  var m = /sf-(low|mid|high)/.exec(sfEl.className || "");
+  sv.appendChild(el("span", "sv-lbl", "安全系数"));
+  sv.appendChild(el("span", "sv-val" + (m ? " " + m[0] : ""), sfTxt));
+  sv.appendChild(el("span", "sv-lbl", "评分"));
+  sv.appendChild(el("span", "sv-val", scTxt));
+  var rd = document.querySelector("#summary-cards .run-delta");
+  if (rd) {
+    Array.prototype.forEach.call(rd.querySelectorAll(".delta-chip"), function (c) {
+      sv.appendChild(c.cloneNode(true));
+    });
+  }
+  sv.style.display = "flex";
+}
+// Dirty chip: count of params diverging from the upload baseline (exactly
+// the .param-row.dirty set). Span, not button — the E3 suite pins the
+// primary row to exactly three <button>s.
+function updateDirtyChip() {
+  var chip = $("dirty-chip");
+  if (!chip) return;
+  var n = Object.keys(state.dirty || {}).length;
+  if (n > 0) {
+    chip.textContent = "已改 " + n + " 项";
+    chip.style.display = "";
+  } else {
+    chip.style.display = "none";
+  }
 }
 
 
@@ -1740,7 +2049,7 @@ function onFile() {
 }
 
 // --validate strict/paranoid refusal (engine status marker, server 422):
-// structured findings render inline in ④ — a bare toast would hide WHICH
+// structured findings render inline in 「分析结果」 — a bare toast would hide WHICH
 // topology findings were fatal. Cleared by the next successful renderReport.
 function renderValidationRefused(j) {
   var box = $("validate-refused");
@@ -1755,6 +2064,7 @@ function renderValidationRefused(j) {
   box.appendChild(head);
   (v.findings || []).forEach(function (f) {
     var item = el("div", "risk-item");
+    item.setAttribute("data-i18n-skip", "1");
     item.appendChild(el("span", "sev " + (f.fatal ? "sev-1" : "sev-2"),
                         f.fatal ? "致命" : "提示"));
     item.appendChild(document.createTextNode(
@@ -1772,7 +2082,7 @@ function renderValidationRefused(j) {
 }
 // ---------- risk heatmap (v0.8) ----------
 // The analyze response carries the engine's sparse bins³ heatmap (if the
-// channel produced one). We keep the raw data so the ④ toggle can flip the
+// channel produced one). We keep the raw data so the 「分析结果」 toggle can flip the
 // 3D preview between mesh view and heatmap-cube view without re-running.
 function applyHeatmap(hm) {
   var box = $("heatmap-box");
@@ -1885,6 +2195,10 @@ function analyze(compare, auto) {
       throw new Error(j.error || "分析失败");
     }
     renderReport(j.report, j.console || "", j.applyable || null);
+    showRunDelta(j.report);
+    state.hasReport = true;  // v0.13 flow steps: verdict is on screen
+    updateStickyVerdict(false);
+    updateFlowSteps();
     reconcileApplied((j.report || {}).input);
     applyHeatmap(j.heatmap || null);
     refreshHistory();
@@ -1991,6 +2305,8 @@ function scheduleAuto() {
 var runTimer = null, progressTimer = null;
 function startRunIndicator() {
   var t0 = Date.now();
+  updateFlowSteps();       // v0.13: step 3 goes active while the engine runs
+  updateStickyVerdict(true);
   var n = $("run-indicator");
   n.style.display = "";
   n.textContent = "分析中 0.0s";
@@ -2028,6 +2344,7 @@ function startRunIndicator() {
 function stopRunIndicator() {
   if (runTimer) { clearInterval(runTimer); runTimer = null; }
   if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+  updateStickyVerdict(false);  // error/cancel paths must not leave "分析中" pinned
   $("run-indicator").style.display = "none";
   var kpis = document.querySelector(".ui-kpis");
   if (kpis) kpis.classList.remove("skeleton");
@@ -2047,6 +2364,74 @@ function markChanged(name) {
 // server-kept list of the last runs (nominal-only summaries). Rendered with
 // the same null/sentinel discipline as the main report: null → "—", fatigue
 // 1e10 sentinel → ∞ (engine's own fatigue_infinite_life flag, iter 3).
+
+// v0.16: param/env diff between two history entries (pure — the vm render
+// test slices it out). Returns "k from→to" strings for CHANGED keys only;
+// a key present on just one side renders the missing side as （未设）.
+// Identical inputs → [] (equal → no noise, same discipline as run-delta).
+function histParamDiff(prev, cur) {
+  var keys = {};
+  [prev, cur].forEach(function (e) {
+    Object.keys((e && e.params) || {}).forEach(function (k) { keys[k] = 1; });
+    Object.keys((e && e.env) || {}).forEach(function (k) { keys[k] = 1; });
+  });
+  return Object.keys(keys).filter(function (k) {
+    var va = ((prev && prev.params) || {})[k] !== undefined ? prev.params[k]
+      : ((prev && prev.env) || {})[k];
+    var vb = ((cur && cur.params) || {})[k] !== undefined ? cur.params[k]
+      : ((cur && cur.env) || {})[k];
+    return String(va) !== String(vb);
+  }).map(function (k) {
+    var va = ((prev && prev.params) || {})[k] !== undefined ? prev.params[k]
+      : ((prev && prev.env) || {})[k];
+    var vb = ((cur && cur.params) || {})[k] !== undefined ? cur.params[k]
+      : ((cur && cur.env) || {})[k];
+    return k + " " + (va === undefined ? "（未设）" : va)
+      + " → " + (vb === undefined ? "（未设）" : vb);
+  });
+}
+
+// v0.16: inline-SVG sparkline (pure, zero deps). values may contain nulls —
+// a null is "not evaluated" and breaks the line (never plotted as 0). Fewer
+// than 2 finite points → "" (caller renders the placeholder instead).
+function sparkSvg(values, color, w, h) {
+  w = w || 200; h = h || 34;
+  var fin = [];
+  for (var i = 0; i < (values || []).length; i++)
+    if (typeof values[i] === "number" && isFinite(values[i])) fin.push(i);
+  if (fin.length < 2) return "";
+  var lo = Infinity, hi = -Infinity;
+  fin.forEach(function (i) {
+    lo = Math.min(lo, values[i]); hi = Math.max(hi, values[i]);
+  });
+  var pad = 3;
+  var span = (hi - lo) || 1;  // flat series → midline, not div-by-zero
+  var px = function (i) { return (values.length === 1 ? 0 : i / (values.length - 1)) * (w - 2 * pad) + pad; };
+  var py = function (v) { return h - pad - ((v - lo) / span) * (h - 2 * pad); };
+  // contiguous segments: a null splits the polyline so the gap stays honest
+  var segs = [], cur = [];
+  for (var j = 0; j < values.length; j++) {
+    if (typeof values[j] === "number" && isFinite(values[j]))
+      cur.push(px(j).toFixed(1) + "," + py(values[j]).toFixed(1));
+    else if (cur.length) { segs.push(cur); cur = []; }
+  }
+  if (cur.length) segs.push(cur);
+  var shapes = "";
+  segs.forEach(function (s) {
+    if (s.length >= 2) {
+      shapes += '<polyline fill="none" stroke="' + color +
+        '" stroke-width="1.5" points="' + s.join(" ") + '"/>';
+    } else {
+      // singleton segment (isolated point between nulls): a dot keeps the
+      // run visible instead of silently dropping it
+      shapes += '<circle cx="' + s[0].split(",")[0] + '" cy="' +
+        s[0].split(",")[1] + '" r="2" fill="' + color + '"/>';
+    }
+  });
+  return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h +
+    '" style="vertical-align:middle" aria-hidden="true">' + shapes + "</svg>";
+}
+
 function refreshHistory() {
   if (!state.token) return;
   fetch("/api/history?token=" + encodeURIComponent(state.token))
@@ -2063,6 +2448,7 @@ function renderHistory() {
   box.innerHTML = "";
   var es = state.history || [];
   if (!es.length) { box.appendChild(el("p", "muted", "尚无运行。")); return; }
+  renderHistorySpark(es);
   es.slice().reverse().forEach(function (e) {
     var s = e.summary || {};
     var bits = ["#" + e.seq, e.ts, e.compare ? "对比" : "分析"];
@@ -2093,11 +2479,88 @@ function renderHistory() {
       row.appendChild(cb);
     }
     row.appendChild(document.createTextNode(bits.join(" · ")));
+    // v0.16 per-row input diff vs this run's nearest PREDECESSOR (largest
+    // smaller seq — cap eviction can make seq non-contiguous): answers
+    // "what did I change between these two runs" without selecting A/B
+    var prev = null;
+    for (var pi = 0; pi < es.length; pi++)
+      if (es[pi].seq < e.seq && (!prev || es[pi].seq > prev.seq)) prev = es[pi];
+    if (prev) {
+      var d = histParamDiff(prev, e);
+      if (d.length) {
+        var chip = el("span", "tag", "较 #" + prev.seq + ": " + d.join("，"));
+        chip.style.marginLeft = "6px";
+        chip.title = "与上一次运行 #" + prev.seq + " 的输入参数差异";
+        row.appendChild(chip);
+      }
+    }
     box.appendChild(row);
   });
 }
+// v0.16: SF / overall-score trend sparklines over the session history.
+// Built from the same nominal-only summaries the list shows; nulls break
+// the line (not evaluated ≠ 0). Placeholder until 2 finite points exist.
+function renderHistorySpark(es) {
+  var sp = $("history-spark");
+  if (!sp) return;
+  sp.innerHTML = "";
+  var sf = es.map(function (e) { return (e.summary || {}).safety_factor; });
+  var sc = es.map(function (e) { return (e.summary || {}).overall_score; });
+  var rows = [["SF 趋势", sf, "var(--green)"],
+              ["评分趋势", sc, "var(--accent)"]];
+  var drewAny = false;
+  rows.forEach(function (r) {
+    var svg = sparkSvg(r[1], r[2]);
+    var line = el("div");
+    line.appendChild(el("span", null, r[0] + " "));
+    if (svg) { line.innerHTML += svg; drewAny = true; }
+    else line.appendChild(el("span", "muted", "（数据不足）"));
+    sp.appendChild(line);
+  });
+  if (!drewAny) sp.appendChild(el("div", "muted",
+    "（≥2 次有效运行后显示趋势）"));
+}
 state.history = [];
 state.ab = [];
+// v0.12 run-delta chips: after each render, the verdict card discloses how
+// SF / overall score moved vs the PREVIOUS run (called before refreshHistory
+// mutates state.history). Rendered only when both sides are finite numbers —
+// first run, missing fields, or envelope objects without a nominal show
+// nothing (absent ≠ zero; no guessed comparisons).
+function showRunDelta(report) {
+  var vc = document.querySelector("#summary-cards .sum-verdict");
+  if (!vc) return;
+  var old = document.querySelector("#summary-cards .run-delta");
+  if (old) old.parentNode.removeChild(old);
+  var prev = null;
+  for (var i = (state.history || []).length - 1; i >= 0; i--) {
+    if (state.history[i] && state.history[i].summary) { prev = state.history[i]; break; }
+  }
+  if (!prev) return;  // first run of the session — nothing to compare
+  var fin = function (v) { return typeof v === "number" && isFinite(v); };
+  var pb = (report || {}).phase_b || {};
+  var sfNow = (pb.safety_factor && typeof pb.safety_factor === "object")
+    ? pb.safety_factor.nominal : pb.safety_factor;
+  var scNow = ((report || {}).recommendations || {}).overall_score;
+  var ps = prev.summary;
+  var chips = [];
+  var mk = function (name, a, b, digits) {
+    if (!fin(a) || !fin(b) || a === b) return;  // equal → no noise chip
+    var up = b > a;
+    var c = el("span", "delta-chip " + (up ? "up" : "down"),
+      name + " " + a.toFixed(digits) + " → " + b.toFixed(digits) +
+      (up ? " ▲" : " ▼"));
+    c.title = "与上一次运行 #" + prev.seq + " 相比（" +
+      (up ? "上升" : "下降") + "）";
+    chips.push(c);
+  };
+  mk("SF", ps.safety_factor, sfNow, 1);
+  mk("评分", ps.overall_score, scNow, 0);
+  if (!chips.length) return;
+  var box = el("div", "run-delta");
+  chips.forEach(function (c) { box.appendChild(c); });
+  vc.appendChild(box);
+}
 
 function toggleAB(seq) {
   var i = state.ab.indexOf(seq);
@@ -2506,7 +2969,7 @@ function renderBatchResults(results) {
 var MODE_KEY = "stratum-ui-mode";
 function applyMode(advanced) {
   document.body.classList.toggle("mode-simple", !advanced);
-  $("mode-toggle").textContent = "高级模式：" + (advanced ? "开" : "关");
+  $("mode-toggle").checked = advanced;
   try { localStorage.setItem(MODE_KEY, advanced ? "1" : "0"); } catch (e) {}
 }
 (function () {
@@ -2514,9 +2977,46 @@ function applyMode(advanced) {
   try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
   applyMode(saved !== "1" ? false : true);  // default: simple
 })();
-$("mode-toggle").addEventListener("click", function () {
+$("mode-toggle").addEventListener("change", function () {
   applyMode(document.body.classList.contains("mode-simple"));
 });
+// v0.13 dirty-chip: click / Enter / Space = immediate analyze (span, not
+// button — the primary row's button count is pinned by the E3 suite)
+(function () {
+  var chip = $("dirty-chip");
+  if (!chip) return;
+  chip.addEventListener("click", function () { analyze(false); });
+  chip.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      analyze(false);
+    }
+  });
+})();
+// v0.12: collapsed option group still discloses its state — the summary
+// carries a count badge of enabled switches (grid value counts too).
+var OPT_IDS = ["opt-orient", "opt-fast", "opt-appearance", "opt-rheology",
+               "opt-esterror", "opt-rescheck"];
+function updateOptCount() {
+  var n = OPT_IDS.filter(function (id) { return $(id) && $(id).checked; }).length;
+  var g = $("opt-grid");
+  if (g && g.value !== "") n++;
+  var b = $("opt-count");
+  if (!b) return;
+  if (n > 0) {
+    b.textContent = "已开 " + n + " 项";
+    b.style.display = "";
+  } else {
+    b.style.display = "none";
+  }
+}
+OPT_IDS.forEach(function (id) {
+  var n = $(id);
+  if (n) n.addEventListener("change", updateOptCount);
+});
+var _og = $("opt-grid");
+if (_og) _og.addEventListener("input", updateOptCount);
+updateOptCount();
 // v0.10 (3.1) first-run guide: shown until dismissed; localStorage key uses
 // the ui. prefix so it never collides with other storage
 (function () {
@@ -2540,6 +3040,417 @@ $("mode-toggle").addEventListener("click", function () {
     var open = wc.dataset.open === "1";
     wc.dataset.open = open ? "0" : "1";
     $("warning-list").style.display = open ? "none" : "";
+  };
+})();
+// v0.14 risk card toggle — same user-owned open flag; clicking sets the
+// user marker so renderReport stops verdict-gating the default
+(function () {
+  var t = $("risk-toggle");
+  if (!t) return;
+  t.onclick = function () {
+    var rc = $("risk-card");
+    var open = rc.dataset.open === "1";
+    rc.dataset.open = open ? "0" : "1";
+    rc.dataset.user = "1";
+    $("risk-list").style.display = open ? "none" : "";
+  };
+})();
+
+// ---------- v0.15 i18n: one-click zh ⇄ en for UI chrome ----------
+// Engine-authored report text (assessment / warnings / risk descriptions /
+// suggestion reasons / console) is deliberately NOT translated: the engine
+// is the single source of truth and emits Chinese only; those nodes carry
+// data-i18n-skip. zh mode is a lossless no-op (each translated node's
+// Chinese original is snapshotted in the __zh expando). Dynamic renders are
+// covered by a MutationObserver; a second pass finds nothing left to
+// translate, so the observer settles instead of looping.
+var LANG_KEY = "stratum-ui-lang";
+var LANG_EN = {
+  "强度分析工作台 · UI": "Strength workbench · UI",
+  "强度分析工作台 · UI ": "Strength workbench · UI ",
+  "运行历史 ": "Run history ",
+  "安全": "Safe", "均衡": "Balanced", "高速": "Fast", "外观": "Appearance",
+  "时间": "Time", "材料": "Material", "分析": "Analyze", "对比": "Compare",
+  "恢复": "Restore", "方向": "Orient",
+
+  "引擎未就绪": "engine not ready",
+  "引擎就绪": "engine ready",
+  "引擎缺失": "engine missing",
+  "服务异常": "service error",
+  "高级选项": "Advanced",
+  "上传模型": "Upload model",
+  "选预设": "Pick preset",
+  "看结论": "Read verdict",
+  "三步得到强度结论": "Strength verdict in three steps",
+  "上传模型（.stl / .3mf）": "Upload a model (.stl / .3mf)",
+  "点一个快速预设": "Pick a quick preset",
+  "或直接点「分析」用默认参数": "or hit Analyze for defaults",
+  "看「结论」卡片——引擎直接告诉你行不行": "the verdict card tells you if it holds",
+  "看「结论」卡片": "Read the verdict card",
+  "✅ 安全 / ⚠️ 有风险，引擎说了算": "✅ safe / ⚠️ at risk — the engine decides",
+  "支持 .stl / .3mf / .obj 等": "accepts .stl / .3mf / .obj and more",
+  "FEA 强度分析": "FEA strength",
+  "参数建议": "Suggestions",
+  "一键应用": "One-click apply",
+  "知道了 ✕": "Got it ✕",
+  "左侧上传模型": "upload on the left",
+  "拖放模型文件到此处，或点击选择": "Drop a model file here, or click to browse",
+  "支持 .stl / .obj / .ply / .3mf / .amf": "accepts .stl / .obj / .ply / .3mf / .amf",
+  "点击选择模型文件": "Click to choose a model file",
+  "分析": "Analyze",
+  "优化对比": "Optimize & compare",
+  "下载报告 JSON": "Download report JSON",
+  "下载支撑网格 STL": "Download supports STL",
+  "下载应力热区 STL（modifier）": "Download stress hot-zone STL (modifier)",
+  "写回下载 3MF": "Write back 3MF",
+  "预览写回（dry-run）": "Dry-run write-back",
+  "仅写回 Orca 建议": "Orca suggestions only",
+  "严格可信层": "Strict tier",
+  "批量运行": "Batch run",
+  "捕获当前滑杆为自定义候选": "Capture sliders as custom candidate",
+  "重置全部修改": "Reset all changes",
+  "取消": "Cancel",
+  "模型": "Model",
+  "快速预设": "Quick presets",
+  "安全 / 均衡 / 高速 / 外观": "Safe / Balanced / Fast / Appearance",
+  "当前参数": "Current parameters",
+  "调参": "Tuning",
+  "环境与载荷": "Environment & loads",
+  "分析结果": "Analysis results",
+  "分析选项": "Analysis options",
+  "档位对比": "Preset comparison",
+  "运行历史": "Run history",
+  "可信度": "Trust levels",
+  "切片软件建议（Orca）": "Slicer suggestions (Orca)",
+  "状态": "Status",
+  "估算校准": "Estimate calibration",
+  "估算误差剖析": "Estimate error profile",
+  "外观评估": "Appearance",
+  "流变诊断": "Rheology",
+  "分辨率校验": "Resolution check",
+  "方向优化": "Orientation",
+  "快速预览": "Quick preview",
+  "求解器与网格详情": "Solver & mesh details",
+  "CG 收敛 / 网格 / 离散误差 / 预条件子": "CG convergence / mesh / discretization / preconditioner",
+  "引擎控制台输出（含跳过项理由）": "Engine console output (incl. skip reasons)",
+  "本构与材料模型细节": "Constitutive & material model details",
+  "屈服指数 / WLF / 结晶度 / 键合": "yield index / WLF / crystallinity / bonding",
+  "网格拓扑审计": "Mesh topology audit",
+  "机器限制（--machine / 3MF 识别）": "Machine limits (--machine / 3MF)",
+  "3D 热图视图": "3D heatmap view",
+  "风险热图": "Risk heatmap",
+  "Phase A 风险分": "Phase A risk score",
+  "总体评分": "Overall score",
+  "安全系数": "Safety factor",
+  "载荷判定": "Load verdict",
+  "最大应力": "Max stress",
+  "von Mises 应力": "von Mises stress",
+  "屈曲 SF": "Buckling SF",
+  "疲劳 SF": "Fatigue SF",
+  "断裂风险": "Fracture risk",
+  "Weibull 等级": "Weibull grade",
+  "结论": "Verdict",
+  "风险": "Risks",
+  "建议": "Advice",
+  "无风险。": "No risks.",
+  "无参数建议。": "No parameter suggestions.",
+  "无警告。": "No warnings.",
+  // v0.16 engine-0.26 suggestion channel: motivation badges + suppression
+  // disclosures (chrome mappings of engine enum tokens — detail stays zh)
+  "层间键合": "layer bond",
+  "收缩梯度": "shrinkage gradient",
+  "薄壁成形": "thin-wall shape",
+  "外观光泽": "appearance gloss",
+  "抑制": "gated",
+  "建议被闸": "suggestion gated",
+  "未知原因": "unknown reason",
+  "体素分辨率不足，薄特征读作实心 — 提高网格精度（--grid）后重跑可解除":
+    "voxel resolution too coarse — thin features read as solid; raise --grid and rerun to ungate",
+  "当前机型无该喷嘴变体 — 更换喷嘴/机型后可解除":
+    "machine profile lacks this nozzle variant; switch nozzle/machine to ungate",
+  // v0.16 HTML snapshot export
+  "下载 HTML 快照": "Download HTML snapshot",
+  "报告快照": "report snapshot",
+  "静态快照 — 数据截至导出时刻；重跑分析与一键应用请在 Stratum WebUI 中操作。":
+    "Static snapshot — data frozen at export time; rerun analyses and one-click apply in Stratum WebUI.",
+  "HTML 快照已下载": "HTML snapshot downloaded",
+  "把当前渲染后的「分析结果」区导出为自包含单文件 HTML（内联样式、无外部资源、离线可开；数据截至导出时刻）":
+    "Export the rendered results area as a self-contained single-file HTML (inlined styles, no external resources, opens offline; data frozen at export time)",
+  // v0.16 run-history enhancements: per-row param diff + trend sparklines
+  "SF 趋势": "SF trend",
+  "评分趋势": "Score trend",
+  "（数据不足）": "(insufficient data)",
+  "（≥2 次有效运行后显示趋势）": "(trend appears after ≥2 valid runs)",
+  "（未设）": "(unset)",
+  // v0.16 log folder button
+  "日志": "Logs",
+  "打开运行日志目录": "Open the log folder",
+  "已打开日志目录": "Log folder opened",
+  "一键设置全部参数并分析": "Set every parameter and analyze",
+  "逐项微调 · 未动项沿用引擎默认": "Per-parameter tuning · untouched values keep engine defaults",
+  "未动项不发送，用引擎默认": "untouched parameters are not sent; engine defaults apply",
+  "以引擎回显为准": "engine echo is authoritative",
+  "先上传模型": "Upload a model first",
+  "先上传模型并分析": "Upload a model and analyze first",
+  "分析后显示": "Shows after analysis",
+  "分析后显示。": "Shows after analysis.",
+  "分析后显示几何风险": "Geometric risks appear after analysis",
+  "分析后显示参数建议": "Suggestions appear after analysis",
+  "安全系数（SF）= 材料强度 ÷ 实际应力。>1 才安全，越大越保守；带 (lo–hi) 区间为材料分散带":
+    "Safety factor (SF) = material strength ÷ actual stress. >1 is safe; larger is more conservative; (lo–hi) band = material scatter",
+  "总体评分：引擎对各维度（强度/时间/材料/可靠性/质量）的综合打分":
+    "Overall score: the engine's combined rating (strength/time/material/reliability/quality)",
+  "von Mises 等效应力峰值：把复杂应力状态折算成可与材料强度对比的单一应力值":
+    "Peak von Mises equivalent stress: complex stress states reduced to one comparable value",
+  "屈曲安全系数：细长受压件失稳（突然弯折）前的安全余量，与强度失效是两种模式":
+    "Buckling SF: margin before a slender part in compression snaps sideways — a different failure mode than strength",
+  "疲劳安全系数：循环载荷下的安全余量；∞ 表示引擎判定无限寿命（≥10¹⁰ 次）":
+    "Fatigue SF: margin under cyclic load; ∞ = engine-declared infinite life (≥10¹⁰ cycles)",
+  "断裂力学风险：裂纹在层间/应力集中处扩展的检出结论（引擎判定）":
+    "Fracture risk: engine verdict on crack growth at layer bonds / stress concentrations",
+  "Weibull 统计强度评级：把材料内部缺陷分布计入的可靠性模型，A+ 为最优（悬停详情行有解释）":
+    "Weibull grade: reliability model accounting for internal defect distribution; A+ is best",
+  "引擎对当前载荷下强度是否够用的判定（强度充足 / 载荷主导 / 无法评估）——引擎结论，UI 不另行打分":
+    "Engine verdict on strength adequacy under the load — engine-authored, the UI adds no score of its own",
+  "外壁圈数：承力主要靠外壁。2=装饰件基线，3=功能件默认，5=高强度件；再加壁收益递减（弯曲刚度只线性增长）":
+    "Wall loops: walls carry the load. 2=decorative baseline, 3=functional default, 5=high strength; more walls give diminishing returns",
+  "填充率：内部实心程度。10–20%=装饰/通用件，20–40%=功能件，40–60%=承力件（很少超过 60%）":
+    "Infill density: 10–20%=decorative, 20–40%=functional, 40–60%=load-bearing (rarely above 60%)",
+  "层高：0.12mm=精细（层间键合更佳）、0.20mm=行业标准、0.28mm=快速；经验法则=喷嘴直径的 25–75%":
+    "Layer height: 0.12mm=fine (better bonding), 0.20mm=industry standard, 0.28mm=fast; rule of thumb=25–75% of nozzle diameter",
+  "滑杆 + 锁定（引擎 --lock 语义）：锁定即冻结该维度，档位搜索不再漂移它":
+    "Slider + lock (engine --lock): locking freezes that dimension during preset searches",
+  "显示或隐藏高级内容（参数滑杆调参、环境载荷、可信度、Orca 建议、运行历史等）":
+    "Show or hide advanced content (parameter sliders, environment & loads, trust, Orca suggestions, run history)",
+  "与本次上传基线有差异的参数数；点击立即分析。「重置全部修改」可回到基线":
+    "Parameters diverging from the upload baseline; click to re-analyze. Reset returns to baseline",
+  "把所有已修改项恢复到本次会话基线（上传/引擎回显值）":
+    "Restore every modified value to this session's baseline (upload / engine echo)",
+  "不再显示（记住此选择）": "Don't show again (remember)",
+  "搜索参数（名称/标签，含环境与锁定项）…": "Search parameters (name/label, incl. env & locks)…",
+  "选择基线 JSON 文件": "Choose a baseline JSON file",
+  "点击展开 / 收起": "click to expand / collapse",
+  "恢复到本次会话基线": "Restore to this session's baseline",
+  "⚡ 预览级结果（--fast：FEM 网格封顶 12³）——精度披露见报告 fast_mode，勿与全分辨率结果混用":
+    "⚡ Preview-grade result (--fast: FEM grid capped at 12³) — see fast_mode in the report; do not mix with full-resolution runs",
+  "decision 档=可安全采纳的工艺决策；display 档=引擎声明为无文献依据的启发式，仅供展示。置信度与 grounding 模块来自引擎自带字段。":
+    "decision tier = a process change safe to adopt; display tier = engine-declared heuristic without literature backing, shown for reference. Confidence & grounding come from engine fields.",
+  "层高等无滑杆项也可锁定（--lock 面）；锁定即所有档位搜索冻结该维度。层高数值本身仍只能经档位间接改变（CLI 无 --layer-height）。":
+    "Slider-less dimensions like layer height can be locked (--lock); locked dimensions freeze in preset searches. Layer height itself only changes indirectly via presets (no --layer-height CLI flag).",
+  "外挂基线：未设置": "Baseline profile: none",
+  "各需一次完整引擎分析": "each runs a full engine analysis",
+  "条几何风险 · 最高": "geometric risks · max",
+  "条提示": "notices",
+  "本会话最近 10 次（仅 nominal 值）": "last 10 runs this session (nominal only)",
+  "Pareto 前沿（前 8 点）": "Pareto front (top 8)",
+  "A/B 对比（仅 nominal；null=未评估不参与差值）": "A/B compare (nominal only; null = not evaluated, excluded from deltas)",
+  "未检测到 stratum.exe。粘贴 stratum.exe 的完整路径（SDK 发布物 bin/ 内）：":
+    "stratum.exe not found. Paste its full path (from the SDK release bin/):",
+  "设置引擎": "Set engine",
+  "网格": "Grid",
+  "默认": "default",
+  "上传失败": "Upload failed",
+  "上传中…": "Uploading…",
+  "预览中…": "Previewing…",
+  "写回中…": "Writing back…",
+  "预览失败": "Preview failed",
+  "批量失败": "Batch failed",
+  "写回需要 .3mf 输入": "Write-back needs a .3mf input",
+  "该 3MF 无切片设置（CAD 裸导出），不可写回": "This 3MF has no slicer settings (CAD-bare export); write-back unavailable",
+  "3MF（可写回）": "3MF (writable)",
+  "3MF（无切片设置·不可写回）": "3MF (no slicer settings · read-only)",
+  "（只读分析）": "(read-only analysis)",
+  "尚无运行。": "No runs yet.",
+  "报告未含 Orca 建议。": "No Orca suggestions in this report.",
+  "报告未含可信层数据。": "No trust data in this report.",
+  "引擎已请求但未能评估任何维度。": "The engine was asked but could not evaluate any dimension.",
+  "基线文件读取失败": "Failed to read the baseline file",
+  "(引擎无输出)": "(no engine output)",
+  "结论: ": "Verdict: ",
+  "建议: ": "Suggestion: ",
+  "原因: ": "Reason: ",
+  "注: ": "Note: ",
+  "分析中": "Analyzing",
+  "⟳ 引擎运行中…": "⟳ engine running…",
+  "致命": "fatal",
+  "提示": "notice",
+  "钳制": "clamped",
+  "锁定": "lock",
+  "开": "ON",
+  "关": "OFF",
+  "自动": "auto",
+  "稳定": "stable",
+  "不稳定": "unstable",
+  "已应用": "applied",
+  "未应用": "not applied",
+  "未识别": "not identified",
+  "流形": "manifold",
+  "非流形": "non-manifold",
+  "维度": "Dim",
+  "组": "Group",
+  "估算比": "Est. ratio",
+  "真实比": "True ratio",
+  "误差比": "Err ratio",
+  "其他": "Other",
+  "对比": "compare",
+  "方向": "orient",
+  "上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。":
+    "Upload a model, pick a goal — all 9 print parameters are set and analyzed at once. Fine-tune everything in Advanced (top right)."
+};
+// word-level fallback for concatenated strings (labels + counts + values).
+// Longest-first replacement; exact full-string hits above take precedence.
+// Kept deliberately small: only UI-chrome words; engine-authored verbatim
+// nodes are skip-flagged in report.js and never reach this path.
+var LANG_WORDS = (function () {
+  var pairs = [
+    ["壁数", "walls"], ["填充率", "infill"], ["填充图案", "pattern"],
+    ["喷嘴直径", "nozzle"], ["喷嘴温度", "nozzle temp"], ["热床温度", "bed temp"],
+    ["打印速度", "speed"], ["冷却风扇", "fan"], ["层高", "layer height"],
+    ["载荷大小", "load"], ["载荷类型", "load type"], ["填充角度", "fill angle"],
+    ["层间强度比 Z/XY", "Z/XY strength ratio"], ["壁", "walls"], ["填充", "infill"],
+    ["喷嘴", "nozzle"], ["材料", "material"], ["速度", "speed"],
+    ["回抽长度", "retraction length"], ["回抽速度", "retraction speed"],
+    ["空走速度", "travel speed"], ["擦除 wipe", "wipe"],
+    ["Prony 载荷时长", "Prony duration"], ["实测打印时长", "measured time"],
+    ["实测耗材质量", "measured mass"],
+    ["已改 ", "modified "], [" 项", " item(s)"], ["已开 ", "on "],
+    ["实时分析：开", "live analyze: ON"], ["实时分析：关", "live analyze: OFF"],
+    ["引擎版本", "engine version"], ["引擎结构化输出", "engine structured output"],
+    ["引擎 JSON", "engine JSON"], ["引擎逐维重跑", "engine per-dim rerun"],
+    ["引擎 bins³ 聚合", "engine bins³ aggregation"], ["引擎因子披露", "engine factor disclosure"],
+    ["条 — 展开「几何风险」/「N 条提示」看完整列表", " more — expand the risk/notices lists for the full set"],
+    ["还有 ", ""], ["进度 ", "progress "],
+    ["当前 ", "current "], ["→ 建议 ", "→ suggested "], ["置信度 ", "confidence "],
+    ["建议值下估算: SF ", "estimate at suggested: SF "], ["最大应力 ", "max stress "],
+    ["分析后显示", "shows after analysis"],
+    ["打印方向候选", "orientation candidates"], ["引擎排序", "engine-ranked"],
+    ["分辨率校验: ", "resolution check: "], ["网格，位移 Δ", " grid, displacement Δ"],
+    ["应力 Δ", " stress Δ"], ["（细网格收敛）", "(fine grid converged)"],
+    ["（细网格未收敛）", "(fine grid not converged)"], ["［已封顶 128］", "[capped at 128]"],
+    ["拓扑审计: 边界边 ", "topology audit: boundary edges "],
+    ["非流形边 ", "non-manifold edges "], ["退化边 ", "degenerate edges "],
+    ["层高带", "layer band"], ["最高速度", "max speed"],
+    ["边界边", "boundary"], ["非流形顶点", "non-manifold vtx"],
+    ["朝向不一致面", "inconsistent faces"], ["焊合顶点/边", "welded vtx/edge"],
+    ["焊合部件", "welded parts"], ["欧拉示性数 χ", "Euler χ"],
+    ["修复面数", "repaired faces"], ["不可定向部件", "non-orientable"],
+    ["剪切率", "shear rate"], ["表观黏度", "viscosity"], ["喷嘴压力降", "pressure drop"],
+    ["挤出稳定性", "extrusion stability"], ["胀大比", "die swell"],
+    ["标定状态: ", "calibration: "], ["黏度未标定", "viscosity uncalibrated"],
+    ["胀大未标定", "swell uncalibrated"], ["已做温度修正", "temperature-corrected"],
+    ["时间因子", "time factor"], ["质量因子", "mass factor"],
+    ["实测时长", "measured time"], ["实测质量", "measured mass"],
+    ["引擎预测时长", "engine-predicted time"], ["引擎预测质量", "engine-predicted mass"],
+    ["悬垂", "overhang"], ["桥接面", "bridges"], ["表面", "surface"],
+    ["底面接触", "bed contact"], ["估算校准", "calibration"],
+    ["已恢复会话 ", "session restored "], ["，正在重新分析…", ", re-analyzing…"],
+    ["已上传 ", "uploaded "],
+    ["建议动机: ", "motivation: "],
+    ["较 #", "vs #"], ["与上一次运行 #", "vs previous run #"],
+    [" 的输入参数差异", " input-parameter diff"],
+    ["日志目录: ", "log folder: "], ["（本环境不自动打开）", "(no auto-open on this platform)"],
+    ["参数面来自内置回退（引擎 usage 解析失败，枚举可能过期）",
+     "parameter surface from built-in fallback (engine usage parse failed; enums may be stale)"],
+    ["载荷枚举来自内置回退（可能过期）", "load enum from built-in fallback (may be stale)"],
+    ["扩展锁定参数来自内置回退（可能过期）", "extra locks from built-in fallback (may be stale)"],
+    ["引擎参数面较内置回退多: ", "engine surface beyond fallback: "],
+    ["引擎材料较内置回退多: ", "engine materials beyond fallback: "],
+    ["usage 中被过滤的 token: ", "tokens filtered from usage: "]
+  ];
+  return pairs.sort(function (a, b) { return b[0].length - a[0].length; });
+})();
+function trText(s) {
+  if (Object.prototype.hasOwnProperty.call(LANG_EN, s)) return LANG_EN[s];
+  var out = s;
+  for (var i = 0; i < LANG_WORDS.length; i++)
+    out = out.split(LANG_WORDS[i][0]).join(LANG_WORDS[i][1]);
+  return out;
+}
+function _langHasZh(s) { return /[\u4e00-\u9fff]/.test(s); }
+function _langSkip(node) {
+  var p = node.parentElement;
+  return !!(p && p.closest && p.closest("[data-i18n-skip]"));
+}
+function _langAttrs(el) {
+  ["title", "placeholder"].forEach(function (a) {
+    var v = el.getAttribute(a);
+    if (typeof v !== "string" || !v) return;
+    if (el["__zh_" + a] !== undefined) return;
+    if (!_langHasZh(v)) return;
+    el["__zh_" + a] = v;
+    var tr = trText(v);
+    if (tr !== v) el.setAttribute(a, tr);
+  });
+}
+function _langAttrsBack(el) {
+  ["title", "placeholder"].forEach(function (a) {
+    if (el["__zh_" + a] !== undefined) {
+      el.setAttribute(a, el["__zh_" + a]);
+      el["__zh_" + a] = undefined;
+    }
+  });
+}
+function translateDom(root) {
+  root = root || document.body;
+  var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  var n;
+  while ((n = w.nextNode())) {
+    if (n.__zh !== undefined) continue;
+    if (_langSkip(n)) continue;
+    var t = n.textContent;
+    if (!_langHasZh(t)) continue;
+    n.__zh = t;
+    var tr = trText(t);
+    if (tr !== t) n.textContent = tr;
+  }
+  Array.prototype.forEach.call(
+    root.querySelectorAll("[title],[placeholder]"), _langAttrs);
+}
+function restoreZh() {
+  var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  var n;
+  while ((n = w.nextNode())) {
+    if (n.__zh !== undefined) { n.textContent = n.__zh; n.__zh = undefined; }
+  }
+  Array.prototype.forEach.call(
+    document.body.querySelectorAll("[title],[placeholder]"), _langAttrsBack);
+}
+var _langObs = null, _langTimer = null;
+function applyLang(lang, skipPersist) {
+  state.lang = lang;
+  if (!skipPersist) { try { localStorage.setItem(LANG_KEY, lang); } catch (e) {} }
+  document.documentElement.setAttribute("lang", lang === "en" ? "en" : "zh-CN");
+  var b = $("lang-toggle");
+  if (b) {
+    b.textContent = lang === "en" ? "中" : "EN";
+    b.title = lang === "en"
+      ? "切换到中文（界面文案；引擎输出保持中文）"
+      : "Switch UI text to English (engine output stays Chinese)";
+  }
+  if (lang === "en") {
+    translateDom();
+    if (!_langObs) {
+      _langObs = new MutationObserver(function () {
+        if (state.lang !== "en") return;
+        clearTimeout(_langTimer);
+        _langTimer = setTimeout(function () {
+          translateDom();   // idempotent: settled nodes carry __zh
+        }, 120);
+      });
+      _langObs.observe(document.body,
+        { childList: true, subtree: true, characterData: true,
+          attributes: true, attributeFilter: ["title", "placeholder"] });
+    }
+  } else {
+    restoreZh();
+  }
+}
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem(LANG_KEY); } catch (e) {}
+  applyLang(saved === "en" ? "en" : "zh", true);
+  $("lang-toggle").onclick = function () {
+    applyLang(state.lang === "en" ? "zh" : "en");
   };
 })();
 $("btn-reset-all").addEventListener("click", resetAllTuning);
@@ -2571,7 +3482,7 @@ document.addEventListener("change", function (e) {
 });
 $("param-search").addEventListener("input", function () {
   var q = this.value.trim().toLowerCase();
-  // filters across ③ sliders, ③b env rows AND the extra lock checkboxes —
+  // filters across 「调参」 sliders, 「环境与载荷」 env rows AND the extra lock checkboxes —
   // a hidden-but-checked lock still freezes a search dimension otherwise
   Array.prototype.forEach.call(
     document.querySelectorAll("[data-search]"),
@@ -2654,6 +3565,91 @@ $("btn-report").addEventListener("click", function () {
       toast("报告已下载", "ok");
     })
     .catch(function (e) { toast(String(e), "err"); });
+});
+// v0.16 report HTML snapshot: serialize the RENDERED results area into a
+// self-contained single file — the live DOM clone with the app's full
+// stylesheet inlined, zero external resources, opens offline anywhere.
+// Pure client-side Blob download (no new endpoint); captures exactly what
+// the user sees at click time (lang, open <details>, verdict colors).
+function snapEsc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+// strip interactive chrome + transient states from the clone: dead buttons
+// in a static file read as broken; progress/error shells are not report data
+function snapshotSanitize(root) {
+  ["button", "input", "select", "textarea"].forEach(function (t) {
+    Array.prototype.forEach.call(root.querySelectorAll(t), function (n) {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
+  });
+  ["run-progress", "analyze-error", "empty-guide", "validate-refused",
+   "sticky-verdict", "artifact-row"].forEach(function (id) {
+    var n = root.querySelector("#" + id);
+    if (n && n.parentNode) n.parentNode.removeChild(n);
+  });
+  return root;
+}
+// pure string assembly (kept free of DOM calls so the vm render test can
+// exercise it directly) — markup/css/meta in, complete document out
+function buildSnapshotDoc(markup, cssText, meta) {
+  return "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\">\n" +
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
+    "<title>" + snapEsc(meta.title) + "</title>\n<style>\n" + cssText + "\n</style>\n</head>\n" +
+    "<body style=\"background:var(--surface-0)\">\n<div class=\"wrap\" style=\"max-width:1100px\">\n" +
+    "<header><h1>Stratum " + snapEsc(meta.heading) + "</h1>" +
+    "<span class=\"sub\">" + snapEsc(meta.line) + "</span></header>\n" +
+    markup + "\n" +
+    "<p class=\"hint\" style=\"margin:18px 2px\">" + snapEsc(meta.footer) + "</p>\n" +
+    "</div>\n</body>\n</html>\n";
+}
+$("btn-snapshot").addEventListener("click", function () {
+  var anchor = $("summary-cards");
+  var panel = anchor && anchor.closest ? anchor.closest(".panel") : null;
+  // no token gate here on purpose: the snapshot is pure client-side
+  // serialization — the button's disabled lifecycle (enabled only by a
+  // successful renderReport) is the sole and sufficient gate
+  if (!panel) return;
+  var clone = snapshotSanitize(panel.cloneNode(true));
+  var css = "";
+  Array.prototype.forEach.call(document.querySelectorAll("style"),
+    function (s) { css += s.textContent + "\n"; });
+  var tr = typeof trText === "function" ? trText : function (s) { return s; };
+  // state.name is null until the first upload — the snapshot must not depend
+  // on a live session (pure client-side), so fall back instead of throwing
+  var base = ((state.name || "model").replace(/\.(stl|3mf|obj|ply|amf)$/i, "") || "model");
+  var ts = new Date();
+  var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+  var stamp = ts.getFullYear() + "-" + pad(ts.getMonth() + 1) + "-" + pad(ts.getDate()) +
+    " " + pad(ts.getHours()) + ":" + pad(ts.getMinutes());
+  var html = buildSnapshotDoc(clone.outerHTML, css, {
+    title: "Stratum " + tr("报告快照") + " — " + base,
+    heading: tr("报告快照"),
+    line: base + " · UI " + $("ui-ver").textContent + " · engine " +
+      $("engine-ver").textContent + " · " + stamp,
+    footer: tr("静态快照 — 数据截至导出时刻；重跑分析与一键应用请在 Stratum WebUI 中操作。"),
+  });
+  var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = base + ".stratum-report.html";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+  toast("HTML 快照已下载", "ok");
+});
+// v0.16: open the rolling-log folder via the server (os.startfile on a
+// server-computed path — the client never sends a path)
+$("btn-logs").addEventListener("click", function () {
+  fetch("/api/open-logs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
+    body: "{}",
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j.ok && j.opened) toast("已打开日志目录", "ok");
+    else if (j.ok) toast("日志目录: " + (j.dir || "?") + "（本环境不自动打开）");
+    else toast(j.error || "打开失败", "err");
+  }).catch(function (e) { toast(String(e), "err"); });
 });
 $("btn-preview").addEventListener("click", previewExport);
 // v0.8.1 analysis-artifact downloads (support mesh / stress-modifier STL):

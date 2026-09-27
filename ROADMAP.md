@@ -367,6 +367,66 @@
   对抗审查修订记录）；改动面：index.html `<style>` 整体重写 + 静态内联样式点 +
   stl-preview.js 注释 + server.py UI_VERSION
 
+### v0.12.0 — 交互对齐：对齐充分验证的 UX 模式（2026-09-23）
+
+> 背景：用户反馈"还是难用"。诊断结论：v0.10/0.11 修的是皮肤（主题/文案/引导），
+> 信息架构仍在镜像引擎管线（①-⑦ 编号 = 引擎数据流顺序）。本轮对齐权威交互模式
+> （Nielsen 启发式 / NNG progressive disclosure / Hick 分块 / Material switch /
+> "what changed" 反馈），只动 chrome 层（标题/分组/开关/反馈），不碰引擎契约渲染。
+
+- [x] **A 任务化命名 + CLI 术语降层**（Nielsen #4 match real world）：去 ①-⑦ 管线
+  编号；面板重命名（模型 / 当前参数 / 调参 / 环境与载荷 / 分析结果 / 档位对比 /
+  可信度 / 切片软件建议（Orca））；`--lock`、`--orca-suggest` 等 flag 从标题层降到
+  title 悬停；README/注释/一条 server.py stderr 同步（编码对称清扫全部位点）
+- [x] **B 上传区动作分层**（NNG progressive disclosure）：主行动只剩
+  分析/优化对比/下载报告；6 个诊断开关 + 网格收进「分析选项」折叠组，
+  summary 带「已开 N 项」徽章（折叠态自描述，Nielsen #1）
+- [x] **C 滑杆心智分组**（Hick/Miller 分块）：12 滑杆按 结构强度/材料与温度/速度与冷却
+  三组渲染；分组头携带全组 search 串（搜索时空组自动隐藏，零额外逻辑）；
+  schema 漂移新增参数落入「其他」组，永不丢失
+- [x] **D 运行增量徽章**（"what changed" 模式）：结论卡显示 SF/评分较上次运行的
+  ▲▼ 胶囊（双侧均为有限数才渲染——首跑/缺字段/envelope 无 nominal 不显示，
+  假绿/两态哨兵纪律）；与运行历史 #seq 对应
+- [x] **E 模式开关控件**（Material switch 解剖）：「高级模式：开/关」文字按钮 →
+  checkbox 开关（label 高级选项，键盘/焦点语义免费）；MODE_KEY 持久化不变
+- [x] **F 存量 grid blowout 修复**（新守卫抓出）：`.ui-kpis` 1fr 轨 min-content
+  （24px 等宽字体的不可断包络值 "(0.04–0.07)"）×4 ≈ 1075px > 右栏可用 ~890px，
+  整页横向滚动。修法：`.grid > div { min-width: 0 }` + `repeat(4, minmax(0,1fr))`
+- 验证：smoke **106/106**；`report_render_check.js` **95 项**；`browser_render_check.js`
+  **46 项**全绿；新增 `tests/ux_alignment_check.js` **23 项**（E1 开关三态+持久化 /
+  E2 标题断言 / E3 折叠组+徽章 / E4 分组+搜索联动 / E5 真引擎双跑增量徽章两态 /
+  E6 横向溢出守卫 + KPI 无乱码）；截图 `v012_advanced_groups_delta.png` /
+  `v012_simple_mode.png`；视觉核验（CDP 截图 + 模型审阅）确认开关/去编号/分组/增量
+  四项生效、无破版
+
+### v0.13.0 — 任务流式重排：方案 A 双轨制（2026-09-23）
+
+> 背景：v0.12 对齐了交互模式后，根因层欠账仍是"IA 镜像引擎而非任务"。本轮按用户批准的
+> 方案 A（双轨制）：简单模式改成真正的单列任务流，高级模式保留仪表盘 + 三处手术式升级。
+> 方案 B（两模式同一新骨架的全局重构）明确为本轮非目标。重排前做了硬约束盘点
+> （report.js 写入 id 全集 / 位置敏感 CSS / 布局顺序敏感测试断言），全部 id 未动。
+
+- [x] **简单模式 = 单列任务流**：`body.mode-simple .grid` 单列 + 左栏限宽 760px 居中；
+  DOM 顺序天然是 模型→预设→结果（advanced-only 隐藏后），纯 CSS 无节点移动；
+  `.simple-only` 反向类（高级模式隐藏流式 chrome）
+- [x] **步骤条** `#flow-steps`（简单模式常驻）：上传模型→选预设→看结论，
+  done/active 态由 applySession / analyze 成功 / 运行态钩子驱动；首访教育条不自动退场
+  （dismissal 是用户的选择，写 ui.guide-done 的只有关闭按钮——曾实现自动退场后因语义
+  更差而撤回，见 browser 套件 guide 断言）
+- [x] **档位对比开放给简单模式并上移**：panel 移到「分析结果」之后；四预设对比条形图
+  直接回答新手第一问"选哪个预设"；捕获/批量/写回工具包进内层 .advanced-only
+- [x] **悬浮状态条** `#sticky-verdict`：结果面板顶部 sticky，滚动调参时 SF/评分/▲▼ 常驻；
+  运行中显示"分析中"（startRunIndicator/stopRunIndicator 钩子，错误/取消路径不留残态）；
+  值镜像 #res-sf/#res-overall（class+text 复用，无二次阈值推导），增量芯片从结论卡克隆
+- [x] **改动计数** `#dirty-chip`：分析按钮旁"已改 N 项"（N=state.dirty 键数，即与上传
+  基线的差异）；span 而非 button（E3 套件钉死主行动行恰好 3 个 button）；点击/回车=立即
+  分析；挂在 updateRowState + resetAllTuning + resetTuningState（全部 dirty 突变位点）
+- 验证：smoke **106/106**；`report_render_check.js` **95**；`browser_render_check.js`
+  **46** 全绿（面板移动零回归）；`ux_alignment_check.js` 扩到 **26 项**（E7 单列流+面板
+  顺序+档位对比可见+步骤条两态 / E8 悬浮条 sticky+运行态切换 / E9 计数胶囊出现-重置消失）
+  全绿；截图 `v013_simple_flow.png` / `v013_advanced_sticky.png` + product 系列重拍，
+  视觉核验通过（含滚动中悬浮条实测截图）
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 

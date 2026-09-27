@@ -47,6 +47,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+; license surface listed explicitly (not just via the wildcard below): if a
+; file goes missing, ISCC fails the build instead of shipping an unlicensed
+; installer. LICENSE-Stratum-Engine.txt is the engine's MIT, renamed because
+; the WebUI's own LICENSE already claims that filename.
+Source: "..\dist\StratumWebUI\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\StratumWebUI\LICENSE-Stratum-Engine.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\StratumWebUI\THIRD-PARTY-NOTICES"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\StratumWebUI\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]

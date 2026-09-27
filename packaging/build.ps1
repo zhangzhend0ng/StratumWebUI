@@ -26,6 +26,13 @@ $engine = Join-Path $root "bin\stratum.exe"
 if (-not (Test-Path $engine)) {
     Write-Error "bin\stratum.exe not found. Copy it from the Stratum SDK release first (see README)."
 }
+# license surface ships with every build; a missing file must fail the build,
+# not silently produce an unlicensed installer
+foreach ($f in "LICENSE", "LICENSE-Stratum-Engine.txt", "THIRD-PARTY-NOTICES", "VERSION.txt") {
+    if (-not (Test-Path (Join-Path $root $f))) {
+        Write-Error "$f not found in repo root — the installer must not ship without it."
+    }
+}
 
 # --- 1. isolated build venv with pinned tools ------------------------------------
 if (-not (Test-Path $venvPython)) {
@@ -49,6 +56,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $app "bin") | Out-Null
 # not have it silently dropped from the layout.
 Copy-Item (Join-Path $root "bin\*") (Join-Path $app "bin") -Force
 Copy-Item (Join-Path $root "VERSION.txt") $app -Force
+# license surface: WebUI MIT + engine MIT (renamed, both are "LICENSE" at
+# source) + engine's third-party notices (miniz/tinyxml2, statically linked
+# into bin\stratum.exe — MIT requires the notices travel with the binary)
+Copy-Item (Join-Path $root "LICENSE") $app -Force
+Copy-Item (Join-Path $root "LICENSE-Stratum-Engine.txt") $app -Force
+Copy-Item (Join-Path $root "THIRD-PARTY-NOTICES") $app -Force
 Write-Host "Portable app ready: $app"
 
 # --- 4. Inno Setup installer --------------------------------------------------------

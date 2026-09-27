@@ -28,7 +28,11 @@ async function main() {
   const srv = spawn(process.execPath.length ? "python" : "python",
     ["server.py"], { cwd: ROOT, detached: false, stdio: "ignore",
     env: Object.assign({}, process.env, { STRATUM_UI_PORT: String(port),
-                                          STRATUM_UI_NO_BROWSER: "1" }) });
+                                          STRATUM_UI_NO_BROWSER: "1",
+                                          // keep the E2E server's rolling log
+                                          // out of the real %LOCALAPPDATA%
+                                          STRATUM_UI_LOG_DIR:
+                                            path.join(os.tmpdir(), "stratum-ui-e2e-logs") }) });
   const cport = await freePort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "stratum-ui-cdp-"));
   const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu",
@@ -282,6 +286,37 @@ async function main() {
            && hmE2e.legend.length > 0
            && hmE2e.warmOn > 0 && hmE2e.warmOff === 0,
            JSON.stringify(hmE2e).slice(0, 220));
+
+    // (v0.16) run-history enhancements on a REAL two-run session: same
+    // token, walls 2 then 4 — the second row must carry the vs-#1 param
+    // diff chip and #history-spark must draw inline-svg trend lines.
+    const histE2e = JSON.parse(await evalJs("(async function(){" +
+      "var b=atob('" + stlB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var up=await fetch('/api/upload?name=hist.stl',{method:'POST'," +
+      "headers:{'X-Stratum-UI':'1'},body:u.buffer}).then(function(r){return r.json()});" +
+      "if(!up.ok)return JSON.stringify({stage:'upload',err:up.error});" +
+      "function an(p){return fetch('/api/analyze',{method:'POST'," +
+      "headers:{'Content-Type':'application/json','X-Stratum-UI':'1'}," +
+      "body:JSON.stringify({token:up.token,params:p})})" +
+      ".then(function(r){return r.json()})}" +
+      "var a1=await an({walls:2});if(!a1.ok)return JSON.stringify({stage:'an1',err:a1.error});" +
+      "var a2=await an({walls:4});if(!a2.ok)return JSON.stringify({stage:'an2',err:a2.error});" +
+      "state.token=up.token;refreshHistory();" +
+      "await new Promise(function(res){setTimeout(res,700)});" +
+      "var spark=document.getElementById('history-spark');" +
+      "var rows=document.getElementById('history-list');" +
+      "return JSON.stringify({stage:'ok'," +
+      "svg:spark.innerHTML.indexOf('<svg')>=0," +
+      "lines:(spark.innerHTML.match(/<polyline/g)||[]).length," +
+      "chip:rows.textContent.indexOf('较 #1: walls 2 → 4')>=0," +
+      "n:rows.textContent.split('#').length-1})})()"));
+    expect("v0.16 e2e: two-run session draws SF/score sparklines",
+           histE2e.stage === "ok" && histE2e.svg && histE2e.lines >= 1,
+           JSON.stringify(histE2e).slice(0, 200));
+    expect("v0.16 e2e: run row carries vs-previous param diff chip",
+           histE2e.stage === "ok" && histE2e.chip,
+           JSON.stringify(histE2e).slice(0, 200));
 
     // (iter 84) REAL user-flow error paths: inject files via DataTransfer →
     // the page's own onFile handler → server rejects/accepts → assert the
@@ -654,6 +689,68 @@ async function main() {
     }
     expect("v0.10: guide stays dismissed after reload",
            await evalJs("getComputedStyle(document.getElementById('first-guide')).display==='none'"));
+
+    // (v0.16) HTML snapshot: sanitized results-panel clone → self-contained
+    // single-file doc. Re-render first: the reload above may have left the
+    // results area mid session-restore.
+    await evalJs("window.__r = " + report + "; renderReport(window.__r,''); 1");
+    expect("v0.16: snapshot button enabled after a successful render",
+           await evalJs("document.getElementById('btn-snapshot').disabled === false"));
+    const snapOut = await evalJs(
+      "(function(){var p=document.getElementById('summary-cards').closest('.panel');" +
+      "var c=snapshotSanitize(p.cloneNode(true));var m=c.outerHTML;" +
+      "var css='';Array.prototype.forEach.call(document.querySelectorAll('style'),function(s){css+=s.textContent;});" +
+      "var d=buildSnapshotDoc(m,css,{title:'t',heading:'报告快照',line:'l',footer:'f'});" +
+      // control-residue checks run on the CLONE markup, not the full doc: the
+      // inlined stylesheet legitimately mentions <button in a CSS comment and
+      // .empty-guide in selectors — those are inert, not leaked elements
+      "return JSON.stringify({noBtn:m.indexOf('<button')<0,noInput:m.indexOf('<input')<0," +
+      "noGuide:m.indexOf('id=\"empty-guide\"')<0,noScript:d.indexOf('<script')<0," +
+      "hasStyle:d.indexOf('<style>')>=0,hasContent:m.indexOf('结论')>=0," +
+      "hasResults:m.indexOf('分析结果')>=0,len:d.length})})()");
+    const so = JSON.parse(snapOut);
+    expect("v0.16 e2e: snapshot strips controls/scripts, inlines css + content",
+           so.noBtn && so.noInput && so.noGuide && so.noScript
+           && so.hasStyle && so.hasContent && so.hasResults && so.len > 5000,
+           snapOut);
+    // real click → Blob → file download path (caught two impl bugs in dev:
+    // a token gate that contradicted the client-side design, and a null
+    // state.name crash — event-handler exceptions never reach el.click(),
+    // so only an actual landed file proves the handler end-to-end)
+    const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), "stratum-ui-snapdl-"));
+    await send("Browser.setDownloadBehavior",
+               { behavior: "allow", downloadPath: dlDir });
+    await evalJs("document.getElementById('btn-snapshot').click()");
+    let dlFile = null;
+    for (let i = 0; i < 60; i++) {
+      const landed = fs.readdirSync(dlDir).filter(f => f.endsWith(".html"));
+      if (landed.length) {
+        dlFile = path.join(dlDir, landed[0]);
+        try { if (fs.statSync(dlFile).size > 10000) break; } catch (e) {}
+      }
+      await sleep(250);
+    }
+    let dlOk = false, dlWhy = "no file landed";
+    if (dlFile) {
+      const s = fs.readFileSync(dlFile, "utf8");
+      dlOk = s.indexOf("<!DOCTYPE html>") === 0 && s.indexOf("<script") < 0
+        && s.indexOf("分析结果") >= 0;
+      dlWhy = path.basename(dlFile) + " (" + s.length + " bytes)";
+    }
+    expect("v0.16 e2e: btn-snapshot click downloads a self-contained file",
+           dlOk, dlWhy);
+    // v0.16 log-folder button: present in the header, tooltip carries the
+    // real dir from /api/status (the click itself is covered by T83 in
+    // test_smoke — clicking here would open a real Explorer window)
+    const logsBtn = await evalJs(
+      "(function(){var b=document.getElementById('btn-logs');" +
+      "return JSON.stringify({has:!!b,txt:b?b.textContent:''," +
+      "tip:b?b.title:''})})()");
+    const lb = JSON.parse(logsBtn);
+    expect("v0.16 e2e: log-folder button present with real-path tooltip",
+           lb.has && lb.txt === "日志"
+           && lb.tip.indexOf("stratum-ui-e2e-logs") >= 0,
+           logsBtn);
 
     ws.close(); cleanup();
     console.log(fails ? "%d FAIL".replace("%d", fails) : "browser E2E all green");

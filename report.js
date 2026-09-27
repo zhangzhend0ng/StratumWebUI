@@ -16,15 +16,37 @@ var TERM_INFO = {
   thermal_stress: "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。",
 };
 
+// v0.16 (engine 0.26): recommendation motivation tokens → zh display label.
+// The token is an engine enum (same mapping practice as LOAD_LABELS / goal
+// tags — chrome, not engine prose); null = engine-declared "unclassified"
+// (safety margin / material window) → no badge. Unknown future tokens fall
+// through to the raw string so a newer engine never breaks this UI
+// (WEBUI-MIGRATION.md: closed set, consumers must tolerate unknowns).
+var MOTIVATION_LABELS = {
+  layer_bond: "层间键合",
+  shrinkage_gradient: "收缩梯度",
+  thinwall_shape: "薄壁成形",
+  appearance_gloss: "外观光泽",
+};
+// v0.16 (engine 0.26): suppression reason_codes → plain-language chrome.
+// detail stays engine-authored verbatim (skip-flagged at the render site).
+// Unknown codes render raw — forward compatibility over completeness.
+var SUPPRESSION_REASONS = {
+  solid_part_uniform_scaling:
+    "体素分辨率不足，薄特征读作实心 — 提高网格精度（--grid）后重跑可解除",
+  machine_nozzle_variant_unavailable:
+    "当前机型无该喷嘴变体 — 更换喷嘴/机型后可解除",
+};
+
 // ---------- render ----------
 function renderReport(d, consoleText, applyable) {
-  // v0.10: a successful render supersedes the empty-state guide (④) and any
+  // v0.10: a successful render supersedes the empty-state guide (「分析结果」) and any
   // error card from a previous failed run
   var eg = $("empty-guide");
   if (eg) eg.style.display = "none";
   var aerr = $("analyze-error");
   if (aerr) { aerr.style.display = "none"; aerr.innerHTML = ""; }
-  // a successful render supersedes any --validate refusal listing (④)
+  // a successful render supersedes any --validate refusal listing (「分析结果」)
   var vr = $("validate-refused");
   if (vr) { vr.style.display = "none"; vr.innerHTML = ""; }
   // engine console verbatim (collapsible): the CLI prints skip rationales
@@ -38,6 +60,10 @@ function renderReport(d, consoleText, applyable) {
     con.style.display = "none";
   }
   $("btn-report").disabled = false;  // last_report now exists server-side
+  // v0.16 HTML snapshot shares the JSON download's gate: a rendered result
+  // is what gets serialized, so it unlocks on the same successful render
+  var snapBtn = $("btn-snapshot");
+  if (snapBtn) snapBtn.disabled = false;
   // v0.8.1 artifact downloads share the session gate (a real report implies
   // a live session that can run the artifact analyses)
   var sup = $("btn-supports"), sm = $("btn-stress-modifier");
@@ -81,7 +107,7 @@ function renderReport(d, consoleText, applyable) {
 
   // v0.8.1 render-gap batch: fields the engine already discloses that the UI
   // never consumed. Every row is null-gated on the engine's own value.
-  // fast_mode: the --fast disclosure must be VISIBLE in ④, not just live in
+  // fast_mode: the --fast disclosure must be VISIBLE in 「分析结果」, not just live in
   // the checkbox tooltip — report input.fast_mode is the authoritative echo.
   $("fast-mode-tag").style.display = inp.fast_mode === true ? "" : "none";
   // multi-extruder 3MF: engine analyzes at the slot-1 material only (A-3 v1
@@ -159,6 +185,7 @@ function renderReport(d, consoleText, applyable) {
   warnBox.innerHTML = "";
   (d.warnings || []).forEach(function (w) {
     var item = el("div", "risk-item");
+    item.setAttribute("data-i18n-skip", "1");
     item.appendChild(el("span", "sev sev-2", "⚠"));
     item.appendChild(document.createTextNode(
       typeof w === "string" ? w : String(w.message || w.text || JSON.stringify(w))));
@@ -172,6 +199,7 @@ function renderReport(d, consoleText, applyable) {
   (d.input_overrides || []).forEach(function (o) {
     if (!o || typeof o !== "object") return;
     var item = el("div", "risk-item");
+    item.setAttribute("data-i18n-skip", "1");
     item.appendChild(el("span", "sev sev-2", "⚠"));
     item.appendChild(document.createTextNode(
       "参数回退: " + (o.parameter || "?") + " 请求 " + o.requested +
@@ -278,6 +306,7 @@ function renderReport(d, consoleText, applyable) {
   }
   if (pbd.cg_converged === false) {
     var w1 = el("div", "risk-item");
+    w1.setAttribute("data-i18n-skip", "1");
     w1.appendChild(el("span", "sev sev-2", "⚠"));
     w1.appendChild(document.createTextNode(
       "Phase B: 线性求解器未收敛 — 数值结果不可靠"));
@@ -285,12 +314,14 @@ function renderReport(d, consoleText, applyable) {
   }
   if (typeof pbd.part_visibility_warning === "string" && pbd.part_visibility_warning) {
     var w2 = el("div", "risk-item");
+    w2.setAttribute("data-i18n-skip", "1");
     w2.appendChild(el("span", "sev sev-2", "⚠"));
     w2.appendChild(document.createTextNode("Phase B: " + pbd.part_visibility_warning));
     warnBox.appendChild(w2);
   }
   if (typeof pbd.warning === "string" && pbd.warning) {
     var w3 = el("div", "risk-item");
+    w3.setAttribute("data-i18n-skip", "1");
     w3.appendChild(el("span", "sev sev-2", "⚠"));
     w3.appendChild(document.createTextNode("Phase B: " + pbd.warning));
     warnBox.appendChild(w3);
@@ -586,6 +617,7 @@ function renderReport(d, consoleText, applyable) {
       mtd.innerHTML = "";
       (topo.validation_findings || []).forEach(function (f) {
         var item = el("div", "risk-item");
+        item.setAttribute("data-i18n-skip", "1");
         item.appendChild(el("span", "sev " + (f.fatal ? "sev-1" : "sev-2"),
                             f.fatal ? "致命" : "提示"));
         item.appendChild(document.createTextNode(
@@ -611,7 +643,7 @@ function renderReport(d, consoleText, applyable) {
         "signed volume " + num(topo.signed_volume, 1) + " mm³" +
         (topo.manifold === true ? " · 流形" : topo.manifold === false ? " · 非流形" : "") +
         (topo.consistently_oriented === true ? " · 朝向一致"
-          : topo.consistently_oriented === false ? " · 朝向不一致（可用③b「修复网格朝向」）" : "") +
+          : topo.consistently_oriented === false ? " · 朝向不一致（可在「环境与载荷」面板用「修复网格朝向」）" : "") +
         "。standard 档仅披露不拒绝。"));
     }
   }
@@ -632,7 +664,7 @@ function renderReport(d, consoleText, applyable) {
       mld.innerHTML = "";
       if (!ml.identified) {
         mld.appendChild(el("div", "hint",
-          "无机器约束（③b 可手动选型号，或让 3MF 的 printer_model 自动识别）。"));
+          "无机器约束（可在「环境与载荷」面板手动选机型，或让 3MF 的 printer_model 自动识别）。"));
       } else {
         var mlKv = el("div", "kv");
         // layer band only when the engine actually knows it (0/0 = unknown
@@ -714,8 +746,11 @@ function renderReport(d, consoleText, applyable) {
       if (apCal.length)
         apd.appendChild(el("div", "hint", "标定状态: " + apCal.join("，")));
       (ap.suggestions || []).forEach(function (s) {
-        if (typeof s === "string" && s)
-          apd.appendChild(el("div", "hint", "建议: " + s));
+        if (typeof s === "string" && s) {
+          var apS = el("div", "hint", "建议: " + s);
+          apS.setAttribute("data-i18n-skip", "1");
+          apd.appendChild(apS);
+        }
       });
     }
   }
@@ -747,14 +782,18 @@ function renderReport(d, consoleText, applyable) {
       });
       rhd.appendChild(rhKv);
       if (typeof rh.weld_bond_assessment === "string" && rh.weld_bond_assessment) {
-        rhd.appendChild(el("div", "hint",
+        var rhW = el("div", "hint",
           "层间键合: " + rh.weld_bond_assessment +
           (rh.weld_bond_quality != null
             ? "（质量 " + num(rh.weld_bond_quality, 2) +
-              (rh.weld_bsf_saturated === true ? "，BSF 已饱和" : "") + "）" : "")));
+              (rh.weld_bsf_saturated === true ? "，BSF 已饱和" : "") + "）" : ""));
+        rhW.setAttribute("data-i18n-skip", "1");
+        rhd.appendChild(rhW);
       }
       if (typeof rh.corner_assessment === "string" && rh.corner_assessment) {
-        rhd.appendChild(el("div", "hint", "转角: " + rh.corner_assessment));
+        var rhC = el("div", "hint", "转角: " + rh.corner_assessment);
+        rhC.setAttribute("data-i18n-skip", "1");
+        rhd.appendChild(rhC);
       }
       var rhCal = [];
       if (rh.viscosity_calibrated === false) rhCal.push("黏度未标定");
@@ -766,6 +805,7 @@ function renderReport(d, consoleText, applyable) {
         rhd.appendChild(el("div", "hint", "标定状态: " + rhCal.join("，")));
       if (typeof rh.warning === "string" && rh.warning) {
         var rw = el("div", "risk-item");
+        rw.setAttribute("data-i18n-skip", "1");
         rw.appendChild(el("span", "sev sev-2", "⚠"));
         rw.appendChild(document.createTextNode("流变: " + rh.warning));
         rhd.appendChild(rw);
@@ -863,14 +903,18 @@ function renderReport(d, consoleText, applyable) {
     }
   }
 
-  // risks
+  // risks — severity shown verbatim on the engine's 1..5 scale (the old
+  // Math.min(3, …) clamp silently relabelled S5 items as S3)
   var riskBox = $("risk-list");
   riskBox.innerHTML = "";
   var risks = ((d.phase_a || {}).risks) || [];
-  if (!risks.length) { riskBox.appendChild(el("p", "muted", "未检测到几何风险。")); }
+  var sevOf = function (r) {
+    return Math.max(1, Math.min(5, Math.round(r.severity || 1)));
+  };
   risks.forEach(function (r) {
     var item = el("div", "risk-item");
-    var sev = Math.max(1, Math.min(3, Math.round(r.severity || 1)));
+    item.setAttribute("data-i18n-skip", "1");
+    var sev = sevOf(r);
     item.appendChild(el("span", "sev sev-" + sev, "S" + sev));
     item.appendChild(el("strong", null, r.type + " · "));
     item.appendChild(document.createTextNode(r.description || ""));
@@ -879,6 +923,32 @@ function renderReport(d, consoleText, applyable) {
     }
     riskBox.appendChild(item);
   });
+  // v0.14: the list collapses behind a count/max-severity toggle (real
+  // models carry hundreds of per-location items). Until the user clicks
+  // (dataset.user), the default adapts to the verdict: ⚠/❌ expand — the
+  // risks ARE the evidence for a non-ok verdict —, ✅ collapses so the
+  // advice / preset-comparison areas below stay in view.
+  var riskCard = $("risk-card");
+  if (riskCard) {
+    if (risks.length) {
+      riskCard.style.display = "";
+      var maxSev = 1;
+      for (var rIdx = 0; rIdx < risks.length; rIdx++)
+        maxSev = Math.max(maxSev, sevOf(risks[rIdx]));
+      $("risk-count").textContent = String(risks.length);
+      var msEl = $("risk-max-sev");
+      msEl.textContent = "S" + maxSev;
+      msEl.className = "sev sev-" + maxSev;
+      if (riskCard.dataset.user !== "1") {
+        var vAssess = typeof pb.assessment === "string" ? pb.assessment : "";
+        riskCard.dataset.open = vAssess.indexOf("✅") >= 0 ? "0" : "1";
+      }
+      riskBox.style.display = riskCard.dataset.open === "1" ? "" : "none";
+    } else {
+      riskCard.style.display = "none";
+      riskBox.style.display = "";
+    }
+  }
 
   // recommendations. v0.9: the server pairs each engine item with an
   // "applyable" projection (same order, one entry per item) — applicable
@@ -916,6 +986,15 @@ function renderReport(d, consoleText, applyable) {
     li.appendChild(el("strong", null,
       (typeof it.priority === "number" ? "[P" + it.priority + "] " : "")
       + "[" + it.action + "] " + it.parameter));
+    // v0.16 (engine 0.26): motivation badge — which goal the suggestion
+    // serves. null/absent = unclassified → no badge; unknown token shows
+    // raw (title always carries the raw token for bug reports).
+    if (typeof it.motivation === "string" && it.motivation) {
+      var mot = el("span", "mot-badge",
+                   MOTIVATION_LABELS[it.motivation] || it.motivation);
+      mot.setAttribute("title", "建议动机: " + it.motivation);
+      li.appendChild(mot);
+    }
     var ap = Array.isArray(applyable) ? applyable[idx] : null;
     if (ap && ap.applicable) {
       nApplicable++;
@@ -931,7 +1010,9 @@ function renderReport(d, consoleText, applyable) {
       var nr = el("span", "hint", "（不可一键应用: " + ap.reason + "）");
       li.appendChild(nr);
     }
-    li.appendChild(document.createTextNode(" — " + (it.reason || "")));
+    var rr = el("span", null, " — " + (it.reason || ""));
+    rr.setAttribute("data-i18n-skip", "1");
+    li.appendChild(rr);
     if (it.recommended_value !== null && it.recommended_value !== undefined) {
       li.appendChild(el("div", "hint",
         "当前 " + it.current_value + " → 建议 " + it.recommended_value +
@@ -971,6 +1052,33 @@ function renderReport(d, consoleText, applyable) {
     applyCta.style.display = "";
     recBox.insertBefore(applyCta, recBox.firstChild);
   }
+
+  // v0.16 (engine 0.26) suppressions: parameters whose suggestions were
+  // GATED, not "no advice exists". Rendered only when the engine actually
+  // sent a non-empty array (key absent = nothing this run — absent-not-null
+  // lifecycle, same as the phase boxes). Answers "why is there no
+  // walls/infill suggestion" which the items list alone cannot.
+  (rec.suppressions || []).forEach(function (s) {
+    if (!s || typeof s !== "object") return;
+    var li = el("div", "risk-item");
+    li.appendChild(el("span", "sev sev-2", "抑制"));
+    li.appendChild(document.createTextNode(" " + (s.parameter || "?") + " "));
+    var gate = el("span", null, "建议被闸");
+    li.appendChild(gate);
+    li.appendChild(document.createTextNode(" — "));
+    // known reason_code → UI chrome sentence; unknown → raw token verbatim
+    li.appendChild(el("span", null,
+      (typeof s.reason_code === "string" && s.reason_code
+       ? (SUPPRESSION_REASONS[s.reason_code] || s.reason_code)
+       : "未知原因")));
+    // detail is engine-authored prose → skip i18n, render verbatim
+    if (typeof s.detail === "string" && s.detail) {
+      var dt = el("span", null, "（" + s.detail + "）");
+      dt.setAttribute("data-i18n-skip", "1");
+      li.appendChild(dt);
+    }
+    recBox.appendChild(li);
+  });
 
   // engine recommendation line (verbatim from CLI stdout — no JS logic)
   var er = $("engine-recommendation");
@@ -1145,6 +1253,7 @@ function renderReport(d, consoleText, applyable) {
     if (!oItems.length) { oBox.appendChild(el("p", "muted", "报告未含 Orca 建议。")); }
     oItems.forEach(function (it) {
       var row = el("div", "risk-item");
+      row.setAttribute("data-i18n-skip", "1");
       var tierCls = it.tier === "decision" ? "goal-tag goal-strength" : "goal-tag";
       row.appendChild(el("span", tierCls, it.tier || "—"));
       row.appendChild(document.createTextNode(" "));
@@ -1181,8 +1290,10 @@ function renderReport(d, consoleText, applyable) {
     if (verdictTxt.indexOf("✅") >= 0) vc.className += " ok";
     else if (verdictTxt.indexOf("❌") >= 0) vc.className += " bad";
     else if (verdictTxt.indexOf("⚠") >= 0) vc.className += " warn";
-    vc.appendChild(el("div", "big", verdictTxt
-      || "引擎未给出结论短语 — 见下方各项数值。"));
+    var vBig = el("div", "big", verdictTxt
+      || "引擎未给出结论短语 — 见下方各项数值。");
+    vBig.setAttribute("data-i18n-skip", "1");
+    vc.appendChild(vBig);
     // SF band: engine scalar (v2 object shape → nominal); display-only
     var sfNum = (pb.safety_factor !== null && pb.safety_factor !== undefined
                  && typeof pb.safety_factor === "object")
@@ -1204,22 +1315,35 @@ function renderReport(d, consoleText, applyable) {
         : "安全系数 > 3 — 余量充足"));
     }
     scBox.appendChild(vc);
-    // risk card — first 3 warning lines, verbatim
+    // risk card — v0.14 aggregates BOTH risk sources, severity-ranked:
+    // phase_a.risks (S-badged lines) first, engine warnings behind them.
+    // Before, a warnings=0 report with S5 geometric risks showed "无警告。"
+    // here while the list below carried them — summary contradicted detail.
+    var aggLines = risks.slice().sort(function (a, b) {
+      return sevOf(b) - sevOf(a);
+    }).map(function (r) {
+      return { sev: sevOf(r),
+               text: (r.type || "risk") + "：" + (r.description || "") };
+    });
+    for (var wIdx = 0; wIdx < warnTexts.length; wIdx++)
+      aggLines.push({ sev: 0, text: warnTexts[wIdx] });
     var rcard = el("div", "sum-card");
     rcard.appendChild(el("h3", null, "风险"));
-    if (warnTexts.length) {
+    if (aggLines.length) {
       var ul = el("ul", "sum-lines");
-      warnTexts.slice(0, 3).forEach(function (t) {
+      aggLines.slice(0, 3).forEach(function (ln) {
         var li = el("li");
-        li.appendChild(document.createTextNode(t));
+        li.setAttribute("data-i18n-skip", "1");
+        if (ln.sev) li.appendChild(el("span", "sev sev-" + ln.sev, "S" + ln.sev + " "));
+        li.appendChild(document.createTextNode(ln.text));
         ul.appendChild(li);
       });
       rcard.appendChild(ul);
-      if (warnTexts.length > 3)
+      if (aggLines.length > 3)
         rcard.appendChild(el("div", "hint",
-          "还有 " + (warnTexts.length - 3) + " 条 — 点上方「N 条提示」展开完整列表"));
+          "还有 " + (aggLines.length - 3) + " 条 — 展开「几何风险」/「N 条提示」看完整列表"));
     } else {
-      rcard.appendChild(el("div", "big", "无警告。"));
+      rcard.appendChild(el("div", "big", "无风险。"));
     }
     scBox.appendChild(rcard);
     // advice card — apply CTA front and center
@@ -1289,7 +1413,7 @@ function renderReport(d, consoleText, applyable) {
 }
 
 // ---------- v0.10 actionable error card ----------
-// Renders a failed analyze payload into ④ with NEXT-STEP buttons instead of
+// Renders a failed analyze payload into 「分析结果」 with NEXT-STEP buttons instead of
 // a bare toast. The error/findings text is verbatim; the actions only flip
 // UI knobs the user already owns (validate tier select, per-run --grid box)
 // and re-run the standard analyze channel — no new endpoints.

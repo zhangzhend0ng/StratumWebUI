@@ -17,6 +17,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zipfile
@@ -87,7 +88,19 @@ def main():
               "release (see README) before running the suite")
         return 2
     port = free_port()
-    env = dict(os.environ, STRATUM_UI_PORT=str(port), STRATUM_UI_NO_BROWSER="1")
+    # v0.16 log tests: redirect the rolling log to a throwaway dir with a
+    # tiny cap (2000 B) so the suite exercises REAL rollover, and suppress
+    # the actual Explorer open (STRATUM_UI_LOG_OPEN=0 — opening windows
+    # during tests is noise, not coverage). Aux servers spawned below via
+    # dict(os.environ, ...) inherit a SEPARATE huge-cap dir: two processes
+    # rolling the same file on Windows = rename contention, dropped records.
+    log_dir = tempfile.mkdtemp(prefix="stratum_ui_logs_test_")
+    aux_log_dir = tempfile.mkdtemp(prefix="stratum_ui_logs_aux_")
+    os.environ["STRATUM_UI_LOG_DIR"] = aux_log_dir
+    os.environ["STRATUM_UI_LOG_MAX_BYTES"] = "100000000"
+    env = dict(os.environ, STRATUM_UI_PORT=str(port), STRATUM_UI_NO_BROWSER="1",
+               STRATUM_UI_LOG_DIR=log_dir, STRATUM_UI_LOG_MAX_BYTES="2000",
+               STRATUM_UI_LOG_OPEN="0")
     proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "server.py")],
                             env=env, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
@@ -1899,6 +1912,47 @@ def main():
         finally:
             proc6.terminate()
             proc6.wait(timeout=10)
+
+        # ---------- v0.16 persistent rolling log + open-folder channel ----------
+        # after the whole suite's traffic the tiny-capped log must have rolled.
+        status, body = request(port, "GET", "/api/logs-dir")
+        j = json.loads(body)
+        check("T81 logs-dir discloses dir+file", status == 200 and j.get("ok")
+              and j.get("dir") == log_dir
+              and str(j.get("file", "")).endswith("stratum-webui.log"),
+              body[:120])
+        status, body = request(port, "GET", "/api/status")
+        check("T82 status carries log_dir", status == 200
+              and json.loads(body).get("log_dir") == log_dir, body[:120])
+        status, body = request(port, "POST", "/api/open-logs", b"{}",
+                               {"Content-Type": "application/json"})
+        j = json.loads(body)
+        check("T83 open-logs honors test-mode skip", status == 200 and j.get("ok")
+              and j.get("opened") is False and j.get("skipped") == "test-mode",
+              body[:120])
+        log_path = os.path.join(log_dir, "stratum-webui.log")
+        rolled = os.path.isfile(os.path.join(log_dir, "stratum-webui.log.1"))
+        content = ""
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+            if rolled:
+                with open(os.path.join(log_dir, "stratum-webui.log.1"),
+                          "r", encoding="utf-8", errors="replace") as fh:
+                    content += fh.read()
+        except OSError as exc:
+            content = "READ-ERR %r" % exc
+        check("T84 rolling log file written with banner + request lines",
+              os.path.isfile(log_path) and "Stratum WebUI v" in content
+              and ("run:" in content or "open-logs" in content
+                   or "GET" in content or "upload" in content),
+              content[:160])
+        check("T85 2000-byte cap actually rolled the log (.1 backup)",
+              rolled, "files: %s" % os.listdir(log_dir))
+        import shutil as _sh
+        _sh.rmtree(log_dir, ignore_errors=True)
+        _sh.rmtree(aux_log_dir, ignore_errors=True)
+
     finally:
         proc.terminate()
         proc.wait(timeout=10)

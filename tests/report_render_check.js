@@ -737,8 +737,68 @@ expect("v0.10: open flag survives a re-render",
        elements["warning-list"].style.display === "");
 elements["warnings-card"].dataset.open = "0";
 rerender(real);
-expect("v0.10: risk card surfaces top warnings verbatim",
-       textOf(elements["summary-cards"].children[1]).indexOf("网格含 41 个几何部件") >= 0,
+// v0.14: the summary risk card aggregates BOTH sources, severity-ranked —
+// with 491 S5 geometric risks in this fixture they lead the card (warnings
+// no longer crowd out harder evidence); overflow points at the two lists.
+expect("v0.14: risk card aggregates risks first, severity-ranked",
+       textOf(elements["summary-cards"].children[1]).indexOf("S5") >= 0 &&
+       textOf(elements["summary-cards"].children[1]).indexOf("interlaminar_shear") >= 0 &&
+       /还有 \d+ 条/.test(textOf(elements["summary-cards"].children[1])),
+       textOf(elements["summary-cards"].children[1]).slice(0, 160));
+
+// v0.14: the risk list collapses behind a count/max-severity toggle; the
+// verdict gates the default until the user clicks (dataset.user takes over)
+rerender(real3);  // 2 risks (S5/S3), assessment "✅ 安全" → collapsed
+expect("v0.14: risk card toggle shows count and max severity",
+       elements["risk-card"].style.display === "" &&
+       elements["risk-count"].textContent === "2" &&
+       elements["risk-max-sev"].textContent === "S5",
+       elements["risk-count"].textContent + "/" + elements["risk-max-sev"].textContent);
+expect("v0.14: ✅ verdict collapses the list by default",
+       elements["risk-list"].style.display === "none" &&
+       elements["risk-card"].dataset.open === "0",
+       elements["risk-list"].style.display + "/" + elements["risk-card"].dataset.open);
+// ⚠ verdict re-gates to expanded (same stubs — direct call, see NOTE above)
+const d3warn = JSON.parse(JSON.stringify(real3));
+d3warn.phase_b.assessment = "⚠️ 有风险 — 注意";
+ctx.renderReport(d3warn, "");
+expect("v0.14: ⚠ verdict expands the list (evidence up front)",
+       elements["risk-card"].dataset.open === "1" &&
+       elements["risk-list"].style.display === "",
+       elements["risk-card"].dataset.open + "/" + elements["risk-list"].style.display);
+// user click takes over: dataset.user freezes the choice across renders
+elements["risk-card"].dataset.user = "1";
+elements["risk-card"].dataset.open = "0";
+ctx.renderReport(d3warn, "");
+expect("v0.14: user-owned open flag survives re-render",
+       elements["risk-card"].dataset.open === "0" &&
+       elements["risk-list"].style.display === "none",
+       elements["risk-card"].dataset.open);
+// severity verbatim: engine S5 stays S5 in the list (old clamp showed S3)
+rerender(real);
+const firstBadge = elements["risk-list"].children[0].children[0];
+expect("v0.14: severity 1..5 shown verbatim (S5 not clamped to S3)",
+       firstBadge.textContent === "S5",
+       firstBadge.textContent);
+// risks empty → toggle card hidden; warnings still surface in the summary
+// (warning-list collects phase_b.diagnostics fields: cg/part_visibility/
+// warning — buckling lives in phase-d detail and is NOT a summary source)
+const d3norisk = JSON.parse(JSON.stringify(real3));
+d3norisk.phase_a.risks = [];
+d3norisk.phase_b.diagnostics = d3norisk.phase_b.diagnostics || {};
+d3norisk.phase_b.diagnostics.warning = "测试提示行: 网格分辨率不足";
+rerender(d3norisk);
+expect("v0.14: no risks → toggle card hidden",
+       elements["risk-card"].style.display === "none",
+       elements["risk-card"].style.display);
+expect("v0.14: no risks → warnings still lead the summary card",
+       textOf(elements["summary-cards"].children[1]).indexOf("测试提示行") >= 0,
+       textOf(elements["summary-cards"].children[1]).slice(0, 120));
+// both sources empty → explicit all-clear (previously "无警告。" ignored risks)
+d3norisk.phase_b.diagnostics.warning = null;
+rerender(d3norisk);
+expect("v0.14: both sources empty → 无风险",
+       textOf(elements["summary-cards"].children[1]).indexOf("无风险") >= 0,
        textOf(elements["summary-cards"].children[1]));
 
 // advice card: applyable CTA front and center + appendix-C grid action
@@ -817,5 +877,146 @@ expect("v0.10: a successful render clears the error card",
 ctx.renderAnalyzeError(null);
 expect("v0.10: null payload → card hidden, no throw",
        elements["analyze-error"].style.display === "none");
+
+// v0.16 (engine 0.26) suggestion channel: motivation badges + suppressions.
+// The real fixtures predate 0.26 (no motivation key, no suppressions key),
+// so positive paths run on inline fixtures; the negative path doubles as
+// the real-engine smoke contract (beam probe on 0.26.0: schema 3, both
+// keys absent, renderer must stay silent).
+const d26 = JSON.parse(JSON.stringify(real3));
+d26.recommendations.items = [
+  {action: "increase", parameter: "walls", priority: 1,
+   motivation: "layer_bond", current_value: 2, recommended_value: 4,
+   reason: "bond-critical"},
+  {action: "decrease", parameter: "print_speed", priority: 2,
+   motivation: "future_token_zzz", current_value: 60, recommended_value: 40,
+   reason: "forward-compat probe"},
+  {action: "decrease", parameter: "cooling_fan", priority: 2,
+   motivation: null, current_value: 100, recommended_value: 60,
+   reason: "unclassified"},
+];
+d26.recommendations.suppressions = [
+  {parameter: "walls", reason_code: "solid_part_uniform_scaling",
+   detail: "voxel 6.2mm ≥ min wall 4mm"},
+  {parameter: "nozzle_diameter",
+   reason_code: "machine_nozzle_variant_unavailable", detail: null},
+  {parameter: "infill", reason_code: "brand_new_code_2100", detail: "x"},
+];
+rerender(d26);
+function motBadges() {
+  const out = [];
+  (elements["rec-items"].children || []).forEach(function (li) {
+    (li.children || []).forEach(function (c) {
+      if (String(c.className).indexOf("mot-badge") >= 0) out.push(c);
+    });
+  });
+  return out;
+}
+const badges = motBadges();
+expect("v0.16: known motivation token renders its zh label badge",
+       badges.length >= 1 && textOf(badges[0]) === "层间键合",
+       badges.map(textOf).join("|"));
+expect("v0.16: unknown motivation token renders RAW (forward compat)",
+       badges.length >= 2 && textOf(badges[1]) === "future_token_zzz",
+       badges.map(textOf).join("|"));
+expect("v0.16: badge title carries the raw engine token",
+       badges[0].attrs && badges[0].attrs.title === "建议动机: layer_bond",
+       String(badges[0].attrs && badges[0].attrs.title));
+expect("v0.16: null motivation → no badge on that item",
+       badges.length === 2, "badge count " + badges.length);
+const recTxt26 = boxText("rec-items");
+expect("v0.16: solid_part suppression discloses the --grid ungate hint",
+       recTxt26.indexOf("walls") >= 0 &&
+       recTxt26.indexOf("建议被闸") >= 0 &&
+       recTxt26.indexOf("提高网格精度（--grid）") >= 0,
+       recTxt26.slice(0, 200));
+expect("v0.16: nozzle-variant suppression renders its own reason",
+       recTxt26.indexOf("nozzle_diameter") >= 0 &&
+       recTxt26.indexOf("机型无该喷嘴变体") >= 0,
+       recTxt26.slice(0, 200));
+expect("v0.16: unknown reason_code renders raw (forward compat)",
+       recTxt26.indexOf("brand_new_code_2100") >= 0,
+       recTxt26.slice(0, 200));
+expect("v0.16: engine detail string rendered verbatim",
+       recTxt26.indexOf("voxel 6.2mm ≥ min wall 4mm") >= 0,
+       recTxt26.slice(0, 200));
+// negative: key absent / empty array → nothing rendered
+rerender(real3);
+expect("v0.16: suppressions key ABSENT → no suppression line",
+       boxText("rec-items").indexOf("建议被闸") < 0);
+expect("v0.16: pre-0.26 items (no motivation key) → zero badges",
+       motBadges().length === 0);
+const d26e = JSON.parse(JSON.stringify(d26));
+d26e.recommendations.suppressions = [];
+rerender(d26e);
+expect("v0.16: EMPTY suppressions array → still nothing rendered",
+       boxText("rec-items").indexOf("建议被闸") < 0);
+
+// v0.16 HTML snapshot builder: pure string assembly extracted from
+// index.html (same source-slicing pattern as num/fmtUnit above). The DOM
+// clone/sanitize side runs for real in browser_render_check.js.
+const snapStart = html.indexOf("function snapEsc(s)");
+// end marker must be the WIRING (not the earlier $("btn-snapshot").disabled
+// reset in the upload path, which sorts before the helper definitions)
+const snapEnd = html.indexOf('$("btn-snapshot").addEventListener');
+if (snapStart < 0 || snapEnd <= snapStart) {
+  console.error("FATAL: snapshot helpers not found in index.html"); process.exit(1);
+}
+vm.runInContext(html.slice(snapStart, snapEnd), ctx);
+const snap = ctx.buildSnapshotDoc('<div id="x">结果内容</div>', "body{color:red}",
+  {title: "T <b> & q", heading: "报告快照", line: "beam · UI 0.16", footer: "foot note"});
+expect("v0.16: snapshot doc is a standalone html5 document",
+       snap.indexOf("<!DOCTYPE html>") === 0 && snap.indexOf('<meta charset="utf-8">') >= 0,
+       snap.slice(0, 60));
+expect("v0.16: snapshot inlines the stylesheet",
+       snap.indexOf("<style>") >= 0
+       && snap.indexOf("body{color:red}") > snap.indexOf("<style>"),
+       "");
+expect("v0.16: snapshot carries zero scripts / external refs",
+       snap.indexOf("<script") < 0 && !/\s(src|href)=/.test(snap),
+       "");
+expect("v0.16: snapshot header/footer/meta rendered, title HTML-escaped",
+       snap.indexOf("&lt;b&gt;") >= 0 && snap.indexOf("<b>") < 0
+       && snap.indexOf("报告快照") >= 0 && snap.indexOf("beam · UI 0.16") >= 0
+       && snap.indexOf("foot note") >= 0 && snap.indexOf("结果内容") >= 0,
+       "");
+
+// v0.16 run-history helpers (pure, sliced from index.html): per-run param
+// diff + inline-SVG sparkline. The DOM integration side (history rows,
+// #history-spark) runs for real in browser_render_check.js.
+const histStart = html.indexOf("function histParamDiff(prev, cur) {");
+const histEnd = html.indexOf("function refreshHistory() {");
+if (histStart < 0 || histEnd <= histStart) {
+  console.error("FATAL: history helpers not found in index.html"); process.exit(1);
+}
+vm.runInContext(html.slice(histStart, histEnd), ctx);
+const pd = ctx.histParamDiff(
+  {params: {walls: 2, print_speed: 60}, env: {}},
+  {params: {walls: 4, print_speed: 60}, env: {}});
+expect("v0.16: param diff lists changed keys, omits equal ones",
+       pd.length === 1 && pd[0] === "walls 2 → 4",
+       JSON.stringify(pd));
+expect("v0.16: identical consecutive inputs → empty diff",
+       ctx.histParamDiff({params: {walls: 2}, env: {a: 1}},
+                         {params: {walls: 2}, env: {a: 1}}).length === 0);
+const pd2 = ctx.histParamDiff(
+  {params: {walls: 2, layer_height: 0.2}, env: {}},
+  {params: {walls: 4}, env: {}});
+expect("v0.16: key present on one side only renders （未设）",
+       pd2.length === 2 && pd2.indexOf("layer_height 0.2 → （未设）") >= 0,
+       JSON.stringify(pd2));
+const sp1 = ctx.sparkSvg([1, 2, 3], "red", 200, 34);
+expect("v0.16: sparkline draws an inline svg polyline",
+       sp1.indexOf("<svg") === 0 && sp1.indexOf("<polyline") >= 0
+       && sp1.indexOf('points="') >= 0 && (sp1.match(/,/g) || []).length >= 2,
+       sp1.slice(0, 80));
+expect("v0.16: sparkline flat series does not divide by zero",
+       ctx.sparkSvg([3, 3, 3], "red").indexOf("<polyline") >= 0);
+expect("v0.16: sparkline with <2 finite points → empty (no fake trend)",
+       ctx.sparkSvg([2], "red") === "" && ctx.sparkSvg([null, null], "red") === "");
+const sp2 = ctx.sparkSvg([1, null, 3], "red");
+expect("v0.16: isolated point between nulls renders as a dot, not dropped",
+       sp2.indexOf("<circle") >= 0 && sp2.indexOf('fill="red"') >= 0,
+       sp2.slice(0, 120));
 
 process.exit(fails ? 1 : 0);

@@ -29,12 +29,27 @@ Write-Host "install rc      = $($p.ExitCode)"
 if ($p.ExitCode -ne 0) { Fail "install rc=$($p.ExitCode)" }
 
 # --- layout --------------------------------------------------------------------
-foreach ($f in "StratumWebUI.exe","VERSION.txt","unins000.exe",
+foreach ($f in "StratumWebUI.exe","VERSION.txt","LICENSE","LICENSE-Stratum-Engine.txt",
+               "THIRD-PARTY-NOTICES","unins000.exe",
                "bin\stratum.exe","_internal\index.html",
                "_internal\report.js","_internal\stl-preview.js") {
     $ok = Test-Path (Join-Path $dir $f)
-    Write-Host ("  {0,-24} {1}" -f $f, $ok)
+    Write-Host ("  {0,-28} {1}" -f $f, $ok)
     if (-not $ok) { Fail "layout missing $f" }
+}
+
+# --- engine binary integrity (installed vs just-built dist) ---------------------
+# compare against dist\StratumWebUI rather than a hardcoded digest: the digest
+# would rot on every engine bump, dist-vs-installed still catches any
+# packaging/Inno corruption of the binary.
+$distEngine = Join-Path $root "dist\StratumWebUI\bin\stratum.exe"
+if (Test-Path $distEngine) {
+    $hDist = (Get-FileHash $distEngine -Algorithm SHA256).Hash
+    $hInst = (Get-FileHash (Join-Path $dir "bin\stratum.exe") -Algorithm SHA256).Hash
+    Write-Host "  engine sha256 (installed) = $hInst"
+    if ($hDist -ne $hInst) { Fail "installed bin\stratum.exe sha256 differs from dist" }
+} else {
+    Fail "dist\StratumWebUI\bin\stratum.exe not found for sha256 comparison"
 }
 
 # --- app smoke (hidden window, no browser, curl status) ------------------------

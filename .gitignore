@@ -14,3 +14,6 @@ __pycache__/
 loop-journal*.md
 # 真实语料跑批产物（引擎 stdout dump + 用户文件名）
 test_data/real3mf-results/
+
+# 内部调研/工作文档（曾误公开于历史，2026-09-27 清洗出库，勿再提交）
+docs/
