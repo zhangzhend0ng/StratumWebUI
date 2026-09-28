@@ -3176,6 +3176,9 @@ var LANG_EN = {
   "HTML 快照已下载": "HTML snapshot downloaded",
   "把当前渲染后的「分析结果」区导出为自包含单文件 HTML（内联样式、无外部资源、离线可开；数据截至导出时刻）":
     "Export the rendered results area as a self-contained single-file HTML (inlined styles, no external resources, opens offline; data frozen at export time)",
+  // v0.17 snapshot model view + 3MF live preview
+  "导出时刻视角": "view at export time",
+  "模型预览未捕获（导出时无可用预览）": "Model preview not captured (no live preview available at export)",
   // v0.16 run-history enhancements: per-row param diff + trend sparklines
   "SF 趋势": "SF trend",
   "评分趋势": "Score trend",
@@ -3346,6 +3349,9 @@ var LANG_WORDS = (function () {
     ["已恢复会话 ", "session restored "], ["，正在重新分析…", ", re-analyzing…"],
     ["已上传 ", "uploaded "],
     ["建议动机: ", "motivation: "],
+    // v0.17: 3MF preview degrade prefix (dynamic error text follows — word-
+    // level replacement covers it inside the observer-translated note node)
+    ["3MF 预览不可用: ", "3MF preview unavailable: "],
     ["较 #", "vs #"], ["与上一次运行 #", "vs previous run #"],
     [" 的输入参数差异", " input-parameter diff"],
     ["日志目录: ", "log folder: "], ["（本环境不自动打开）", "(no auto-open on this platform)"],
@@ -3360,6 +3366,13 @@ var LANG_WORDS = (function () {
   return pairs.sort(function (a, b) { return b[0].length - a[0].length; });
 })();
 function trText(s) {
+  // zh is the LOSSLESS no-op mode (see the i18n block comment above): the
+  // lookup used to be unconditional, so zh-mode callers that bypass
+  // translateDom got EN strings — the v0.16 snapshot footer shipped English
+  // text to zh users, surfaced by the v0.17 model-view caption. Both built-in
+  // callers (translateDom/_langAttrs) already run EN-only, so the gate only
+  // changes behavior for exactly those broken call sites.
+  if (state.lang !== "en") return s;
   if (Object.prototype.hasOwnProperty.call(LANG_EN, s)) return LANG_EN[s];
   var out = s;
   for (var i = 0; i < LANG_WORDS.length; i++)
@@ -3591,15 +3604,29 @@ function snapshotSanitize(root) {
   return root;
 }
 // pure string assembly (kept free of DOM calls so the vm render test can
-// exercise it directly) — markup/css/meta in, complete document out
+// exercise it directly) — markup/css/meta in, complete document out.
+// v0.17: meta.view (optional) embeds the model preview as it looked at the
+// export click — dataUrl null degrades to the caption line only (an honest
+// "not captured" note, never a placeholder image).
 function buildSnapshotDoc(markup, cssText, meta) {
+  var view = "";
+  if (meta.view) {
+    view = "<div style=\"margin:14px 2px 0\">" +
+      (meta.view.dataUrl
+        ? "<img src=\"" + snapEsc(meta.view.dataUrl) + "\" alt=\"model view\"" +
+          " style=\"max-width:100%;max-height:320px;display:block;" +
+          "border:1px solid #d0d6de;border-radius:10px\">"
+        : "") +
+      "<p class=\"hint\" style=\"margin:6px 2px 0\">" +
+      snapEsc(meta.view.caption) + "</p></div>\n";
+  }
   return "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\">\n" +
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
     "<title>" + snapEsc(meta.title) + "</title>\n<style>\n" + cssText + "\n</style>\n</head>\n" +
     "<body style=\"background:var(--surface-0)\">\n<div class=\"wrap\" style=\"max-width:1100px\">\n" +
     "<header><h1>Stratum " + snapEsc(meta.heading) + "</h1>" +
     "<span class=\"sub\">" + snapEsc(meta.line) + "</span></header>\n" +
-    markup + "\n" +
+    view + markup + "\n" +
     "<p class=\"hint\" style=\"margin:18px 2px\">" + snapEsc(meta.footer) + "</p>\n" +
     "</div>\n</body>\n</html>\n";
 }
@@ -3618,6 +3645,17 @@ $("btn-snapshot").addEventListener("click", function () {
   // state.name is null until the first upload — the snapshot must not depend
   // on a live session (pure client-side), so fall back instead of throwing
   var base = ((state.name || "model").replace(/\.(stl|3mf|obj|ply|amf)$/i, "") || "model");
+  // v0.17: embed the 3D preview as of THIS click. The draw loop is on-demand
+  // and the GL context keeps preserveDrawingBuffer:true (P1 probe), so the
+  // last frame is still in the buffer here. Any miss (preview degraded,
+  // canvas hidden, capture throw, empty-canvas sentinel) degrades to an
+  // honest one-line note in the snapshot — never a placeholder image.
+  var viewData = null;
+  var cv = $("stl-view");
+  if (cv && cv.style.display !== "none" && stlView.gl && stlView.n > 0) {
+    try { viewData = cv.toDataURL("image/png"); } catch (e) { viewData = null; }
+    if (viewData === "data:,") viewData = null;  // zero-size/empty capture
+  }
   var ts = new Date();
   var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
   var stamp = ts.getFullYear() + "-" + pad(ts.getMonth() + 1) + "-" + pad(ts.getDate()) +
@@ -3628,6 +3666,9 @@ $("btn-snapshot").addEventListener("click", function () {
     line: base + " · UI " + $("ui-ver").textContent + " · engine " +
       $("engine-ver").textContent + " · " + stamp,
     footer: tr("静态快照 — 数据截至导出时刻；重跑分析与一键应用请在 Stratum WebUI 中操作。"),
+    view: { dataUrl: viewData,
+            caption: viewData ? base + " · " + tr("导出时刻视角")
+                              : tr("模型预览未捕获（导出时无可用预览）") },
   });
   var blob = new Blob([html], { type: "text/html;charset=utf-8" });
   var url = URL.createObjectURL(blob);

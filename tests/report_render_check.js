@@ -981,6 +981,41 @@ expect("v0.16: snapshot header/footer/meta rendered, title HTML-escaped",
        && snap.indexOf("foot note") >= 0 && snap.indexOf("结果内容") >= 0,
        "");
 
+// v0.17 P1 snapshot model view: meta.view {dataUrl, caption} embeds the
+// preview at the top of the doc; dataUrl=null must degrade to the caption
+// line with NO <img> (honest "not captured", never a placeholder image).
+const FAKE_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+const snapV = ctx.buildSnapshotDoc('<div id="x">结果内容</div>', "body{color:red}",
+  {title: "t", heading: "h", line: "l", footer: "f",
+   view: {dataUrl: FAKE_PNG, caption: "beam · 导出时刻视角"}});
+expect("v0.17: snapshot embeds the model view img at doc top",
+       snapV.indexOf('<img src="data:image/png;base64,') >= 0
+       && snapV.indexOf("beam · 导出时刻视角") >= 0
+       && snapV.indexOf('<img src="data:image/png;base64,') < snapV.indexOf("结果内容"),
+       snapV.slice(snapV.indexOf("<body"), snapV.indexOf("<body") + 200));
+expect("v0.17: model view img rendered exactly once before content",
+       (snapV.match(/<img /g) || []).length === 1
+       && snapV.indexOf("<img ") < snapV.indexOf("结果内容"),
+       "");
+const snapX = ctx.buildSnapshotDoc("<div>x</div>", "",
+  {title: "t", heading: "h", line: "l", footer: "f",
+   view: {dataUrl: 'data:image/png;base64,x"><script>alert(1)</script>',
+          caption: "c"}});
+expect("v0.17: hostile dataUrl cannot break out of the src attribute",
+       snapX.indexOf('"><script>') < 0 && snapX.indexOf("<script") < 0
+       && snapX.indexOf("&quot;&gt;&lt;script&gt;") >= 0,
+       snapX.slice(snapX.indexOf("<img"), snapX.indexOf("<img") + 120));
+const snapN = ctx.buildSnapshotDoc('<div id="x">结果内容</div>', "",
+  {title: "t", heading: "h", line: "l", footer: "f",
+   view: {dataUrl: null, caption: "模型预览未捕获（导出时无可用预览）"}});
+expect("v0.17: null dataUrl degrades to text line, no <img>",
+       snapN.indexOf("<img") < 0
+       && snapN.indexOf("模型预览未捕获（导出时无可用预览）") >= 0,
+       snapN.slice(snapN.indexOf("<body"), snapN.indexOf("<body") + 200));
+expect("v0.17: meta without view keeps the v0.16 shape (no view block)",
+       snap.indexOf("导出时刻视角") < 0 && snap.indexOf("<img") < 0,
+       "");
+
 // v0.16 run-history helpers (pure, sliced from index.html): per-run param
 // diff + inline-SVG sparkline. The DOM integration side (history rows,
 // #history-spark) runs for real in browser_render_check.js.

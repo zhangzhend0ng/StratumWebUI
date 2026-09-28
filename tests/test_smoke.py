@@ -12,6 +12,7 @@ HTTP surface against test_data/ fixtures, asserts, and tears down.
 
 import http.client
 import json
+import math
 import os
 import re
 import socket
@@ -1912,6 +1913,78 @@ def main():
         finally:
             proc6.terminate()
             proc6.wait(timeout=10)
+
+        # ---------- v0.17 /api/model-mesh (3MF live preview source) ----------
+        # token-gated triangle soup for the WebGL pipeline; the preview is a
+        # pure bonus, so these pin the honest-degrade behavior (real tris for
+        # good 3MFs, explicit 4xx with a message for everything else).
+        for _fn, _label, _tn in (("beam_100x10x4.3mf", "beam", "T87"),
+                                 ("distinct_100x10x4.3mf", "distinct", "T88"),
+                                 ("bare_no_metadata.3mf", "bare", "T89")):
+            _st, _up = upload(port, _label + ".3mf",
+                              os.path.join(ROOT, "test_data", _fn))
+            _ok = _st == 200 and _up.get("ok")
+            if _ok:
+                _stq, _body = request(port, "GET",
+                                      "/api/model-mesh?token=" + _up["token"])
+                _j = json.loads(_body)
+                _pos = _j.get("pos") or []
+                _nrm = _j.get("nrm") or []
+                _finite = all(isinstance(v, (int, float))
+                              and math.isfinite(v) for v in _pos + _nrm)
+                _ok = (_stq == 200 and _j.get("ok")
+                       and isinstance(_j.get("tris"), int) and _j["tris"] > 0
+                       and len(_pos) == _j["tris"] * 9
+                       and len(_nrm) == _j["tris"] * 9
+                       and _finite)
+                _detail = "status=%s tris=%r" % (_stq, _j.get("tris"))
+            else:
+                _detail = "upload failed: %s %r" % (_st, _up)
+            check("%s model-mesh %s: tris>0, buffers finite" % (_tn, _label),
+                  _ok, _detail)
+
+        # T90 — unknown token → 400 unknown token (same gate as /api/model)
+        _st, _body = request(port, "GET", "/api/model-mesh?token=deadbeef")
+        check("T90 model-mesh bad token → 400",
+              _st == 400 and json.loads(_body).get("error") == "unknown token",
+              "%s %s" % (_st, _body[:80]))
+
+        # T91 — STL session → explicit 4xx naming the endpoint's scope
+        _st, _up = upload(port, "beam.stl", STL)
+        _ok = _st == 200 and _up.get("ok")
+        if _ok:
+            _stq, _body = request(port, "GET",
+                                  "/api/model-mesh?token=" + _up["token"])
+            _ok = (_stq == 400 and "3MF" in json.loads(_body).get("error", ""))
+            _detail = "%s %s" % (_stq, _body[:80])
+        else:
+            _detail = "upload failed: %s" % _st
+        check("T91 model-mesh on STL → 400 with explicit message", _ok, _detail)
+
+        # T92 — valid ZIP container with a garbage .model payload → honest
+        # 400, server stays up (upload's PK/namelist gate passes this by
+        # design; the mesh endpoint is the first to open the XML)
+        _buf = io.BytesIO()
+        with zipfile.ZipFile(_buf, "w") as _zf:
+            _zf.writestr("3D/3dmodel.model", b"<this is not xml")
+        _st, _body = request(port, "POST", "/api/upload?name=corrupt.3mf",
+                             _buf.getvalue())
+        _up = json.loads(_body)
+        _ok = _st == 200 and _up.get("ok")
+        if _ok:
+            _stq, _body = request(port, "GET",
+                                  "/api/model-mesh?token=" + _up["token"])
+            _ok = _stq == 400 and len(json.loads(_body).get("error", "")) > 0
+            _detail = "%s %s" % (_stq, _body[:80])
+        else:
+            _detail = "upload failed: %s %r" % (_st, _up)
+        check("T92 model-mesh corrupt 3MF → honest 400, server alive", _ok,
+              _detail)
+        if _ok:
+            _stq, _body = request(port, "GET", "/api/status")
+            check("T92b server answers after corrupt-mesh 400",
+                  _stq == 200 and json.loads(_body).get("ok") is True,
+                  "%s" % _stq)
 
         # ---------- v0.16 persistent rolling log + open-folder channel ----------
         # after the whole suite's traffic the tiny-capped log must have rolled.

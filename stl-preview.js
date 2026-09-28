@@ -415,6 +415,145 @@ function stlDraw() {
   }
 }
 
+// validate + adapt a /api/model-mesh payload to the stlParse contract
+// ({tris, pos, nrm, bbox, truncated}). Hostile-shape defense mirrors the
+// parser's dropped-tri discipline: any length mismatch or non-finite value
+// throws (the caller degrades with the message) so nothing non-finite ever
+// reaches bbox or the GPU.
+function meshFromApi(j) {
+  if (!j || typeof j !== "object") throw new Error("网格数据格式错误");
+  var n = j.tris;
+  if (typeof n !== "number" || !(n > 0) || n % 1 !== 0)
+    throw new Error("网格无三角形");
+  if (!Array.isArray(j.pos) || !Array.isArray(j.nrm)
+      || j.pos.length !== n * 9 || j.nrm.length !== n * 9)
+    throw new Error("网格缓冲长度不符");
+  var i;
+  for (i = 0; i < j.pos.length; i++)
+    if (!isFinite(j.pos[i])) throw new Error("网格含非有限坐标");
+  for (i = 0; i < j.nrm.length; i++)
+    if (!isFinite(j.nrm[i])) throw new Error("网格含非有限法线");
+  var bb = { min: [Infinity, Infinity, Infinity],
+             max: [-Infinity, -Infinity, -Infinity] };
+  for (i = 0; i < j.pos.length; i += 3) {
+    for (var d = 0; d < 3; d++) {
+      if (j.pos[i + d] < bb.min[d]) bb.min[d] = j.pos[i + d];
+      if (j.pos[i + d] > bb.max[d]) bb.max[d] = j.pos[i + d];
+    }
+  }
+  return { tris: n, truncated: false, dropped: j.dropped || 0,
+           pos: j.pos, nrm: j.nrm, bbox: bb };
+}
+
+// shared WebGL upload tail for both mesh sources (v0.17): the STL parser
+// path and the 3MF /api/model-mesh path converge here. m follows the
+// stlParse contract; canvas/note are the live DOM nodes.
+function stlFeedMesh(m, canvas, note) {
+  var gl = stlView.gl;
+  if (!gl) {
+    gl = canvas.getContext("webgl", { antialias: true,
+      // v0.17 snapshot export: the draw loop is ON-DEMAND (no rAF), so the
+      // last frame must still be in the drawing buffer at snapshot-click
+      // time. Without this flag the buffer is cleared after compositing and
+      // toDataURL captures a blank frame (probe-verified: with the flag the
+      // drawn triangle survives at +600ms; the no-flag control reads back
+      // triangle-free). Contexts are per-page — changing this needs a full
+      // page reload, which is why it is only set here, at creation.
+      preserveDrawingBuffer: true });
+    if (!gl) throw new Error("WebGL 不可用");
+    stlView.gl = gl;
+    var vsSrc = "attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aColor;" +
+      "uniform mat4 uMvp; varying float vL; varying vec3 vColor;" +
+      "void main(){ gl_Position = uMvp * vec4(aPos, 1.0);" +
+      " vec3 n = normalize(mat3(uMvp[0].xyz, uMvp[1].xyz, uMvp[2].xyz) * aNrm);" +
+      " vL = 0.35 + 0.65 * max(dot(n, normalize(vec3(0.4, 0.6, 0.8))), 0.0);" +
+      " vColor = aColor; }";
+    var fsSrc = "precision mediump float; varying float vL; varying vec3 vColor;" +
+      "uniform float uFlat; uniform vec3 uColor; uniform float uHeat;" +
+      "void main(){ vec3 c = vec3(0.22, 0.74, 0.97) * vL;" +
+      " c = mix(c, uColor, uFlat); c = mix(c, vColor, uHeat);" +
+      " gl_FragColor = vec4(c, 1.0); }";
+    function sh(type, src) {
+      var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(s));
+      }
+      return s;
+    }
+    var prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(prog));
+    }
+    stlView.prog = prog;
+    gl.enable(gl.DEPTH_TEST);
+    gl.clearColor(0.086, 0.11, 0.16, 1);
+    // Deliberately NOT --surface-2: v0.11 switched the UI to a light
+    // theme but kept this as the fixed dark model-viewport (like CAD/
+    // slicer apps); rgb(22,28,41) is pinned by the browser e2e lit-check
+    // (browser_render_check.js, 3-channel Manhattan sum <= 40 of this
+    // value) — do not move it without updating that constant.
+    // interactions: drag rotate + wheel zoom (explicit non-passive so
+    // preventDefault is legal on the element)
+    var drag = null;
+    canvas.addEventListener("mousedown", function (e) {
+      drag = [e.clientX, e.clientY]; e.preventDefault();
+    });
+    window.addEventListener("mousemove", function (e) {
+      if (!drag) return;
+      stlView.rotY += (e.clientX - drag[0]) * 0.01;
+      stlView.rotX += (e.clientY - drag[1]) * 0.01;
+      drag = [e.clientX, e.clientY];
+      stlDraw();
+    });
+    window.addEventListener("mouseup", function () { drag = null; });
+    canvas.addEventListener("wheel", function (e) {
+      e.preventDefault();
+      stlView.dist = Math.min(50, Math.max(1.2, stlView.dist * (1 + e.deltaY * 0.001)));
+      stlDraw();
+    }, { passive: false });
+  }
+  var prog = stlView.prog;
+  gl.useProgram(prog);
+  function attr(name, data) {
+    var buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    var loc = gl.getAttribLocation(prog, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+    return buf;  // kept on stlView so stlDraw's overlay can restore it
+  }
+  try {
+    stlView.posBuf = attr("aPos", m.pos);
+    stlView.nrmBuf = attr("aNrm", m.nrm);
+  } catch (e) {  // OUT_OF_MEMORY / CONTEXT_LOST on huge meshes
+    stlView.n = 0;
+    throw new Error("mesh too large for preview");
+  }
+  stlView.n = m.tris * 3;
+  var bb = m.bbox;
+  stlView.center = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2,
+                    (bb.min[2] + bb.max[2]) / 2];
+  stlView.radius = Math.max(bb.max[0] - bb.min[0], bb.max[1] - bb.min[1],
+                            bb.max[2] - bb.min[2]) / 2 || 1;
+  stlView.dist = stlView.radius * 3;
+  // HiDPI: backing store × dpr, CSS size unchanged
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.clientWidth || 420, h = Math.round(w * 280 / 420);
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  note.style.display = "none";
+  canvas.style.display = "";
+  stlDraw();
+  if (m.truncated) {
+    note.style.display = "";
+    note.textContent = "预览已抽稀（超过 " + STL_MAX_TRIS + " 三角）";
+  }
+}
+
 function loadStlPreview(j) {
   var canvas = $("stl-view"), note = $("stl-view-note");
   function degrade(msg) {
@@ -424,9 +563,28 @@ function loadStlPreview(j) {
   }
   var ext = (j.name.split(".").pop() || "").toLowerCase();
   if (ext !== "stl") {
-    // also clears a previous session's last frame (canvas hidden = no stale)
-    degrade(ext === "3mf" ? "3MF 预览暂不支持（结构优化请看 「分析结果」与「档位对比」面板）"
-                          : "预览仅支持 STL");
+    if (ext !== "3mf") {
+      // also clears a previous session's last frame (canvas hidden = no stale)
+      degrade("预览仅支持 STL");
+      return;
+    }
+    // v0.17 3MF live preview: the server unzips 3D/3dmodel.model and returns
+    // the triangle soup in the stlParse buffer shape, so the SAME WebGL
+    // pipeline renders it. The preview stays a pure bonus — never a geometry
+    // source of truth — and any failure (endpoint 4xx, over-cap refusal,
+    // malformed payload) degrades to the honest text note below.
+    fetch("/api/model-mesh?token=" + encodeURIComponent(j.token))
+      .then(function (r) {
+        return r.json().then(function (mj) {
+          if (!r.ok || !mj.ok)
+            throw new Error(mj.error || "mesh fetch " + r.status);
+          return mj;
+        });
+      })
+      .then(function (mj) { stlFeedMesh(meshFromApi(mj), canvas, note); })
+      .catch(function (e) {
+        degrade("3MF 预览不可用: " + String(e.message || e));
+      });
     return;
   }
   fetch("/api/model?token=" + encodeURIComponent(j.token))
@@ -441,101 +599,7 @@ function loadStlPreview(j) {
       if (!m.tris) throw new Error(m.dropped > 0
         ? "no valid triangles (" + m.dropped + " malformed dropped)"
         : "no triangles");
-      var gl = stlView.gl;
-      if (!gl) {
-        gl = canvas.getContext("webgl", { antialias: true });
-        if (!gl) throw new Error("WebGL 不可用");
-        stlView.gl = gl;
-        var vsSrc = "attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aColor;" +
-          "uniform mat4 uMvp; varying float vL; varying vec3 vColor;" +
-          "void main(){ gl_Position = uMvp * vec4(aPos, 1.0);" +
-          " vec3 n = normalize(mat3(uMvp[0].xyz, uMvp[1].xyz, uMvp[2].xyz) * aNrm);" +
-          " vL = 0.35 + 0.65 * max(dot(n, normalize(vec3(0.4, 0.6, 0.8))), 0.0);" +
-          " vColor = aColor; }";
-        var fsSrc = "precision mediump float; varying float vL; varying vec3 vColor;" +
-          "uniform float uFlat; uniform vec3 uColor; uniform float uHeat;" +
-          "void main(){ vec3 c = vec3(0.22, 0.74, 0.97) * vL;" +
-          " c = mix(c, uColor, uFlat); c = mix(c, vColor, uHeat);" +
-          " gl_FragColor = vec4(c, 1.0); }";
-        function sh(type, src) {
-          var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-          if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-            throw new Error(gl.getShaderInfoLog(s));
-          }
-          return s;
-        }
-        var prog = gl.createProgram();
-        gl.attachShader(prog, sh(gl.VERTEX_SHADER, vsSrc));
-        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsSrc));
-        gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-          throw new Error(gl.getProgramInfoLog(prog));
-        }
-        stlView.prog = prog;
-        gl.enable(gl.DEPTH_TEST);
-        gl.clearColor(0.086, 0.11, 0.16, 1);
-        // Deliberately NOT --surface-2: v0.11 switched the UI to a light
-        // theme but kept this as the fixed dark model-viewport (like CAD/
-        // slicer apps); rgb(22,28,41) is pinned by the browser e2e lit-check
-        // (browser_render_check.js, 3-channel Manhattan sum <= 40 of this
-        // value) — do not move it without updating that constant.
-        // interactions: drag rotate + wheel zoom (explicit non-passive so
-        // preventDefault is legal on the element)
-        var drag = null;
-        canvas.addEventListener("mousedown", function (e) {
-          drag = [e.clientX, e.clientY]; e.preventDefault();
-        });
-        window.addEventListener("mousemove", function (e) {
-          if (!drag) return;
-          stlView.rotY += (e.clientX - drag[0]) * 0.01;
-          stlView.rotX += (e.clientY - drag[1]) * 0.01;
-          drag = [e.clientX, e.clientY];
-          stlDraw();
-        });
-        window.addEventListener("mouseup", function () { drag = null; });
-        canvas.addEventListener("wheel", function (e) {
-          e.preventDefault();
-          stlView.dist = Math.min(50, Math.max(1.2, stlView.dist * (1 + e.deltaY * 0.001)));
-          stlDraw();
-        }, { passive: false });
-      }
-      var prog = stlView.prog;
-      gl.useProgram(prog);
-      function attr(name, data) {
-        var buf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-        var loc = gl.getAttribLocation(prog, name);
-        gl.enableVertexAttribArray(loc);
-        gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-        return buf;  // kept on stlView so stlDraw's overlay can restore it
-      }
-      try {
-        stlView.posBuf = attr("aPos", m.pos);
-        stlView.nrmBuf = attr("aNrm", m.nrm);
-      } catch (e) {  // OUT_OF_MEMORY / CONTEXT_LOST on huge meshes
-        stlView.n = 0;
-        throw new Error("mesh too large for preview");
-      }
-      stlView.n = m.tris * 3;
-      var bb = m.bbox;
-      stlView.center = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2,
-                        (bb.min[2] + bb.max[2]) / 2];
-      stlView.radius = Math.max(bb.max[0] - bb.min[0], bb.max[1] - bb.min[1],
-                                bb.max[2] - bb.min[2]) / 2 || 1;
-      stlView.dist = stlView.radius * 3;
-      // HiDPI: backing store × dpr, CSS size unchanged
-      var dpr = window.devicePixelRatio || 1;
-      var w = canvas.clientWidth || 420, h = Math.round(w * 280 / 420);
-      canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      note.style.display = "none";
-      canvas.style.display = "";
-      stlDraw();
-      if (m.truncated) {
-        note.style.display = "";
-        note.textContent = "预览已抽稀（超过 " + STL_MAX_TRIS + " 三角）";
-      }
+      stlFeedMesh(m, canvas, note);
     })
     .catch(function (e) { degrade("预览不可用: " + String(e.message || e)); });
 }

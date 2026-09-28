@@ -36,6 +36,7 @@ import glob
 import io
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -48,6 +49,7 @@ import zipfile
 import threading
 import time
 import webbrowser
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, quote, urlparse
@@ -103,7 +105,12 @@ def _validated_int(raw, lo, hi):
 # snapshot export (client-side Blob, zero new endpoints), run-history
 # per-row param diff + SF/score inline-SVG sparklines, persistent rolling
 # log (%LOCALAPPDATA%\StratumWebUI\logs, 5MB×3) + 「打开日志目录」button.
-UI_VERSION = "0.16.0"
+# 0.17.0 — snapshot embeds the model preview as of the export click
+# (preserveDrawingBuffer capture, honest degrade line, zh-mode snapshot
+# text fixed), 3MF live preview via GET /api/model-mesh (stdlib zip+XML
+# triangle soup in the stlParse buffer shape; capped, token-gated,
+# refuse-not-truncate) feeding the existing WebGL pipeline.
+UI_VERSION = "0.17.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -390,6 +397,101 @@ def _evict_oldest_session_locked():
             except OSError:
                 pass  # engine still holds it; shutdown rmtree is the backstop
     return old
+
+
+# ---- v0.17 3MF live preview: mesh extraction for /api/model-mesh ----------
+# Preview cap REFUSES instead of truncating (the STL preview truncates): the
+# payload is a JSON triangle soup, a 5e5-tri response is already ~100 MB, and
+# silently shipping a decimated mesh would invite treating the preview as
+# geometry truth — it is a pure bonus that makes no geometry claims (§0).
+MODEL_MESH_MAX_TRIS = 500000
+# bounds the ElementTree parse (a hostile XML could carry millions of vertex
+# elements with no triangles); the file is the user's own localhost upload
+# and expat (py3.11) already refuses entity amplification, so this is a
+# work-bound guard, not a security boundary.
+MODEL_MESH_MAX_XML_BYTES = 64 * 1024 * 1024
+
+
+def extract_3mf_mesh(path):
+    """Triangles from a 3MF's 3D/3dmodel.model as flat
+    [ax,ay,az, bx,by,bz, cx,cy,cz, ...] pos/nrm lists — the same buffer
+    shape the browser's stlParse produces for STL, so one WebGL pipeline
+    renders both. Returns {"tris", "pos", "nrm", "dropped"}; raises
+    ValueError with an honest user-facing message on any broken input
+    (do_GET has no ValueError wrapper — the endpoint catches and 400s).
+
+    Defensive by design: exporters vary the XML namespace, meshes may be
+    split over multiple <object>s (unioned here; build-item transforms are
+    deliberately ignored — no geometry claims), and each <mesh> owns its
+    vertex table because triangle indices are mesh-relative."""
+    with zipfile.ZipFile(path) as zf:
+        model_names = [n for n in zf.namelist()
+                       if n.lower().endswith(".model")]
+        if not model_names:
+            raise ValueError("3MF 内无 3D 模型数据（缺少 .model 部件），无法预览")
+        model_names.sort(key=lambda n: (n.lower() != "3d/3dmodel.model", n))
+        xml_bytes = zf.read(model_names[0])
+    if len(xml_bytes) > MODEL_MESH_MAX_XML_BYTES:
+        raise ValueError("3MF 模型 XML 超过 %d MB，预览不可用"
+                         % (MODEL_MESH_MAX_XML_BYTES // (1024 * 1024)))
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as exc:
+        raise ValueError("3MF 模型 XML 解析失败: %s" % exc)
+
+    def local(tag):
+        # namespace-agnostic: exporters emit the 2015/02 core ns, variants,
+        # or none at all — match on the local name only
+        return tag.rpartition("}")[2] if isinstance(tag, str) else ""
+
+    verts = []
+    pos = []
+    nrm = []
+    dropped = 0
+    for el in root.iter():
+        t = local(el.tag)
+        if t == "mesh" or t == "vertices":
+            # a shared table would silently weld mesh2's low indices onto
+            # mesh1's tail — indices are relative to the enclosing mesh
+            verts = []
+        elif t == "vertex":
+            try:
+                verts.append((float(el.get("x")), float(el.get("y")),
+                              float(el.get("z"))))
+            except (TypeError, ValueError):
+                verts.append(None)  # hole: any triangle referencing it drops
+        elif t == "triangle":
+            if len(pos) // 9 >= MODEL_MESH_MAX_TRIS:
+                raise ValueError("3MF 网格超过预览上限（%d 三角），未生成预览"
+                                 % MODEL_MESH_MAX_TRIS)
+            try:
+                a = verts[int(el.get("v1"))]
+                b = verts[int(el.get("v2"))]
+                c = verts[int(el.get("v3"))]
+            except (IndexError, TypeError, ValueError):
+                dropped += 1
+                continue
+            if a is None or b is None or c is None or not (
+                    math.isfinite(a[0]) and math.isfinite(a[1]) and math.isfinite(a[2])
+                    and math.isfinite(b[0]) and math.isfinite(b[1]) and math.isfinite(b[2])
+                    and math.isfinite(c[0]) and math.isfinite(c[1]) and math.isfinite(c[2])):
+                # mirror the browser stlParse discipline: skip the tri, keep
+                # counting, so bbox/GPU never see NaN (float() accepts "nan")
+                dropped += 1
+                continue
+            ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+            vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+            nx = uy * vz - uz * vy
+            ny = uz * vx - ux * vz
+            nz = ux * vy - uy * vx
+            ln = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if ln > 0:
+                nx, ny, nz = nx / ln, ny / ln, nz / ln
+            else:
+                nx, ny, nz = 0.0, 0.0, 1.0  # degenerate tri: any unit normal
+            pos.extend((a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]))
+            nrm.extend((round(nx, 6), round(ny, 6), round(nz, 6)) * 3)
+    return {"tris": len(pos) // 9, "pos": pos, "nrm": nrm, "dropped": dropped}
 
 # ---------------------------------------------------------------------------
 # Binary resolution + version
@@ -1669,6 +1771,32 @@ class StratumHandler(BaseHTTPRequestHandler):
                 self.wfile.write(data)  # client-gone handled below
             except ConnectionError:
                 return  # iter 23 rule
+        elif path == "/api/model-mesh":
+            # v0.17 3MF live preview: triangles for the WebGL pipeline, token-
+            # gated like /api/model (the bytes are the user's own upload).
+            # do_GET has no ValueError→400 wrapper (see /api/history note),
+            # so every failure path here answers its own honest 400.
+            query = parse_qs(urlparse(self.path).query)
+            tk = (query.get("token") or [""])[0]
+            with _session_lock:
+                sess = _sessions.get(tk)
+                mpath = sess["path"] if sess else None
+                is_3mf = sess["is_3mf"] if sess else None
+            if not mpath:
+                _send_json(self, 400, {"ok": False, "error": "unknown token"})
+            elif not is_3mf:
+                _send_json(self, 400, {"ok": False,
+                                       "error": "网格预览端点仅支持 3MF（STL 预览由 /api/model 提供）"})
+            else:
+                try:
+                    mesh = extract_3mf_mesh(mpath)
+                except (ValueError, OSError, zipfile.BadZipFile,
+                        NotImplementedError) as exc:
+                    # corrupt container / bad XML / over-cap: honest text for
+                    # the UI's degrade note, never a half-empty 200
+                    _send_json(self, 400, {"ok": False, "error": str(exc)})
+                else:
+                    _send_json(self, 200, {"ok": True, **mesh})
         elif path == "/api/history":
             # own token gate: do_GET has no ValueError→400 wrapper, so an
             # unknown token must be answered here, not via _session()

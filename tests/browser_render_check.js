@@ -752,6 +752,165 @@ async function main() {
            && lb.tip.indexOf("stratum-ui-e2e-logs") >= 0,
            logsBtn);
 
+    // (v0.17 P1) snapshot embeds the live preview as of the export click.
+    // Upload a fresh beam STL so the canvas shows a REAL model, click the
+    // real button, then decode the PNG EMBEDDED IN THE LANDED FILE: it must
+    // show mesh pixels (opaque AND off the dark viewport color). A bare
+    // "contains data:image/png" would stay green with a blank image — that
+    // is exactly the preserveDrawingBuffer:false failure mode, so the pixel
+    // decode is the red-check for the context flag.
+    const p1Dir = fs.mkdtempSync(path.join(os.tmpdir(), "stratum-ui-snapview-"));
+    await send("Browser.setDownloadBehavior",
+               { behavior: "allow", downloadPath: p1Dir });
+    const p1Up = JSON.parse(await evalJs("(async function(){" +
+      "var b=atob('" + stlB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var up=await fetch('/api/upload?name=snapview.stl',{method:'POST'," +
+      "headers:{'X-Stratum-UI':'1'},body:u.buffer}).then(function(r){return r.json()});" +
+      "if(!up.ok)return JSON.stringify({stage:'upload',err:up.error});" +
+      "state.name='snapview.stl';" +
+      // force a known-hidden state first: stlView.n is already >0 from the
+      // previous flow's preview, so "wait for n>0" would read STALE state —
+      // canvas becoming visible again is the fresh-load success marker
+      "var cv0=document.getElementById('stl-view');" +
+      "cv0.style.display='none';" +
+      "loadStlPreview({token:up.token,name:'snapview.stl'});" +
+      "for(var t=0;t<60&&cv0.style.display==='none';t++){" +
+      "await new Promise(function(r){setTimeout(r,50)})}" +
+      "return JSON.stringify({stage:'ok',n:stlView.n})})()"));
+    expect("v0.17 e2e: STL preview live before snapshot click",
+           p1Up.stage === "ok" && p1Up.n > 0, JSON.stringify(p1Up));
+    await evalJs("document.getElementById('btn-snapshot').click()");
+    let p1File = null;
+    for (let i = 0; i < 60; i++) {
+      const landed = fs.readdirSync(p1Dir).filter(f => f.endsWith(".html"));
+      if (landed.length) {
+        p1File = path.join(p1Dir, landed[0]);
+        try { if (fs.statSync(p1File).size > 10000) break; } catch (e) {}
+      }
+      await sleep(250);
+    }
+    let p1DataUrl = null, p1Caption = false, p1Why = "no file landed";
+    if (p1File) {
+      const s = fs.readFileSync(p1File, "utf8");
+      const m = s.match(/<img src="(data:image\/png;base64,[^"]+)"/);
+      p1DataUrl = m ? m[1] : null;
+      p1Caption = s.indexOf("snapview · 导出时刻视角") >= 0;
+      p1Why = path.basename(p1File) + " (img:" + !!p1DataUrl + ",cap:" + p1Caption + ")";
+    }
+    expect("v0.17 e2e: snapshot file embeds preview img + caption",
+           !!p1DataUrl && p1Caption, p1Why);
+    let p1Lit = -1;
+    if (p1DataUrl) {
+      // data URLs are [A-Za-z0-9+/=;,] — safe to inline single-quoted
+      p1Lit = JSON.parse(await evalJs(
+        "(function(){return new Promise(function(res){" +
+        "var im=new Image();im.onload=function(){" +
+        "var c=document.createElement('canvas');c.width=im.width;c.height=im.height;" +
+        "var g=c.getContext('2d');g.drawImage(im,0,0);" +
+        "var d=g.getImageData(0,0,c.width,c.height).data;var lit=0;" +
+        "for(var i=0;i<d.length;i+=4){" +
+        "if(d[i+3]>128&&(Math.abs(d[i]-22)+Math.abs(d[i+1]-28)+Math.abs(d[i+2]-41))>40)lit++}" +
+        "res(JSON.stringify({lit:lit,total:im.width*im.height}))};" +
+        "im.onerror=function(){res(JSON.stringify({lit:-2}))};" +
+        "im.src='" + p1DataUrl + "';})})()"));
+    }
+    expect("v0.17 e2e: embedded preview PNG shows real mesh pixels",
+           p1Lit && p1Lit.lit > p1Lit.total * 0.02,
+           JSON.stringify(p1Lit));
+
+    // (v0.17 P1 degrade) real preview failure: garbage STL parses to zero
+    // triangles → honest degrade note, canvas hidden; the snapshot must
+    // still land with only the text line, no <img>, no fabricated image.
+    const garbB64 = fs.readFileSync(
+      path.join(ROOT, "test_data", "garbage.stl")).toString("base64");
+    const dg = JSON.parse(await evalJs("(async function(){" +
+      "var b=atob('" + garbB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var up=await fetch('/api/upload?name=garbage2.stl',{method:'POST'," +
+      "headers:{'X-Stratum-UI':'1'},body:u.buffer}).then(function(r){return r.json()});" +
+      "if(!up.ok)return JSON.stringify({stage:'upload',err:up.error});" +
+      "state.name='garbage2.stl';" +
+      "loadStlPreview({token:up.token,name:'garbage2.stl'});" +
+      "for(var t=0;t<60;t++){await new Promise(function(r){setTimeout(r,50)});" +
+      "if(document.getElementById('stl-view').style.display==='none'" +
+      "&&document.getElementById('stl-view-note').textContent.length>0)break}" +
+      "return JSON.stringify({stage:'ok'," +
+      "hidden:document.getElementById('stl-view').style.display==='none'," +
+      "note:document.getElementById('stl-view-note').textContent})})()"));
+    expect("v0.17 e2e: garbage STL degrades preview honestly",
+           dg.stage === "ok" && dg.hidden && dg.note.indexOf("预览不可用") === 0,
+           JSON.stringify(dg));
+    const dgDir = fs.mkdtempSync(path.join(os.tmpdir(), "stratum-ui-snapdg-"));
+    await send("Browser.setDownloadBehavior",
+               { behavior: "allow", downloadPath: dgDir });
+    await evalJs("document.getElementById('btn-snapshot').click()");
+    let dgOk = false, dgWhy = "no file landed";
+    for (let i = 0; i < 60 && !dgOk; i++) {
+      const landed = fs.readdirSync(dgDir).filter(f => f.endsWith(".html"));
+      if (landed.length) {
+        const s = fs.readFileSync(path.join(dgDir, landed[0]), "utf8");
+        dgOk = s.indexOf("<img") < 0
+          && s.indexOf("模型预览未捕获（导出时无可用预览）") >= 0
+          && s.indexOf("分析结果") >= 0;
+        dgWhy = landed[0] + " (len " + s.length + ")";
+      }
+      await sleep(250);
+    }
+    expect("v0.17 e2e: degraded snapshot lands with text line only, no img",
+           dgOk, dgWhy);
+
+    // (v0.17 P2) 3MF live preview over /api/model-mesh: real triangles in
+    // the SAME WebGL pipeline (stlView.n>0, canvas visible, no degrade
+    // copy), mesh pixels on the GL buffer, and the orientation overlay
+    // wires on the same buffers without error (pure verification — the
+    // overlay never depended on the mesh source).
+    const t2 = JSON.parse(await evalJs("(async function(){" +
+      "var b=atob('" + mfB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var up=await fetch('/api/upload?name=preview3mf.3mf',{method:'POST'," +
+      "headers:{'X-Stratum-UI':'1'},body:u.buffer}).then(function(r){return r.json()});" +
+      "if(!up.ok)return JSON.stringify({stage:'upload',err:up.error});" +
+      // same stale-state guard as the P1 block above: the canvas shows the
+      // previous test's mesh (n>0), so visibility is the fresh-load marker
+      "var cv=document.getElementById('stl-view');" +
+      "cv.style.display='none';" +
+      "loadStlPreview({token:up.token,name:'preview3mf.3mf'});" +
+      "for(var t=0;t<60&&cv.style.display==='none';t++){" +
+      "await new Promise(function(r){setTimeout(r,50)})}" +
+      "var err='',orient=false;" +
+      "try{stlSetOrient([{rank:1,direction:[0,0,1]},{rank:2,direction:[0,1,0]}]);" +
+      "orient=!!(stlView.orient&&stlView.orient.length===2);" +
+      "stlOrientToDir([0,0,1]);}catch(e){err=String(e)}" +
+      "stlDraw();var g=stlView.gl;var w=g.drawingBufferWidth,h=g.drawingBufferHeight;" +
+      "var p=new Uint8Array(w*h*4);g.readPixels(0,0,w,h,g.RGBA,g.UNSIGNED_BYTE,p);" +
+      "var lit=0;for(var i=0;i<p.length;i+=4){" +
+      "if(Math.abs(p[i]-22)+Math.abs(p[i+1]-28)+Math.abs(p[i+2]-41)>40)lit++}" +
+      "return JSON.stringify({stage:'ok',n:stlView.n," +
+      "visible:cv.style.display!=='none'," +
+      // note HIDDEN is the success marker (stlFeedMesh clears neither the
+      // stale text of a previous degrade nor needs to). The degrade-copy
+      // check must scope to the note node: body.textContent would match the
+      // LANG_WORDS entry the copy itself syncs into the inline script.
+      "noteHidden:document.getElementById('stl-view-note').style.display==='none'," +
+      "noteClean:document.getElementById('stl-view-note').textContent.indexOf('3MF 预览')<0," +
+      "orient:orient,err:err,lit:lit,total:w*h})})()"));
+    expect("v0.17 e2e: 3MF uploads render a live mesh (no degrade copy)",
+           t2.stage === "ok" && t2.n > 0 && t2.visible && t2.noteHidden
+           && t2.noteClean,
+           JSON.stringify(t2).slice(0, 220));
+    expect("v0.17 e2e: 3MF mesh paints real GL pixels",
+           t2.stage === "ok" && t2.lit > t2.total * 0.02,
+           JSON.stringify({ lit: t2.lit, total: t2.total }));
+    expect("v0.17 e2e: orientation overlay wires on 3MF buffers without error",
+           t2.stage === "ok" && t2.orient && t2.err === "",
+           JSON.stringify({ orient: t2.orient, err: t2.err }));
+    // the old "not supported" degrade copy must be GONE from the preview
+    // script (replaced by the live endpoint path) — static pin
+    expect("v0.17: old 3MF degrade copy removed from stl-preview.js",
+           fs.readFileSync(path.join(ROOT, "stl-preview.js"), "utf8")
+             .indexOf("3MF 预览暂不支持") < 0, "");
+
     ws.close(); cleanup();
     console.log(fails ? "%d FAIL".replace("%d", fails) : "browser E2E all green");
     process.exit(fails ? 1 : 0);
