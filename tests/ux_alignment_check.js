@@ -10,6 +10,8 @@
 //       empty groups
 //   E5  run-delta chips: absent on the first run, present (SF chip) after a
 //       param change re-run — engine numbers only, no first-run fake
+//   E10 (v0.18) pristine-empty slimming + detail-wall fold + structured-
+//       warning mirror + honest step strip (skip state for preset-less runs)
 // Usage: node tests/ux_alignment_check.js   (exit 1 on any FAIL)
 "use strict";
 const { spawn, execSync } = require("child_process");
@@ -113,6 +115,26 @@ async function main() {
       if (!cond) fails++;
     };
 
+    // ---- E10a pristine empty state (v0.18, pre-upload) -------------------
+    // boot must apply the no-report gate itself (REFUTE blocker: the gate
+    // used to hang off hooks that never fire at boot)
+    const boot = JSON.parse(await evalJs("(function(){var k=document.querySelector('.ui-kpis');" +
+      "var c=document.getElementById('cand-panel');" +
+      "var t=document.getElementById('detail-fold-toggle');" +
+      "var fs=document.getElementById('flow-steps');" +
+      "function st(n){var s=fs.querySelector('.fs-step[data-fs=\"'+n+'\"]');" +
+      "return s.className.indexOf('active')>=0?'active':" +
+      "(s.className.indexOf('done')>=0?'done':'-')}" +
+      "return JSON.stringify({noReport:document.body.classList.contains('no-report')," +
+      "kpiVis:k.offsetParent!==null,candVis:c.offsetParent!==null," +
+      "togVis:t.offsetParent!==null,s1:st(1),s2:st(2),s3:st(3)})})()"));
+    expect("E10a boot: pristine panel hides KPIs/compare/fold toggle",
+           boot.noReport && !boot.kpiVis && !boot.candVis && !boot.togVis,
+           JSON.stringify(boot));
+    expect("E10a boot: step strip honest — step1 active, 2/3 untouched",
+           boot.s1 === "active" && boot.s2 === "-" && boot.s3 === "-",
+           JSON.stringify(boot));
+
     // ---- E1 mode switch ------------------------------------------------
     const sw = JSON.parse(await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "return JSON.stringify({tag:i.tagName,type:i.type,checked:i.checked," +
@@ -162,9 +184,13 @@ async function main() {
       "return JSON.stringify({open:d.open," +
       "badge:document.getElementById('opt-count').style.display," +
       "btns:btns.join(',')})})()"));
-    expect("E3 options: collapsed by default, badge hidden, primary row = 3 buttons",
+    // v0.17 added 下载 HTML 快照 to the primary row (4 buttons); this pin was
+    // left at 3 and silently red since e7e53c3 — surfaced during v0.18 E10
+    // work. Spirit of the pin: the row's composition is deliberate and the
+    // dirty chip stays a span (E9 re-checks span-ness).
+    expect("E3 options: collapsed by default, badge hidden, primary row = 4 buttons",
            opt !== "missing" && opt.open === false && opt.badge === "none"
-           && opt.btns === "分析,优化对比,下载报告 JSON", JSON.stringify(opt));
+           && opt.btns === "分析,优化对比,下载报告 JSON,下载 HTML 快照", JSON.stringify(opt));
     await evalJs("(function(){var c=document.getElementById('opt-fast');" +
       "c.checked=true;c.dispatchEvent(new Event('change'));return 1})()");
     const badgeOn = await evalJs("(function(){var b=document.getElementById('opt-count');" +
@@ -317,7 +343,7 @@ async function main() {
     expect("E7 flow: panel order = 模型→快速预设→分析结果→档位对比, 档位对比 visible",
            simple.names === "模型,快速预设,分析结果,档位对比" && simple.candVis,
            JSON.stringify(simple));
-    expect("E7 flow: step strip visible with all-done checkmarks",
+    expect("E7 flow: step strip visible, step 1 done (later steps: see E10c)",
            simple.fsVis && simple.fsDone === "✓", JSON.stringify(simple));
     await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "if(!i.checked)i.click();return 1})()");  // back to advanced
@@ -325,6 +351,71 @@ async function main() {
     const fsHidden = await evalJs("document.getElementById('flow-steps').offsetParent === null");
     expect("E7 flow: step strip hidden in advanced mode", fsHidden === true);
 
+    // ---- E10b/c detail-wall fold + honest steps (v0.18) -------------------
+    // Advanced contrast first (E7 left us here): wall visible, toggle hidden
+    const adv10 = JSON.parse(await evalJs("(function(){var w=document.getElementById('phase-d-detail');" +
+      "var t=document.getElementById('detail-fold-toggle');" +
+      "return JSON.stringify({wallVis:w.offsetParent!==null,togVis:t.offsetParent!==null})})()"));
+    expect("E10b advanced: wall visible, fold toggle hidden",
+           adv10.wallVis && !adv10.togVis, JSON.stringify(adv10));
+    await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
+      "if(i.checked)i.click();return 1})()");  // switch to simple
+    await sleep(200);
+    // S3 shape (report via walls-rerun, preset never chosen): step2 = skip
+    const steps = JSON.parse(await evalJs("(function(){var fs=document.getElementById('flow-steps');" +
+      "function st(n){var s=fs.querySelector('.fs-step[data-fs=\"'+n+'\"]');" +
+      "return {cls:s.className,dot:(s.querySelector('.fs-n')||{}).textContent,ti:s.title}}" +
+      "return JSON.stringify({s1:st(1),s2:st(2),s3:st(3)})})()"));
+    expect("E10c steps: S3 honest state — step2 skip(–, neutral title), 1/3 done",
+           steps.s1.cls.indexOf("done") >= 0
+           && steps.s2.cls.indexOf("skip") >= 0 && steps.s2.dot === "–"
+           && steps.s2.ti.indexOf("未选预设") >= 0
+           && steps.s3.cls.indexOf("done") >= 0,
+           JSON.stringify(steps));
+    const foldClosed = JSON.parse(await evalJs("(function(){var w1=document.getElementById('structural-summary');" +
+      "var w2=document.getElementById('phase-d-detail');" +
+      "var m=document.getElementById('pd-warn-promoted');" +
+      "var t=document.getElementById('detail-fold-toggle');" +
+      "var k=document.querySelector('.ui-kpis');" +
+      "return JSON.stringify({wall1Vis:w1.offsetParent!==null," +
+      "wall2Vis:w2.offsetParent!==null,togVis:t.offsetParent!==null," +
+      "kpiVis:k.offsetParent!==null," +
+      "noReport:document.body.classList.contains('no-report')," +
+      "mirrorTxt:m.textContent.slice(0,60)," +
+      "warnLine:(document.querySelector('#phase-d-detail .pd-warn')||{}).textContent})})()"));
+    expect("E10b simple+closed: wall hidden, toggle visible, KPIs back",
+           !foldClosed.wall1Vis && !foldClosed.wall2Vis && foldClosed.togVis
+           && foldClosed.kpiVis && !foldClosed.noReport,
+           JSON.stringify(foldClosed));
+    expect("E10b mirror: buckling warning echoed above the fold (engine text)",
+           foldClosed.mirrorTxt.indexOf("屈曲警示") >= 0,
+           JSON.stringify(foldClosed));
+    expect("E10b wall line keeps the engine text under pd-warn class",
+           (foldClosed.warnLine || "").indexOf("屈曲警示") >= 0,
+           JSON.stringify(foldClosed));
+    // open → wall visible in place; close → hidden again
+    await evalJs("document.getElementById('detail-fold-toggle').click(); 1");
+    await sleep(120);
+    const foldOpen = JSON.parse(await evalJs("(function(){var w1=document.getElementById('structural-summary');" +
+      "var w2=document.getElementById('phase-d-detail');" +
+      "return JSON.stringify({w1:w1.offsetParent!==null,w2:w2.offsetParent!==null," +
+      "arrow:document.getElementById('detail-fold-arrow').textContent})})()"));
+    expect("E10b simple+open: wall visible, arrow flips off the closed glyph",
+           foldOpen.w1 && foldOpen.w2 && foldOpen.arrow !== "▸",
+           JSON.stringify(foldOpen));
+    await evalJs("document.getElementById('detail-fold-toggle').click(); 1");
+    await sleep(120);
+    const foldReclosed = await evalJs(
+      "document.getElementById('phase-d-detail').offsetParent === null");
+    expect("E10b simple+reclosed: wall hidden again", foldReclosed === true);
+    await shot("v018_simple_folded.png");  // simple: folded wall + mirror + skip strip
+
+    // E10b leaves us in simple mode — restore advanced for its labeled shot,
+    // then switch back for the simple one (byte-identical shots = mode bug,
+    // caught by comparing file sizes)
+    await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
+      "if(!i.checked)i.click();return 1})()");  // to advanced
+    await sleep(200);
     await shot("v013_advanced_sticky.png");  // advanced: sticky bar + groups + delta
     await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "if(i.checked){i.click()}return 1})()");

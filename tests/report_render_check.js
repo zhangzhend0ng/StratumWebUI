@@ -1054,4 +1054,53 @@ expect("v0.16: isolated point between nulls renders as a dot, not dropped",
        sp2.indexOf("<circle") >= 0 && sp2.indexOf('fill="red"') >= 0,
        sp2.slice(0, 120));
 
+// 25. (v0.18) structured-warning mirror (#pd-warn-promoted): simple mode
+// folds the engine detail wall, so the engine's own structured channels
+// (phase_d.buckling_warning / fracture_risk_detected) must echo above it.
+// Same-render echo of the exact wall text — no UI rephrasing.
+const d25v18 = JSON.parse(JSON.stringify(real));
+d25v18.phase_d.run = true;
+d25v18.phase_d.buckling_warning =
+  "细长件屈曲风险: λ=86 > λ_trans=17, 屈曲安全系数=0 (Euler P_cr=88N)";
+d25v18.phase_d.fracture_risk_detected = true;
+d25v18.phase_d.fracture_assessment = "检出 K_Iz 超限";
+rerender(d25v18);
+expect("v0.18: buckling warning mirrored above the fold (engine text verbatim)",
+       boxText("pd-warn-promoted").indexOf("⚠ 屈曲警示: 细长件屈曲风险") >= 0,
+       boxText("pd-warn-promoted"));
+expect("v0.18: fracture detected+assessment mirrored",
+       boxText("pd-warn-promoted").indexOf("⚠ 断裂判定: 检出 K_Iz 超限") >= 0,
+       boxText("pd-warn-promoted"));
+expect("v0.18: wall lines carry pd-warn class on both engine channels",
+       (function () {
+         const kids = elements["phase-d-detail"].children || [];
+         const warned = kids.filter(function (c) {
+           return (c.className || "").indexOf("pd-warn") >= 0; });
+         return warned.length === 2;
+       })(),
+       JSON.stringify((elements["phase-d-detail"].children || [])
+         .map(function (c) { return c.className; })));
+expect("v0.18: fatigue assessment never mirrored (no structured discriminator)",
+       boxText("pd-warn-promoted").indexOf("疲劳判定") < 0,
+       boxText("pd-warn-promoted"));
+// REFUTE P2 shape: risk flag true but assessment null must not render "null"
+const d25v18b = JSON.parse(JSON.stringify(real));
+d25b.phase_d.run = true;
+d25b.phase_d.fracture_risk_detected = true;
+d25b.phase_d.fracture_assessment = null;
+rerender(d25v18b);
+expect("v0.18: fracture detected + null assessment → no mirror line, no 'null'",
+       boxText("pd-warn-promoted").indexOf("null") < 0
+       && boxText("pd-warn-promoted").indexOf("断裂判定") < 0,
+       boxText("pd-warn-promoted"));
+// REFUTE major#4: a warning-free report after a warned one drops the alarm
+const d25v18c = JSON.parse(JSON.stringify(real));
+d25v18c.phase_d.run = true;
+rerender(d25v18c);
+expect("v0.18: warning-free report clears a previous mirror (no stale alarm)",
+       boxText("pd-warn-promoted").indexOf("屈曲警示") < 0
+       && boxText("pd-warn-promoted").indexOf("断裂判定") < 0,
+       boxText("pd-warn-promoted"));
+rerender(real);
+
 process.exit(fails ? 1 : 0);

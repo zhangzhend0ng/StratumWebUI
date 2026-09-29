@@ -519,11 +519,40 @@ function renderReport(d, consoleText, applyable) {
     ? pd.weibull_grade : "—";
   var pdd = $("phase-d-detail");
   pdd.innerHTML = "";
+  // v0.18 structured-warning mirror: cleared every render (a warning-free
+  // report after a warned one must not keep the old alarm — false positive).
+  // Simple mode folds the wall, and these two engine channels
+  // (phase_d.buckling_warning / fracture_risk_detected) have no other
+  // above-the-fold outlet, so the same value echoes above it. Same-render
+  // echo of the exact wall text — never a UI-side rephrasing (verdict-first
+  // discipline); CSS shows the mirror in simple mode only (snapshot-safe:
+  // buildSnapshotDoc copies no body class and the mirror defaults hidden).
+  var pdw = $("pd-warn-promoted");
+  if (pdw) pdw.innerHTML = "";
   if (pd.run) {
-    [["疲劳判定", pd.fatigue_assessment], ["断裂判定", pd.fracture_assessment],
-     ["屈曲警示", pd.buckling_warning]].forEach(function (pair) {
-      if (pair[1]) pdd.appendChild(el("div", "hint", pair[0] + ": " + pair[1]));
+    // [label, value, warnClass]: warnClass marks the engine's own structured
+    // warning channels — buckling_warning (truthy string = warning) and
+    // fracture_risk_detected === true. fatigue has no structured
+    // discriminator and is never marked (always-on = noise).
+    var bucklingLine = null, fractureLine = null;
+    [["疲劳判定", pd.fatigue_assessment, ""],
+     ["断裂判定", pd.fracture_assessment,
+      pd.fracture_risk_detected === true ? "pd-warn" : ""],
+     ["屈曲警示", pd.buckling_warning, "pd-warn"]].forEach(function (pair) {
+      if (!pair[1]) return;
+      pdd.appendChild(el("div", ("hint " + pair[2]).trim(),
+        pair[0] + ": " + pair[1]));
+      if (pair[0] === "屈曲警示") bucklingLine = pair[0] + ": " + pair[1];
+      if (pair[0] === "断裂判定") fractureLine = pair[0] + ": " + pair[1];
     });
+    if (pdw) {
+      if (pd.buckling_warning)
+        pdw.appendChild(el("div", "hint", "⚠ " + bucklingLine));
+      // truthy guard on the assessment text too: risk_detected=true with a
+      // null assessment must not render "null" (REFUTE P-shape fix)
+      if (pd.fracture_risk_detected === true && pd.fracture_assessment)
+        pdw.appendChild(el("div", "hint", "⚠ " + fractureLine));
+    }
     // skipped sub-modules with the engine's own reasons (v0.8.1 render gap —
     // previously only visible if the user opened the raw console)
     (pd.skipped_reasons || []).forEach(function (r) {

@@ -473,6 +473,30 @@
   /* inverse of .advanced-only: flow-only chrome (step strip) — hidden
      whenever advanced mode is on */
   body:not(.mode-simple) .simple-only { display: none !important; }
+  /* ============ v0.18 detail-wall fold (simple mode) ============ */
+  /* engine detail blocks (solver/material/process lines + machine limits +
+     heatmap) collapse behind one toggle so the verdict stays the headline.
+     Toggle + wall are advanced-invisible; #phase-b-assessment (engine's own
+     verdict line) deliberately stays outside the fold. */
+  body.mode-simple:not(.detail-open) .detail-wall { display: none !important; }
+  body:not(.mode-simple) #detail-fold-toggle { display: none; }
+  body.no-report #detail-fold-toggle { display: none; }
+  /* structured engine warnings (phase_d.buckling_warning /
+     fracture_risk_detected) mirror above the fold so folding cannot bury a
+     safety signal with no other structured channel. Default-hidden gate:
+     snapshot export (buildSnapshotDoc) copies no body class, so a
+     `body:not(.mode-simple)` inverse gate would leak the mirror there. */
+  #pd-warn-promoted { display: none; }
+  body.mode-simple #pd-warn-promoted { display: block; }
+  #pd-warn-promoted .hint { color: var(--amber); }
+  .pd-warn { color: var(--amber); }
+  /* pristine empty state (pre-first-render): hide the all-"—" KPI rows and
+     the empty profile-compare panel in simple mode. Gated on the empty-guide
+     being visible (panel pristine), NOT on hasReport — resetTuningState
+     leaves the previous model's results on screen (pre-existing semantics),
+     and hiding KPIs under stale cards would be a half-clear. */
+  body.mode-simple.no-report .ui-kpis,
+  body.mode-simple.no-report #cand-panel { display: none; }
   /* persistent step strip (simple mode): "where am I" in the 3-step flow.
      .done steps flip to a check mark via JS textContent; states are driven
      by updateFlowSteps() at the upload / render / mode-switch hooks. */
@@ -499,6 +523,14 @@
     color: var(--green);
   }
   #flow-steps .fs-step.done { color: var(--text); }
+  /* v0.18 skip state: a report exists but no preset was ever chosen (upload
+     auto-analyze / slider path). Honest third state — the step was not done
+     by the user; the run used current parameters (neutral wording, applies
+     to engine defaults AND hand-tuned params alike). */
+  #flow-steps .fs-step.skip .fs-n {
+    border-color: var(--line-strong); background: transparent;
+    color: var(--muted);
+  }
   #flow-steps .fs-sep { color: var(--line-strong); }
   /* sticky verdict bar: SF/score/delta stay visible while scrolling either
      column (the right .grid child spans the whole results stack, so a
@@ -919,31 +951,47 @@
         <div id="fast-mode-tag" class="hint" style="display:none">⚡ 预览级结果（--fast：FEM 网格封顶 12³）——精度披露见报告 fast_mode，勿与全分辨率结果混用</div>
         <!-- v0.10 (1.2) verdict-first summary cards (verdict / risks / advice) -->
         <div id="summary-cards"></div>
+        <!-- v0.18 structured-warning mirror (simple mode only): phase_d
+             buckling/fracture warnings carry no other above-the-fold channel
+             (top-level warnings[] is a different, often-empty stream; the
+             risk card aggregates phase_a geometry only). Same-value echo of
+             the wall lines — sticky-verdict mirror precedent (v0.13).
+             Cleared at the top of every renderReport (report.js). -->
+        <div id="pd-warn-promoted"></div>
         <div class="ui-kpis">
           <div class="ui-kpi"><span class="k" title="总体评分：引擎对各维度（强度/时间/材料/可靠性/质量）的综合打分">总体评分</span><span class="v" id="res-overall">—</span></div>
           <div class="ui-kpi"><span class="k" title="安全系数（SF）= 材料强度 ÷ 实际应力。>1 才安全，越大越保守；带 (lo–hi) 区间为材料分散带">安全系数</span><span class="v" id="res-sf">—</span></div>
           <div class="ui-kpi"><span class="k" title="引擎对当前载荷下强度是否够用的判定（强度充足 / 载荷主导 / 无法评估）——引擎结论，UI 不另行打分">载荷判定</span><span class="v" id="res-load">—</span></div>
           <div class="ui-kpi"><span class="k" title="von Mises 等效应力峰值：把复杂应力状态折算成可与材料强度对比的单一应力值">最大应力</span><span class="v" id="res-stress">—</span></div>
         </div>
-        <div class="kv" id="structural-summary" style="margin-bottom:8px">
+        <!-- v0.18 detail-wall fold: one toggle for the whole contiguous
+             engine-detail range (no node moves — the wall containers keep
+             their DOM positions and ids; simple mode just hides them until
+             asked). Label carries no counts/semantics of its own. -->
+        <button id="detail-fold-toggle" class="warnings-toggle" type="button"
+                title="求解器、材料与工艺的全部引擎明细行（简单模式默认收起）">
+          <span id="detail-fold-arrow">▸</span> 引擎完整明细
+          <span class="hint">点击展开 / 收起</span>
+        </button>
+        <div class="kv detail-wall" id="structural-summary" style="margin-bottom:8px">
           <span class="k" title="屈曲安全系数：细长受压件失稳（突然弯折）前的安全余量，与强度失效是两种模式">屈曲 SF</span><span class="v" id="res-buckling">—</span>
           <span class="k" title="疲劳安全系数：循环载荷下的安全余量；∞ 表示引擎判定无限寿命（≥10¹⁰ 次）">疲劳 SF</span><span class="v" id="res-fatigue">—</span>
           <span class="k" title="断裂力学风险：裂纹在层间/应力集中处扩展的检出结论（引擎判定）">断裂风险</span><span class="v" id="res-fracture">—</span>
           <span class="k" title="Weibull 统计强度评级：把材料内部缺陷分布计入的可靠性模型，A+ 为最优（悬停详情行有解释）">Weibull 等级</span><span class="v" id="res-weibull">—</span>
         </div>
-        <div class="kv" id="printability-line" style="display:none; margin-bottom:8px"></div>
+        <div class="kv detail-wall" id="printability-line" style="display:none; margin-bottom:8px"></div>
         <div id="phase-b-assessment" class="rec-line" style="display:none" data-i18n-skip="1"></div>
-        <div id="phase-b-detail"></div>
+        <div class="detail-wall" id="phase-b-detail"></div>
         <details id="phase-b-solver" class="advanced-only" style="display:none; margin-top:6px">
           <summary class="hint" style="cursor:pointer">求解器与网格详情 <span class="tag">CG 收敛 / 网格 / 离散误差 / 预条件子</span></summary>
           <div id="phase-b-internals" style="margin-top:6px"></div>
         </details>
-        <div id="phase-c-detail"></div>
+        <div class="detail-wall" id="phase-c-detail"></div>
         <details id="phase-c-solver" class="advanced-only" style="display:none; margin-top:6px">
           <summary class="hint" style="cursor:pointer">本构与材料模型细节 <span class="tag">屈服指数 / WLF / 结晶度 / 键合</span></summary>
           <div id="phase-c-internals" style="margin-top:6px"></div>
         </details>
-        <div id="phase-d-detail"></div>
+        <div class="detail-wall" id="phase-d-detail"></div>
         <details id="appearance-box" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">外观评估 <span class="tag">--appearance · 引擎 JSON</span></summary>
           <div id="appearance-detail" style="margin-top:6px"></div>
@@ -965,16 +1013,16 @@
           <button id="btn-stress-modifier" disabled title="--stress-modifier：导出 P95 应力热区体素 STL，可在切片器中作为 modifier mesh 做区域覆写">下载应力热区 STL（modifier）</button>
           <span class="hint" id="artifact-hint">各需一次完整引擎分析</span>
         </div>
-        <div id="orient-detail"></div>
+        <div class="detail-wall" id="orient-detail"></div>
         <details id="mesh-topology-box" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">网格拓扑审计 <span class="tag" id="mesh-topo-tier"></span></summary>
           <div id="mesh-topology-detail" style="margin-top:6px"></div>
         </details>
-        <details id="machine-limits-box" style="display:none; margin-top:8px">
+        <details id="machine-limits-box" class="detail-wall" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">机器限制（--machine / 3MF 识别） <span class="tag" id="machine-limits-src"></span></summary>
           <div id="machine-limits-detail" style="margin-top:6px"></div>
         </details>
-        <details id="heatmap-box" style="display:none; margin-top:8px">
+        <details id="heatmap-box" class="detail-wall" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">风险热图 <span class="tag">--heatmap-json · 引擎 bins³ 聚合</span></summary>
           <div style="margin-top:6px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
             <label class="lock-cb"><input type="checkbox" id="heat-toggle">3D 热图视图</label>
@@ -1516,6 +1564,11 @@ function applyPreset(p) {
   // no batch gate (only scheduleAuto does), so a click mid-batch would run
   // the engine concurrently with /api/batch on the same token.
   if (state.batchRunning) { toast("批量运行进行中，请稍候", "info"); return; }
+  // v0.18: the strip's step-2 ✓ means "the user picked a preset" — the
+  // choosing action, not the analysis result (a failed analyze still had a
+  // real choice made). New model upload resets it (resetTuningState).
+  state.presetApplied = true;
+  updateFlowSteps();
   Object.keys(p.params || {}).forEach(function (name) {
     var input = findRowInput(name);
     if (!input) return;  // param not rendered (defensive; presets are sanitized)
@@ -1845,8 +1898,10 @@ function resetTuningState() {
   // Both param and env widgets snap back to their defaults visually.
   state.dirty = {};
   state.hasReport = false;  // v0.13: flow restarts at step 2 for the new model
+  state.presetApplied = false;  // v0.18: fresh model = no preset chosen yet
   updateDirtyChip();
   updateFlowSteps();
+  updateNoReportState();
   state.lastEnv = {};
   state.baseline = {};
   state.ab = [];
@@ -1930,9 +1985,16 @@ function updateFlowSteps() {
   bar.style.display = "flex";  // CSS .simple-only keeps it hidden in advanced
   var hasModel = !!state.token;
   var hasReport = !!state.hasReport;
+  // v0.18 honesty fix (was `hasReport ? "done"`): a report alone never means
+  // step 2 was done — upload auto-analyze and slider/analyze paths both land
+  // here with no preset chosen. done ⇒ the user actually picked one
+  // (applyPreset); otherwise a visible model yields "skip" (neutral title:
+  // analyzed with current parameters — true for engine defaults AND
+  // hand-tuned params alike, so it never invents history).
+  var presetChosen = !!state.presetApplied;
   var st = {
     1: hasModel ? "done" : "active",
-    2: hasReport ? "done" : (hasModel ? "active" : ""),
+    2: presetChosen ? "done" : (hasModel ? (hasReport ? "skip" : "active") : ""),
     3: hasReport ? "done" : (state.running && hasModel ? "active" : "")
   };
   [1, 2, 3].forEach(function (n) {
@@ -1940,8 +2002,11 @@ function updateFlowSteps() {
     if (!node) return;
     node.classList.toggle("done", st[n] === "done");
     node.classList.toggle("active", st[n] === "active");
+    node.classList.toggle("skip", st[n] === "skip");
+    node.title = st[n] === "skip" ? "未选预设——按当前参数分析" : "";
     var dot = node.querySelector(".fs-n");
-    if (dot) dot.textContent = st[n] === "done" ? "✓" : String(n);
+    if (dot) dot.textContent = st[n] === "done" ? "✓"
+      : (st[n] === "skip" ? "–" : String(n));
   });
   // NOTE: the first-run education bar is NOT auto-retired here even though it
   // visually doubles the step strip — its dismissal is the user's choice
@@ -1949,6 +2014,29 @@ function updateFlowSteps() {
   // transient (first visit until closed; the strip shows WHERE you are, the
   // guide teaches WHAT to do).
 }
+// v0.18 pristine-empty gate: simple mode hides the all-"—" KPI rows and the
+// empty profile-compare panel only while the results panel is untouched
+// (empty-guide visible). Gated on panel pristine-ness, NOT hasReport —
+// resetTuningState keeps the previous model's results on screen (pre-existing
+// session semantics), and hasReport would half-clear that state.
+function updateNoReportState() {
+  var eg = $("empty-guide");
+  var pristine = !eg || eg.style.display !== "none";
+  document.body.classList.toggle("no-report", pristine);
+}
+// v0.18 detail-wall fold toggle (simple mode): flips body.detail-open; the
+// wall containers keep their DOM ids/positions, so report.js writes are
+// unaffected whether folded or not. Session-scoped like the risk/warnings
+// cards' user-owned open flags — a new analysis does not re-collapse.
+(function () {
+  var t = $("detail-fold-toggle");
+  if (!t) return;
+  t.addEventListener("click", function () {
+    var open = document.body.classList.toggle("detail-open");
+    var arrow = $("detail-fold-arrow");
+    if (arrow) arrow.textContent = open ? "▾" : "▸";
+  });
+})();
 // Sticky verdict bar: mirrors the KPI values the engine already rendered
 // (#res-sf / #res-overall — class + text reused, no re-derived thresholds).
 // Delta chips are cloned from the verdict card's .run-delta (built by
@@ -2197,6 +2285,7 @@ function analyze(compare, auto) {
     renderReport(j.report, j.console || "", j.applyable || null);
     showRunDelta(j.report);
     state.hasReport = true;  // v0.13 flow steps: verdict is on screen
+    updateNoReportState();  // v0.18: panel no longer pristine → show KPIs
     updateStickyVerdict(false);
     updateFlowSteps();
     reconcileApplied((j.report || {}).input);
@@ -2976,6 +3065,11 @@ function applyMode(advanced) {
   var saved = null;
   try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
   applyMode(saved !== "1" ? false : true);  // default: simple
+  // v0.18 (REFUTE blocker fix): updateFlowSteps/updateNoReportState used to
+  // run only on upload/analyze/render hooks — at boot the pristine-empty
+  // class was never applied, so the fold toggle floated over an empty panel.
+  updateFlowSteps();
+  updateNoReportState();
 })();
 $("mode-toggle").addEventListener("change", function () {
   applyMode(document.body.classList.contains("mode-simple"));
@@ -3074,6 +3168,11 @@ var LANG_EN = {
   "恢复": "Restore", "方向": "Orient",
 
   "引擎未就绪": "engine not ready",
+  /* v0.18 detail-wall fold + honest step strip */
+  "引擎完整明细": "Full engine details",
+  "求解器、材料与工艺的全部引擎明细行（简单模式默认收起）":
+    "All engine detail lines (solver, material, process) — collapsed by default in simple mode",
+  "未选预设——按当前参数分析": "No preset chosen — analyzed with current parameters",
   "引擎就绪": "engine ready",
   "引擎缺失": "engine missing",
   "服务异常": "service error",

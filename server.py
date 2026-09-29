@@ -110,7 +110,7 @@ def _validated_int(raw, lo, hi):
 # text fixed), 3MF live preview via GET /api/model-mesh (stdlib zip+XML
 # triangle soup in the stlParse buffer shape; capped, token-gated,
 # refuse-not-truncate) feeding the existing WebGL pipeline.
-UI_VERSION = "0.17.0"
+UI_VERSION = "0.18.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and

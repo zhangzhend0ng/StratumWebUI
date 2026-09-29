@@ -427,6 +427,55 @@
   全绿；截图 `v013_simple_flow.png` / `v013_advanced_sticky.png` + product 系列重拍，
   视觉核验通过（含滚动中悬浮条实测截图）
 
+### v0.18.0 — 简单模式"结论优先、明细退后"：明细墙折叠 + 告警不变式 + 步骤条诚实化（2026-09-29）
+
+> 背景：用户诉求"简单模式一定是很简单的"。实测（beam STL，UI 0.17）简单模式结果区是
+> 一面 16 行引擎明细墙（Tsai-Wu/Hill48/热-速闭环中英长文…），页面 3035px≈3.4 屏，
+> 且安全相关信号（屈曲警示 λ=86、SF=0.88<1）埋在第 2 屏。独立 REFUTE 一轮（REJECT：
+> 1 blocker + 3 major 全部采纳修订）后才动工。
+> 契约枚举（BLOCKER 前置）：引擎 0.26 真跑证实 `phase_d.buckling_warning`（引擎亲笔
+> 结构化告警字符串）与 `phase_d.fracture_risk_detected`（结构化布尔）存在——告警不变式
+> 可不碰"UI 不另行打分"红线实现；顶层 `warnings[]` 与 phase_a 几何风险（S 级严重度）
+> 已有折叠区之外的卡承载。
+> 明确不做（对抗裁决砍/撤）：自动滚屏（与 v0.13 sticky-verdict 职能重叠）；对比表数值
+> 取整（71.812937 vs 71.814511 取整后不可区分——两态哨兵反面）；guide/步骤条互斥
+> （代码注释记录在案的"strip=WHERE/guide=WHAT"取舍）；machine-limits/heatmap 补
+> advanced-only（考古 v0.8.0 引入、意图不可考——改收进折叠，两模式可见性由折叠统一）。
+
+- [x] **明细墙折叠**：`#structural-summary`/`#printability-line`/`#phase-b-detail`/
+  `#phase-c-detail`/`#phase-d-detail`/`#orient-detail`/`#machine-limits-box`/
+  `#heatmap-box` 八容器加 `.detail-wall`（DOM 位置与 id 不动，report.js 写入不受影响——
+  延续 v0.13"纯 CSS、无节点移动"）；`#detail-fold-toggle` 单钮翻 `body.detail-open`，
+  高级模式按钮隐藏、墙面全可见（现状零变化）；`#phase-b-assessment`（引擎结论行）
+  保持折叠区外、verdict-first 不动摇；跨分析保留展开态（同 risk-card 用户所有权先例）
+- [x] **结构化告警不变式**（折叠不许埋安全信号）：`#pd-warn-promoted` 镜像容器
+  （summary-cards 之后），report.js 渲染 phase_d 时同值回显屈曲/断裂告警原文——
+  每次渲染先清空（无告警报告不得残留旧警报）；`fracture_risk_detected===true` 且
+  assessment 真值才镜像（防渲染 "null"）；fatigue 永不镜像（无结构化判别子，恒真=噪声）；
+  镜像 CSS 默认隐藏 + `body.mode-simple` 才显示（正向门控——buildSnapshotDoc 不拷
+  body class，反向门控会把镜像漏进导出快照）
+- [x] **步骤条诚实化**（原 `2: hasReport ? "done"` 为假绿）：`state.presetApplied`
+  仅由 applyPreset 守卫通过后置位（选择动作语义——分析失败也算选过）、resetTuningState
+  复位；未选预设的报告 → step2 显示 skip 态（– + 中性 title「未选预设——按当前参数
+  分析」，对引擎默认与手调参数两种来源都为真）；boot 补 updateFlowSteps 调用
+- [x] **空面板瘦身**：`body.no-report` 门挂「面板原始态」（empty-guide 可见），而非
+  hasReport——resetTuningState 保留上一模型结果（既有会话语义），按 hasReport 隐藏
+  KPI 会造成半清场（REFUTE major）；首跑前隐藏全 "—" KPI 行与 15 列空对比表 +
+  折叠钮，高级模式不受影响
+- [x] **E3 既红修复**（v0.17 遗留，非本轮引入）：e7e53c3 给主行动行加了第 4 个按钮
+  （下载 HTML 快照）但 E3 仍钉 3 个——套件自 v0.17 起带红运行；按立法本意（钉死行构成、
+  dirty-chip 保持 span）更新为 4 按钮构成
+- 验证：smoke **118/118**；`report_render_check.js` **136**（原 130 + §25 镜像 6 项：
+  原文回显/双通道 pd-warn 类/fatigue 不镜像/null 守卫/清空义务）；`ux_alignment_check.js`
+  **40 项**全绿（新增 E10a boot 原始态 + E10b 折叠/镜像/高级对照 + E10c S3 skip 态；
+  E7:320 假绿命名更正）；`browser_render_check.js` 全绿；截图
+  `v018_simple_folded.png` / `v018_after_results_folded.png`（折叠+镜像+skip 条带）/
+  `v018_after_results_expanded.png`（展开态：墙回归 + 屈曲警示琥珀高亮）
+- 遗留 backlog：档位对比 15 列原始表收起（本想做"并入折叠"，执行时确认跨面板隐藏
+  语义不成立——表属 cand-panel 不属引擎明细墙，且面板本身已是滚动可达的次级内容；
+  候选方案：面板内 details）；resetTuningState 半清场（上模型后旧结论卡残留，既有
+  行为，本轮未扩大）；引导条重设计（用户决策点，未拍板不动）
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 
