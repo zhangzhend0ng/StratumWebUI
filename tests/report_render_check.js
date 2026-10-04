@@ -1352,4 +1352,121 @@ expect("tune: live shape renders tuned=80 and a signed + drift",
        && boxText("gcode-tune-body").indexOf("-1") < 0,
        boxText("gcode-tune-body").slice(0, 260));
 
+// ---- §29 v0.27 verdictRank / auto-tune decision / advice-card CTA ----
+// The rank mapping is the v0.22 hero edge color, extracted top-level so the
+// loop driver reuses ONE mapping — these pins keep it identical to the
+// documented precedence (emoji < structured phase_d < SF<1, worst-of).
+expect("29 verdictRank: ✅ assessment → 1",
+       ctx.verdictRank({assessment: "✅ 安全 — 结构强度充足"}, {}) === 1);
+expect("29 verdictRank: ⚠ assessment → 2 (no phase_d)",
+       ctx.verdictRank({assessment: "⚠ 注意 — 有风险"}, {}) === 2);
+expect("29 verdictRank: ❌ assessment → 3",
+       ctx.verdictRank({assessment: "❌ 危险"}, {}) === 3);
+expect("29 verdictRank: structured buckling warning lifts a ✅ phrase to 2",
+       ctx.verdictRank({assessment: "✅ 安全"}, {buckling_warning: "λ=86"}) === 2);
+expect("29 verdictRank: fracture detected + assessment → 2",
+       ctx.verdictRank({assessment: "✅ 安全"},
+                       {fracture_risk_detected: true,
+                        fracture_assessment: "层间裂纹风险"}) === 2);
+expect("29 verdictRank: fracture without assessment prose does NOT lift",
+       ctx.verdictRank({assessment: "✅ 安全"},
+                       {fracture_risk_detected: true}) === 1);
+expect("29 verdictRank: SF<1 (scalar) → 3 regardless of ✅",
+       ctx.verdictRank({assessment: "✅", safety_factor: 0.88}, {}) === 3);
+expect("29 verdictRank: SF<1 (v2 object nominal) → 3",
+       ctx.verdictRank({assessment: "✅",
+                        safety_factor: {nominal: 0.9, lo: 0.7, hi: 1.1}}, {}) === 3);
+expect("29 verdictRank: 🟡 phrase alone has no rank-bearing emoji → 0",
+       ctx.verdictRank({assessment: "🟡 可接受 — 建议关注高应力区"}, {}) === 0);
+expect("29 verdictRank: null pb / no signals → 0",
+       ctx.verdictRank(null, null) === 0
+       && ctx.verdictRank({}, {}) === 0);
+expect("29 safetyFactorScalar: object→nominal, scalar passthrough, null",
+       ctx.safetyFactorScalar({safety_factor: {nominal: 2.5}}) === 2.5
+       && ctx.safetyFactorScalar({safety_factor: 1.5}) === 1.5
+       && ctx.safetyFactorScalar({safety_factor: null}) === null
+       && ctx.safetyFactorScalar(null) === null);
+
+// autoTuneStepDecision — pure per-round policy (driver in index.html E2E):
+// every stop shape reachable synthetically here, since the real engine's
+// suggestion surface today yields single-round chains (probe 2026-10-04).
+const _mkApp = (k, v, ok) => ({ui_key: k, recommended_value: v, applicable: ok !== false});
+expect("29 decision: rank1 → stop safe (even with suggestions pending)",
+       ctx.autoTuneStepDecision({rank: 1, round: 0, maxRounds: 3,
+         lastSig: null, applyable: [_mkApp("walls", 3)]}).code === "safe");
+expect("29 decision: round cap → stop cap",
+       ctx.autoTuneStepDecision({rank: 2, round: 3, maxRounds: 3,
+         lastSig: null, applyable: [_mkApp("walls", 3)]}).code === "cap");
+expect("29 decision: no applicable entries → stop exhausted",
+       ctx.autoTuneStepDecision({rank: 2, round: 0, maxRounds: 3,
+         lastSig: null, applyable: [_mkApp("walls", 3, false)]}).code === "exhausted");
+expect("29 decision: empty/absent applyable → stop exhausted (null-safe)",
+       ctx.autoTuneStepDecision({rank: 2, round: 0, maxRounds: 3,
+         lastSig: null, applyable: null}).code === "exhausted");
+const _sig = ctx.autoTuneStepDecision({rank: 2, round: 0, maxRounds: 3,
+  lastSig: null, applyable: [_mkApp("walls", 3), _mkApp("infill", 35)]});
+expect("29 decision: apply carries a sorted key:value signature",
+       _sig.action === "apply" && _sig.sig === "infill:35|walls:3"
+       && _sig.picked.length === 2, JSON.stringify(_sig));
+expect("29 decision: same signature next round → stop unchanged (oscillation)",
+       ctx.autoTuneStepDecision({rank: 2, round: 1, maxRounds: 3,
+         lastSig: "infill:35|walls:3",
+         applyable: [_mkApp("walls", 3), _mkApp("infill", 35)]}).code === "unchanged");
+expect("29 decision: precedence — safe outranks cap at equal round",
+       ctx.autoTuneStepDecision({rank: 1, round: 3, maxRounds: 3,
+         lastSig: null, applyable: [_mkApp("walls", 3)]}).code === "safe");
+
+// advice-card third CTA: rank≥2 + applicable>0 renders the loop entry;
+// rank1 (safe) and no-applicable shapes keep it hidden — the one-shot
+// apply-all CTA remains the honest entry there
+const d29 = JSON.parse(JSON.stringify(real3));
+d29.phase_d = d29.phase_d || {};
+d29.phase_d.buckling_warning = "细长件屈曲风险: λ=173 > λ_trans=17";  // rank2 lift
+rerender(d29, [{parameter: "walls", action: "increase", current_value: 2,
+                recommended_value: 3, priority: 1, applicable: true,
+                reason: "", ui_key: "walls"}]);
+let nsTune1 = null;
+(function walkT(n) {
+  (n.children || []).forEach(function (c) {
+    if (c.id === "btn-auto-tune") nsTune1 = c;
+    walkT(c);
+  });
+})(elements["summary-cards"]);
+expect("29 CTA: rank2 + applicable → auto-tune button rendered (simple-only class)",
+       !!nsTune1 && nsTune1.className.indexOf("simple-only") >= 0
+       && nsTune1.textContent.indexOf("自动调参") >= 0,
+       nsTune1 && nsTune1.textContent);
+expect("29 CTA: rank2 renders the hero warn edge (worst-of intact)",
+       elements["summary-cards"].children[0].className.indexOf("warn") >= 0,
+       elements["summary-cards"].children[0].className);
+// rank1 shape: real3 itself carries the λ=86 buckling warning (rank 2 —
+// v0.18's motivating fixture), so strip the structured warning for a TRUE
+// rank1 (✅ phrase, SF 6.53 > 1, no phase_d warning)
+const d29b = JSON.parse(JSON.stringify(real3));
+d29b.phase_d = d29b.phase_d || {};
+d29b.phase_d.buckling_warning = null;
+d29b.phase_d.fracture_risk_detected = false;
+rerender(d29b, [{parameter: "walls", action: "increase", current_value: 2,
+                 recommended_value: 3, priority: 1, applicable: true,
+                 reason: "", ui_key: "walls"}]);
+let nsTune2 = null;
+(function walkT2b(n) {
+  (n.children || []).forEach(function (c) {
+    if (c.id === "btn-auto-tune") nsTune2 = c;
+    walkT2b(c);
+  });
+})(elements["summary-cards"]);
+expect("29 CTA: rank1 (✅, SF>1, no phase_d warning) → no auto-tune button",
+       !nsTune2, nsTune2 && nsTune2.textContent);
+rerender(d29, []);  // rank2 but nothing applicable
+let nsTune3 = null;
+(function walkT3(n) {
+  (n.children || []).forEach(function (c) {
+    if (c.id === "btn-auto-tune") nsTune3 = c;
+    walkT3(c);
+  });
+})(elements["summary-cards"]);
+expect("29 CTA: rank2 + zero applicable → no auto-tune button",
+       !nsTune3, nsTune3 && nsTune3.textContent);
+
 process.exit(fails ? 1 : 0);

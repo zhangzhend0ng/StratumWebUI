@@ -620,12 +620,21 @@ async function main() {
       const presetState = await evalJs(
         "(function(){var p=document.querySelectorAll('.preset-btn');" +
         "return JSON.stringify({count:p.length," +
-        "labels:Array.prototype.map.call(p,function(b){return b.textContent})," +
+        "names:Array.prototype.map.call(p,function(b){return b.dataset.preset})," +
+        "uses:Array.prototype.map.call(p,function(b){var u=b.querySelector('.pu');" +
+        "return u?u.textContent:''})," +
+        "subs:Array.prototype.map.call(p,function(b){var s=b.querySelector('.pl');" +
+        "return s?s.textContent:''})," +
         "disabled:Array.prototype.map.call(p,function(b){return b.disabled})})})()");
       const ps = JSON.parse(presetState);
-      expect("e2e preset: 4 buttons 安全/均衡/高速/外观 enabled",
+      // v0.27: preset cards lead with the use-case question text (server
+      // `use`), label/desc demoted to the sub-line
+      expect("e2e preset: 4 use-case cards (safe..appearance) enabled",
              ps.count === 4
-             && ps.labels.join(",") === "安全,均衡,高速,外观"
+             && ps.names.join(",") === "safe,balanced,fast,appearance"
+             && ps.uses[0].indexOf("受力") >= 0
+             && ps.uses[1].indexOf("不确定") >= 0
+             && ps.subs[0].indexOf("安全") >= 0
              && ps.disabled.every(function (d) { return d === false; }),
              presetState);
       const vis = await evalJs(

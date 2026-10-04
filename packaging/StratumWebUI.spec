@@ -25,7 +25,10 @@ a = Analysis(
     pathex=[ROOT],
     binaries=[],
     datas=[(os.path.join(ROOT, f), ".")
-           for f in ("index.html", "report.js", "stl-preview.js")],
+           for f in ("index.html", "report.js", "stl-preview.js")]
+           # v0.27 bundled sample model (sample/beam_100x10x4.stl) — server
+           # resolves it under RESOURCE_DIR/sample in frozen builds too
+           + [(os.path.join(ROOT, "sample"), "sample")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

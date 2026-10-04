@@ -814,7 +814,53 @@
   挂账）；填充段 excluded_feature 的引擎侧语义（是否漏接 SPARSE 词表——引擎队
   压力点候选）；mismatch 切片用户引导（延续）
 
+### v0.27.0 — 小白闭环四件套：示例模型 / 用途问句预设+材料一问 / 自动调参 / 拿去打印（2026-10-04）
+
+> 背景：产品规划轮定调「小白剩下的不是再减面板，而是三个断点——流程走不到头、
+> 唯一必做的决策没人替他做、语言层只翻译了一个数」。本轮落 P0 四件套。
+> independent-REFUTE 一轮（VERDICT: REJECT——1 blocker + 8 major + 4 minor 全采纳，
+> 详见 loop-journal 迭代 101）；**fixture 探针前置**（真引擎 12 组实测）：beam 族
+> 默认参数全部 rank1 ✅（refuter 实测推翻初版 E2E 前提）、建议面每模型 ≤1 条、
+> nozzle 0.25 建议反而降 SF——自动调参今日产不出多轮真链，循环停止判定因此抽成
+> 纯函数 `autoTuneStepDecision`（report.js §29 合成全 shape）。
+
+- [x] **示例模型**：`sample/beam_100x10x4.stl` 随包分发（spec datas +
+      verify 断言）；`POST /api/sample` 走与会话创建同构路径（kind=model
+      正常 FIFO）；status `sample_available` 门控双入口——empty-guide 主按钮 +
+      「模型」面板常驻链接（REFUTE#4：首渲染隐藏 empty-guide 后入口不死）；
+      F5 恢复/换模清场全走既有会话语义，零新状态
+- [x] **用途问句 + 材料一问**：PRESETS += `use`（要受力/不确定就选这个/打草稿/
+      摆件），presets_for 透传；预设卡 = use 主行 + label·desc 副行（仍是
+      `<button class="preset-btn">`——setPresetEnabled 与 C4 契约钉死）；
+      STL 族显示材料 select（枚举=--schema 实时面，默认 PLA），答案粘滞并
+      在 applyPreset 里**同轮覆盖**预设的 PLA（collectParams 只发 dirty，写行
+      先于 analyze）；3MF 隐藏（文件自带材料；预设钉 PLA 为既有文档行为）；
+      顺修面板 hint 陈旧「9 项」→10 项
+- [x] **自动调参（≤3 轮）**：建议卡第三按钮（simple-only，渲染门=rank≥2 且
+      nApplicable>0——verdictRank 与 hero 边色同一显示映射）；驱动器编排
+      apply→analyze→再判，停止条件全诚实（已安全/建议耗尽/建议签名不变/轮上限/
+      本轮未完成失败或取消/换模静默）；`state.lastReport` 引用哨兵区分轮成与
+      轮败；运行中按钮=「第 N/3 轮·点击停止」；生命周期三点位清理（换模
+      resetTuningState / unknown-token / stopAutoTune 本身——REFUTE#3 幽灵态）
+- [x] **拿去打印出口卡**（#next-step，风险卡之后，simple-only）：可写 3MF →
+      档位 select +「下载优化后的 3MF」（复用 export3mf 全审计路径，措辞如实
+      「按所选档位优化」——REFUTE#2 假乐观；成功/失败补 toast 修单层可见性）；
+      STL/裸 3MF →「照抄进切片软件的参数」折叠卡（值=引擎 input 回显，cp 同源
+      键映射）+ 复制按钮（clipboard 回退 execCommand）+ 换 3MF 可写回提示
+- 配套：词典 ~60 条（use 整句 + 副行「安全 · 」分隔符词级防误伤「安全系数」）；
+      UI_VERSION 0.27.0
+- 验证：smoke **152/152**（+T107 族/T108 族）；render_check **182**（+§29：
+      verdictRank 10 形态/决策器 8 形态/CTA 三态——real3 自带 λ=86 屈曲警示，
+      rank1 对照需剥离 buckling）；ux_alignment **全绿**（+E13-E16 12 项真引擎
+      E2E：示例全流程/PETG 回传+预设同轮覆盖/nozzle 0.4→0.25 一轮诚实停止/出口卡
+      三变体+高级隐藏）；browser/browser_en/i18n/consistency 全绿；sabotage
+      ×2 刀（砍 /api/sample 路由、循环早停+出口卡早退）对应断言全翻红后还原
+- 遗留 backlog：exportOrca 简单模式 toast（同族单层修复）；presetApplied 死
+      状态；多轮真链 E2E（待引擎建议面扩容）；P1 语言层（人话解读扩面/术语弹卡
+      /错误行动化扩展/档位对比摘要行）与 P2 首启（端口占用自动换位）见规划轮
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
+
 
 - [x] a) WebUI 侧可先行（2026-08-19 完成主体）：STL WebGL 预览（自研 ~240 行，零依赖保红线 1；
       包围盒定中心/拖拽旋转/滚轮缩放）+ **方向候选箭头 overlay**（iter 63：④ 表行点击 ↔ 预览

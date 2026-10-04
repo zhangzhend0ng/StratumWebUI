@@ -195,6 +195,28 @@
   .preset-btn:hover:not(:disabled) { background: #4338ca; box-shadow: 0 3px 10px rgba(79, 70, 229, .32); }
   .preset-btn:active:not(:disabled) { transform: translateY(1px); }
   .preset-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+  /* v0.27 use-case preset card: the SAME .preset-btn button (class AND
+     element kind are load-bearing — setPresetEnabled queries button
+     descendants; ui_consistency C4 pins the height token), grown to a
+     two-line card. Height moves to min-height so the token stays the floor,
+     not a fixed single-line lock. */
+  .preset-card {
+    height: auto; min-height: var(--ctl-h-hero);
+    flex: 1 1 140px; display: flex; flex-direction: column;
+    align-items: flex-start; justify-content: center; gap: 2px;
+    padding: var(--sp-2) var(--sp-4); text-align: left;
+  }
+  .preset-card .pu { font-size: var(--fs-md); font-weight: 650; line-height: 1.35; }
+  .preset-card .pl { font-size: var(--fs-xs); font-weight: 400; opacity: .85; line-height: 1.4; }
+  /* v0.27 auto-tune CTA: secondary look — the one-shot apply-all stays the
+     primary action; the loop is the "keep going for me" option */
+  .sum-card button.sum-cta.tune {
+    background: var(--panel2); color: var(--text);
+    border: 1px solid var(--accent);
+  }
+  .sum-card button.sum-cta.tune:hover:not(:disabled) {
+    background: #eef0fe; border-color: #4338ca;
+  }
   /* v0.9 apply-suggestions CTA: compact accent button heading #rec-items */
   .rec-apply {
     font-size: var(--fs-md); font-weight: 600; color: #fff;
@@ -638,6 +660,26 @@
   .eg-feats { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
   .eg-feat { font-size: var(--fs-sm); color: var(--muted); border: 1px solid var(--line);
     padding: 4px 13px; border-radius: 999px; background: var(--surface-1); }
+  /* v0.27 sample entry (the prominent one lives here; the durable link is
+     in the 模型 panel) — quiet secondary button, not a competing primary */
+  .eg-sample {
+    margin-top: 14px; font-size: var(--fs-md); color: var(--text);
+    background: var(--panel2); border: 1px solid var(--line);
+    border-radius: var(--r-sm); padding: 0 var(--sp-4);
+    height: var(--ctl-h); cursor: pointer;
+    transition: border-color var(--dur-fast), background var(--dur-fast);
+  }
+  .eg-sample:hover { border-color: var(--accent); background: #eef0fe; }
+  /* v0.27 next-step card (拿去打印): sits after the risk card; simple-only */
+  .next-step {
+    border: 1px solid var(--line); border-radius: var(--r-sm);
+    background: var(--panel2); padding: 10px 14px; margin: 10px 0;
+  }
+  .next-step h3 { font-size: var(--fs-lg); font-weight: 650; margin: 0 0 4px 0; }
+  .next-step details summary { cursor: pointer; font-size: var(--fs-md);
+    font-weight: 600; margin-bottom: 4px; }
+  .next-step .ns-line { font-size: var(--fs-sm); line-height: 1.8; }
+  .next-step .actions { margin-top: 8px; }
   /* verdict-first summary cards (1.2); v0.22: two cards — 结论 hero (engine
      verdict + SF band + delta) and 建议 (apply CTA + what-will-change line).
      The third preview card (风险 top-3) folded into the merged #alerts-card:
@@ -833,6 +875,10 @@
           <span class="muted" style="font-size:var(--fs-xs)">支持 .stl / .obj / .ply / .3mf / .amf</span>
           <input type="file" id="model-file" accept=".stl,.obj,.ply,.3mf,.amf" title="点击选择模型文件">
         </div>
+        <!-- v0.27 durable sample re-entry: #empty-guide (the prominent
+             button) hides after the first render, so the 模型 panel keeps a
+             quiet always-there link (status-gated like the guide button) -->
+        <div class="hint" style="margin-top:2px"><a href="#" id="lnk-sample" style="display:none">试试内置示例模型</a></div>
         <div class="actions">
           <button id="btn-analyze" class="primary" disabled>分析</button>
           <!-- v0.22: 优化对比/下载报告 JSON are advanced-mode tools — in
@@ -919,9 +965,22 @@
       </div>
 
       <div class="panel" id="preset-panel">
-        <h2>快速预设 <span class="tag">一键设置全部参数并分析</span></h2>
+        <h2>这个零件拿来做什么？ <span class="tag">按用途一键设置参数并分析</span></h2>
         <div class="actions" id="preset-buttons"></div>
-        <div class="hint">上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。</div>
+        <!-- v0.27 material question: the ONE parameter a novice can always
+             answer (it is printed on the spool label). STL-family inputs
+             only — a 3MF carries its own sliced material, and presets pin
+             PLA as documented behavior. Shown once a session is live
+             (setPresetMaterialVisible); the choice is sticky across preset
+             clicks and overrides the preset's PLA in the SAME run. -->
+        <div class="actions" id="preset-material" style="display:none">
+          <label class="lock-cb" style="align-self:center">打印材料
+            <select id="preset-material-sel" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 4px;font-size:var(--fs-sm)"
+                    title="看耗材卷标签选。预设默认按 PLA 设置，选了别的材料会以你的选择为准（仅影响分析参数，不会替你改切片软件）"></select>
+          </label>
+          <span class="hint" style="align-self:center">看耗材卷标签；不确定就保持 PLA</span>
+        </div>
+        <div class="hint">上传模型后点一个用途即可，10 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。</div>
       </div>
 
       <!-- v0.21: wrapper is advanced-only — it holds ONLY the two advanced
@@ -1012,7 +1071,7 @@
           <div class="eg-title">三步得到强度结论</div>
           <div class="eg-steps">
             <div class="eg-step"><span class="eg-n">1</span>左侧上传模型<div class="hint" style="margin:0">支持 .stl / .3mf / .obj 等</div></div>
-            <div class="eg-step"><span class="eg-n">2</span>点一个快速预设<div class="hint" style="margin:0">或直接点「分析」用默认参数</div></div>
+            <div class="eg-step"><span class="eg-n">2</span>回答「这个零件拿来做什么」<div class="hint" style="margin:0">或直接点「分析」用默认参数</div></div>
             <div class="eg-step"><span class="eg-n">3</span>看「结论」卡片<div class="hint" style="margin:0">✅ 安全 / ⚠️ 有风险，引擎说了算</div></div>
           </div>
           <div class="eg-feats">
@@ -1020,6 +1079,13 @@
             <span class="eg-feat">参数建议</span>
             <span class="eg-feat">一键应用</span>
           </div>
+          <!-- v0.27: instant first value without owning an STL — stages the
+               bundled sample as an ordinary session (same path as an upload;
+               hidden when the server reports the sample absent). The durable
+               re-entry lives in the 模型 panel (this card hides after the
+               first successful render). -->
+          <button id="btn-sample" class="eg-sample" style="display:none"
+                  title="用内置示例模型（测试梁 100×10×4）走一遍完整流程：上传→分析→结论→建议">没有模型？先试一个示例</button>
         </div>
         <div id="validate-refused" style="display:none"></div>
         <div id="fast-mode-tag" class="hint" style="display:none">⚡ 预览级结果（--fast：FEM 网格封顶 12³）——精度披露见报告 fast_mode，勿与全分辨率结果混用</div>
@@ -1049,6 +1115,13 @@
             <div id="risk-list"><div class="ui-empty">分析后显示几何风险</div></div>
           </div>
         </div>
+        <!-- v0.27 next-step card: the novice's exit from the analysis back to
+             printing. Placed AFTER the risk card (risk surfaces first —
+             fold-must-not-bury-warnings precedent); simple mode only
+             (advanced has the full 档位对比 writeback row). Filled by
+             renderNextStep on each successful analyze; hidden by
+             resetResultsPanel. -->
+        <div class="next-step simple-only" id="next-step" style="display:none"></div>
         <!-- v0.22: KPI row joins the detail wall in simple mode — the hero
              already carries SF + verdict; 评分/载荷判定/最大应力 are engineering
              numbers, one fold away (advanced mode sees them as before) -->
@@ -1233,8 +1306,15 @@
 var state = { token: null, name: null, is3mf: false, params: [], materials: [],
               loads: [], dirty: {}, lastEnv: {}, baseline: {},
               baseProfile: null,
-              lastApplied: null };  // v0.9: {ui_key: writtenValue} — reconciled
-                                    // against the engine echo post-analyze
+              lastApplied: null,  // v0.9: {ui_key: writtenValue} — reconciled
+                                  // against the engine echo post-analyze
+              // v0.27 novice flow: material answer to the preset question
+              // (STL-family inputs only — a 3MF carries its own), the
+              // auto-tune loop state, and the last analyze response's
+              // report/applyable the loop decides on. Cleared together in
+              // resetTuningState (new model) and on the unknown-token path.
+              materialChoice: null, autoTune: null,
+              lastReport: null, lastApplyable: null };
 
 // env panel: serverName is the analyze body key; kind select/num; convert
 // maps slider value → body value (pure unit/exponent math, engine stays the
@@ -1411,6 +1491,15 @@ Promise.all([
   // exe resolves server-side — hidden (not disabled) when absent, so the
   // engine-only flow never sees a dead entry point
   if (st.gcode_diff_available) $("gcode-panel").style.display = "";
+  // v0.27: bundled sample entries (empty-guide button + the durable link in
+  // the 模型 panel) follow the same degrade-not-error gate
+  state.sampleAvailable = !!st.sample_available;
+  if (st.sample_available) {
+    var bs = $("btn-sample"), ls = $("lnk-sample");
+    if (bs) bs.style.display = "";
+    if (ls) ls.style.display = "";
+  }
+  buildPresetMaterialSelect();  // options from the live schema enum
   state.params = pm.params || [];
   state.presets = pm.presets || [];
   if (st.history_cap) {
@@ -1659,15 +1748,24 @@ function makeParamRow(m) {
 
 // ---------- one-click presets (simple-mode "0 参数" entry) ----------
 // Rendered from /api/params `presets` (server-authored; sanitized against
-// the live enums there). Apply = set every slider/select to the preset's
-// value, mark it dirty (so the analyze sends exactly those), then run once.
+// the live enums there). v0.27: each preset renders as a use-case card —
+// the main line answers "这个零件拿来做什么" (server `use` text) and the
+// label/desc demote to the sub-line; the BUTTON element and .preset-btn
+// class are load-bearing (setPresetEnabled queries button descendants;
+// ui_consistency C4 pins the height token), so the card IS the same button.
+// Apply = set every slider/select to the preset's value, mark it dirty (so
+// the analyze sends exactly those), then run once.
 // The pending-auto timer, if any, is cleared by analyze() at run start —
 // an explicit preset click must produce exactly one run.
 function buildPresetPanel() {
   var box = $("preset-buttons");
   box.innerHTML = "";
   (state.presets || []).forEach(function (p) {
-    var b = el("button", "preset-btn", p.label || p.name);
+    var b = el("button", "preset-btn preset-card");
+    var use = el("div", "pu", p.use || (p.label || p.name));
+    b.appendChild(use);
+    b.appendChild(el("div", "pl",
+      (p.label || p.name) + (p.desc ? " · " + p.desc : "")));
     b.title = (p.desc || "") + (p.desc ? "\n" : "") + "共 " +
       Object.keys(p.params || {}).length + " 项参数";
     b.dataset.preset = p.name;
@@ -1682,6 +1780,51 @@ function setPresetEnabled(on) {
   if (!box) return;
   var btns = box.querySelectorAll("button");
   for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+}
+
+// ---------- v0.27 material question (preset panel) ----------
+// The one parameter a novice can always answer: the spool label. Built from
+// the same live enum the 高级选项 material select uses (state.params meta,
+// schema-probed server-side — no client copy of the engine enum). The
+// choice is sticky across preset clicks (applyPreset re-applies it over the
+// preset's documented PLA default) and resets with the model.
+function buildPresetMaterialSelect() {
+  var sel = $("preset-material-sel");
+  if (!sel) return;
+  var meta = null;
+  for (var i = 0; i < state.params.length; i++)
+    if (state.params[i].name === "material") { meta = state.params[i]; break; }
+  var opts = (meta && meta.options) || state.materials || ["PLA"];
+  sel.innerHTML = "";
+  opts.forEach(function (m) {
+    var o = document.createElement("option");
+    o.value = m; o.textContent = m;
+    sel.appendChild(o);
+  });
+  sel.value = state.materialChoice || "PLA";
+}
+function setPresetMaterialVisible(on) {
+  var row = $("preset-material");
+  if (row) row.style.display = (on && !state.is3mf) ? "" : "none";
+}
+function onPresetMaterial() {
+  var sel = $("preset-material-sel");
+  if (!sel || !sel.value) return;
+  state.materialChoice = sel.value;
+  // ALWAYS write the ordinary material row — collectParams reads the ROW
+  // value for dirty keys, so marking dirty without writing it would send
+  // the stale value (E14 caught exactly this: echo stayed PLA)
+  var input = findRowInput("material");
+  if (input) {
+    input.value = sel.value;
+    var valEl = document.querySelector(
+      '.param-row select[data-param="material"] ~ .val');
+    if (valEl) valEl.textContent = sel.value;
+  }
+  if (state.token) {
+    markChanged("material");  // dirty + debounced auto re-run, same as the
+                              // 高级选项 material select semantics
+  }
 }
 function applyPreset(p) {
   if (!state.token) { toast("请先上传模型", "err"); return; }
@@ -1716,7 +1859,24 @@ function applyPreset(p) {
     state.dirty[name] = true;
     updateRowState(name);
   });
-  toast("已应用预设「" + (p.label || p.name) + "」", "info");
+  // v0.27: the user's material answer (STL-family inputs) wins over the
+  // preset's documented PLA default — written into the SAME dirty batch so
+  // the single analyze below carries it (collectParams only sends dirty
+  // keys; a 3MF keeps the preset's material — the file carries its own).
+  if (!state.is3mf && state.materialChoice) {
+    var minput = findRowInput("material");
+    if (minput) {
+      minput.value = state.materialChoice;
+      var mval = document.querySelector(
+        '.param-row select[data-param="material"] ~ .val');
+      if (mval) mval.textContent = state.materialChoice;
+      state.dirty.material = true;
+      updateRowState("material");
+    }
+  }
+  toast("已应用预设「" + (p.label || p.name) + "」"
+    + ((!state.is3mf && state.materialChoice && state.materialChoice !== "PLA")
+       ? "（材料按你的选择：" + state.materialChoice + "）" : ""), "info");
   analyze(false);
 }
 
@@ -1726,6 +1886,9 @@ function applyPreset(p) {
 // server.py) — this function is pure UI orchestration: write sliders, mark
 // dirty, re-analyze. Flow mirrors applyPreset above (dirty WITHOUT
 // scheduleAuto — the immediate analyze below subsumes any pending debounce).
+// v0.27: returns the analyze() promise on success (undefined when a guard
+// rejected the call) — the auto-tune loop awaits it; button onclick callers
+// ignore the return value, so this is additive.
 function setRecApplyEnabled(on) {
   var cta = document.querySelector("#rec-items button.rec-apply");
   if (cta) cta.disabled = !on;
@@ -1765,7 +1928,7 @@ function applyCheckedSuggestions(entries) {
   if (!applied.length) { toast("没有可应用的建议", "info"); return; }
   state.lastApplied = lastApplied;
   toast("已应用建议：" + applied.join("，") + "，正在重新分析", "info");
-  analyze(false);
+  return analyze(false);
 }
 // engine echo keys for the v1 identity whitelist — mirrors the literal
 // engine echo keys for apply-reconcile — maps a slider key to the report
@@ -1796,6 +1959,195 @@ function reconcileApplied(inp) {
       diffs.push(key + " 已按引擎域调整为 " + echo);
   });
   if (diffs.length) toast("注意：" + diffs.join("，"), "info");
+}
+
+// ---------- v0.27 auto-tune loop (multi-round apply → re-analyze) ----------
+// Driver around autoTuneStepDecision (report.js, pure) + applyCheckedSuggestions
+// + analyze. UI-side orchestration only (red line 2 allows it — same class as
+// batch runs): every round applies the ENGINE's own applicable suggestions
+// and re-runs the engine; stops are honest and toasted with a reason.
+// The loop is bound to the session token it started under — a model upload
+// mid-loop kills it silently (the old session's late response is dropped by
+// analyze's runToken guard; state.lastReport then never advances for THIS
+// loop, which the sentinel below turns into a silent stop).
+function startAutoTune() {
+  if (!state.token) { toast("请先上传模型", "err"); return; }
+  if (state.running) { toast("上一次分析尚未结束，请稍候", "info"); return; }
+  if (state.batchRunning) { toast("批量运行进行中，请稍候", "info"); return; }
+  if (typeof AUTO_TUNE_MAX_ROUNDS === "undefined") return;
+  state.autoTune = { round: 0, max: AUTO_TUNE_MAX_ROUNDS,
+                     token: state.token, lastSig: null };
+  updateAutoTuneBtn();
+  toast("自动调参开始：最多 " + AUTO_TUNE_MAX_ROUNDS
+    + " 轮，每轮应用引擎全部可应用建议并重新分析", "info");
+  autoTuneStep();
+}
+function autoTuneStep() {
+  var t = state.autoTune;
+  if (!t) return;
+  // session swapped mid-loop (new model uploaded): kill silently — the new
+  // session's UI must not inherit a running-loop chrome from the old one
+  if (state.token !== t.token) { stopAutoTune(null); return; }
+  // entry guards re-checked synchronously: L12 (a manual/pending run won the
+  // race) and mid-loop batch start both end the loop QUIETLY — the sibling
+  // toast in applyCheckedSuggestions is user noise for a machine decision
+  if (state.running || state.batchRunning) { stopAutoTune(null); return; }
+  var rank = 0;
+  try { rank = verdictRank((state.lastReport || {}).phase_b,
+                           (state.lastReport || {}).phase_d); }
+  catch (e) { rank = 0; }
+  var d = autoTuneStepDecision({ rank: rank, round: t.round,
+    maxRounds: t.max, lastSig: t.lastSig, applyable: state.lastApplyable });
+  if (d.action === "stop") { stopAutoTune(autoTuneStopText(d.code, t.round)); return; }
+  t.lastSig = d.sig;
+  t.round++;
+  updateAutoTuneBtn();
+  var prevReport = state.lastReport;
+  var pr = applyCheckedSuggestions(d.picked);
+  // REFUTE#1: guard early-returns are undefined — a promise call on them
+  // would TypeError the loop dead with the button stuck in running chrome
+  if (!pr || typeof pr.then !== "function") { stopAutoTune(null); return; }
+  pr.then(function () {
+    // sentinel: a completed round ALWAYS writes state.lastReport in
+    // analyze's then; unchanged reference = the round was aborted, failed,
+    // or belonged to a swapped session — stop honestly either way
+    if (state.lastReport === prevReport) {
+      stopAutoTune("自动调参停止：本轮分析未完成（失败或已取消）");
+      return;
+    }
+    autoTuneStep();
+  });
+}
+function autoTuneStopText(code, rounds) {
+  if (code === "safe") return "自动调参完成：结论已安全（共 " + rounds + " 轮）";
+  if (code === "exhausted") return "自动调参停止：已无可应用的建议（共 " + rounds + " 轮）";
+  if (code === "unchanged") return "自动调参停止：引擎建议不再变化（共 " + rounds + " 轮）";
+  return "自动调参停止：已达 " + rounds + " 轮上限，仍有建议——可再点继续";
+}
+function stopAutoTune(reason) {
+  state.autoTune = null;
+  updateAutoTuneBtn();
+  if (reason) toast(reason, "info");
+}
+// renderReport rebuilds the advice card every round — re-apply the running
+// chrome (label + click-to-stop) to the fresh #btn-auto-tune node; when the
+// verdict turned rank1 the fresh render omits the button entirely, which is
+// the correct end state (stopAutoTune's toast explains why).
+function updateAutoTuneBtn() {
+  var b = document.getElementById("btn-auto-tune");
+  if (!b) return;
+  var t = state.autoTune;
+  if (!t) return;  // fresh render already carries the idle label/handler
+  b.textContent = "自动调参中（第 " + t.round + "/" + t.max + " 轮）· 点击停止";
+  b.onclick = function () { stopAutoTune("已手动停止自动调参（共 "
+    + t.round + " 轮）"); };
+}
+
+// ---------- v0.27 next-step card ("拿去打印") ----------
+// The novice's exit from the analysis back to printing. 3MF+writable → the
+// engine writeback (HONEST semantics per REFUTE#2: /api/export re-runs the
+// engine's --optimize-3mf for the CHOSEN profile — the download is the
+// engine's tier optimization, not "当前调好的参数" — label says so, profile
+// is explicit). Everything else → a copy card of the ENGINE's own input
+// echo (same keys the 「当前参数」 panel renders; values engine-authored,
+// labels from the client param table) + the "换 3MF 可自动写回" hint.
+var NEXT_STEP_ECHO = [
+  ["材料", function (i) { return i.material || "—"; }],
+  ["壁数", function (i) { return i.walls != null ? String(i.walls) : "—"; }],
+  ["填充率", function (i) {
+    return i.infill_density != null
+      ? (i.infill_density * 100).toFixed(0) + "%" : "—"; }],
+  ["填充图案", function (i) { return i.infill_pattern || "—"; }],
+  ["层高", function (i) {
+    return i.layer_height_mm != null ? i.layer_height_mm + " mm" : "—"; }],
+  ["喷嘴直径", function (i) { return i.nozzle_mm != null ? i.nozzle_mm + " mm" : "—"; }],
+  ["喷嘴温度", function (i) {
+    return i.nozzle_temperature_c != null ? i.nozzle_temperature_c + " °C" : "—"; }],
+  ["热床温度", function (i) {
+    return i.bed_temperature_c != null ? i.bed_temperature_c + " °C" : "—"; }],
+  ["打印速度", function (i) {
+    return i.print_speed_mms != null ? i.print_speed_mms + " mm/s" : "—"; }],
+  ["冷却风扇", function (i) {
+    return i.cooling_fan_pct != null ? i.cooling_fan_pct + "%" : "—"; }],
+];
+function renderNextStep(report) {
+  var box = $("next-step");
+  if (!box || !state.token || !report) return;
+  box.innerHTML = "";
+  box.appendChild(el("h3", null, "拿去打印"));
+  var inp = report.input || {};
+  if (state.is3mf && state.writable) {
+    box.appendChild(el("div", "hint",
+      "下载「按所选档位优化过参数」的 3MF，拖回切片软件直接切片打印。每次下载都会真实跑一次引擎写回（审计随下载披露）。"));
+    var row = el("div", "actions");
+    var sel = document.createElement("select");
+    sel.id = "next-export-profile";
+    // options mirror the advanced writeback select — one enum source
+    var src = $("export-profile");
+    if (src) {
+      for (var i = 0; i < src.options.length; i++) {
+        var o = document.createElement("option");
+        o.value = src.options[i].value; o.textContent = src.options[i].textContent;
+        sel.appendChild(o);
+      }
+      sel.value = src.value;
+    }
+    var lb = el("label", "lock-cb", " ");
+    lb.insertBefore(sel, lb.firstChild);
+    lb.insertBefore(document.createTextNode("优化档位 "), lb.firstChild);
+    row.appendChild(lb);
+    var dl = el("button", "sum-cta", "下载优化后的 3MF");
+    dl.onclick = function () {
+      if (src) src.value = sel.value;  // export3mf reads #export-profile
+      export3mf();
+    };
+    row.appendChild(dl);
+    box.appendChild(row);
+  } else {
+    var det = el("details");
+    det.appendChild(el("summary", null, "照抄进切片软件的参数"));
+    var lines = [];
+    NEXT_STEP_ECHO.forEach(function (pair) {
+      var v = "—";
+      try { v = pair[1](inp); } catch (e) { /* null-gated per row */ }
+      det.appendChild(el("div", "ns-line", pair[0] + "：" + v));
+      lines.push(pair[0] + "：" + v);
+    });
+    box.appendChild(det);
+    var row2 = el("div", "actions");
+    var cp = el("button", null, "复制全部参数");
+    cp.onclick = function () { copyText(lines.join("\n"), "参数已复制"); };
+    row2.appendChild(cp);
+    box.appendChild(row2);
+    box.appendChild(el("div", "hint", state.is3mf
+      ? "该 3MF 无切片设置（CAD 裸导出），不可自动写回；带切片设置的 3MF 可一键写回参数。"
+      : "想让参数自动写回？在切片软件里把模型连配置另存为 .3mf（含切片设置）再上传。"));
+  }
+  box.style.display = "";
+}
+function copyText(text, okMsg) {
+  // 127.0.0.1 is a secure context, so the async clipboard API is available;
+  // execCommand fallback covers exotic embedders (and the vm stubs in tests)
+  var done = function (ok) {
+    toast(ok ? okMsg : "复制失败——请手动选择文本复制", ok ? "ok" : "err");
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { done(true); },
+                                             function () {
+      done(fallbackCopy(text));
+    });
+  } else done(fallbackCopy(text));
+}
+function fallbackCopy(text) {
+  try {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch (e) { return false; }
 }
 
 // core lockables without a slider row (layer_height, retraction, ...):
@@ -2057,6 +2409,9 @@ function resetResultsPanel() {
   }
   var sc = $("summary-cards");
   if (sc) sc.innerHTML = "";  // :empty CSS hides the row
+  // v0.27: the exit card belongs to the report that justified it
+  var nst = $("next-step");
+  if (nst) { nst.innerHTML = ""; nst.style.display = "none"; }
   // KPI cells: text back to the boot "—" AND stale color/adequacy classes
   // off (renderReport writes .sf-*/load classes onto res-sf/res-load)
   ["res-sf", "res-overall", "res-stress", "res-load", "res-buckling",
@@ -2119,6 +2474,15 @@ function resetTuningState() {
   state.lastApplied = null;  // v0.24: model A's written values must not be
                              // reconciled against model B's echo (would
                              // fabricate a 「引擎按域调整为X」 toast)
+  // v0.27 novice-flow state dies with the model it belonged to: the loop
+  // (quiet — the new session's first auto-analyze is the story), the truth
+  // pair it decided on, and the material answer INCLUDING the picker DOM
+  // (a stale PETG option displaying while the analysis runs PLA is a lying
+  // UI — REFUTE#8)
+  if (state.autoTune) stopAutoTune(null);
+  state.lastReport = null; state.lastApplyable = null;
+  state.materialChoice = null;
+  buildPresetMaterialSelect();
   updateDirtyChip();
   updateNoReportState();
   state.lastEnv = {};
@@ -2194,6 +2558,7 @@ function applySession(j) {
   $("btn-export-orca").disabled = !j.is_3mf || !state.writable;
   $("btn-preview").disabled = !j.is_3mf;
   $("export-msg").textContent = "";
+  setPresetMaterialVisible(true);  // v0.27 (hidden again for 3MF inputs)
   loadStlPreview(j);
 }
 
@@ -2327,6 +2692,35 @@ function restoreSession() {
 function onFile() {
   var f = $("model-file").files[0];
   if (!f) return;
+  uploadModelFile(f);
+}
+
+// v0.27 bundled sample: stages the server-side sample as an ORDINARY session
+// — success path identical to onFile's (the server response is the same
+// shape), so every downstream gate (reset-on-new-model, session guards,
+// F5 restore) applies for free. No file ever leaves the machine.
+function loadSample() {
+  $("upload-msg").className = "ok";
+  $("upload-msg").textContent = "载入示例模型…";
+  fetch("/api/sample", { method: "POST",
+                         headers: { "X-Stratum-UI": "1" } })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) throw new Error(j.error || "示例载入失败");
+      resetTuningState();
+      applySession(j);
+      persistSession();
+      $("upload-msg").textContent = "已载入示例 " + j.name
+        + " (" + (j.size / 1024).toFixed(1) + " KB)";
+      return analyze(false);
+    })
+    .catch(function (e) {
+      $("upload-msg").className = "err";
+      $("upload-msg").textContent = String(e);
+    });
+}
+
+function uploadModelFile(f) {
   // (iter 84) reset a stale error state from a PREVIOUS failed upload —
   // without this the red err styling survives a later success (browser E2E)
   $("upload-msg").className = "ok";
@@ -2642,6 +3036,10 @@ function analyze(compare, auto) {
     // v0.23: a successful model render reclaims the right column from a
     // previous gcode result (panel-level mutual exclusion)
     if (typeof showGcodeResultPanel === "function") showGcodeResultPanel(false);
+    // v0.27: the loop's truth — the response's own report/applyable pair
+    // (set BEFORE renderReport so nothing reads a stale pair mid-render)
+    state.lastReport = j.report;
+    state.lastApplyable = Array.isArray(j.applyable) ? j.applyable : null;
     renderReport(j.report, j.console || "", j.applyable || null);
     showRunDelta(j.report);
     state.hasReport = true;  // v0.13 flow steps: verdict is on screen
@@ -2652,6 +3050,7 @@ function analyze(compare, auto) {
     if (typeof renderGcodeTune === "function")
       renderGcodeTune(j.gcode_tune || null, state.token);
     syncGcodeTuneFromResponse(j);
+    renderNextStep(j.report);  // v0.27 exit card (simple mode)
     refreshHistory();
     // auto runs stay quiet — a toast after every slider release would be noise;
     // errors and cancels below still surface (they need user attention)
@@ -2669,6 +3068,13 @@ function analyze(compare, auto) {
       // server was restarted (or the session expired) — drop the dead session
       clearPersistedSession();
       state.token = null; state.name = null; state.is3mf = false;
+      // v0.27: the dead session's loop state dies with it (stopAutoTune
+      // without a toast — the unknown-token toast below is the story)
+      if (state.autoTune) stopAutoTune(null);
+      state.lastReport = null; state.lastApplyable = null;
+      state.materialChoice = null;
+      buildPresetMaterialSelect();  // select back to PLA default
+      setPresetMaterialVisible(false);
       $("model-badge").style.display = "none";
     $("btn-analyze").disabled = true;
     $("btn-compare").disabled = true;
@@ -3254,10 +3660,15 @@ function export3mf() {
     document.body.appendChild(a); a.click(); a.remove();
     $("export-msg").textContent = "已下载优化后的 3MF（profile=" + profile + "）"
       + (lastExportAudit ? "；写回审计: " + lastExportAudit : "");
+    // v0.27: the next-step card calls this from SIMPLE mode where
+    // #export-msg sits in the hidden advanced area — toast so the outcome is
+    // visible there too (single-layer fix otherwise)
+    toast("已下载优化后的 3MF（" + profile + " 档）", "ok");
     fetchSidecar();
   }).catch(function (e) {
     $("export-msg").className = "err";
     $("export-msg").textContent = String(e);
+    toast("写回失败：" + e, "err");  // same simple-mode visibility
   });
 }
 var lastExportAudit = null;
@@ -4141,7 +4552,62 @@ var LANG_EN = {
   "热端键（流量上限披露，仅标注不拦截；不指定 = 不考虑）":
     "Hotend key (flow-ceiling disclosure, annotate-only; none = not considered)",
   "应力下限 ": "vm floor ", "热区倍率 ": "hot ratio ",
-  "热区百分位 ": "hot percentile "
+  "热区百分位 ": "hot percentile ",
+
+  /* ---- v0.27 novice flow: sample entry / use-case presets / material
+     question / auto-tune loop / next-step card ---- */
+  "这个零件拿来做什么？": "What is this part for?",
+  "按用途一键设置参数并分析": "Set all parameters by use case and analyze",
+  "打印材料": "Filament material",
+  "看耗材卷标签；不确定就保持 PLA":
+    "Check the spool label; keep PLA if unsure",
+  "看耗材卷标签选。预设默认按 PLA 设置，选了别的材料会以你的选择为准（仅影响分析参数，不会替你改切片软件）":
+    "Pick from the spool label. Presets default to PLA; your choice overrides it (analysis parameters only — your slicer is never touched)",
+  "上传模型后点一个用途即可，10 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。":
+    "Upload a model, pick a use case — 10 print parameters are set and analyzed at once. Want per-parameter control? Turn on Advanced options (top right).",
+  "回答「这个零件拿来做什么」": "Answer “what is this part for”",
+  "没有模型？先试一个示例": "No model yet? Try the bundled sample",
+  "用内置示例模型（测试梁 100×10×4）走一遍完整流程：上传→分析→结论→建议":
+    "Walk the full flow with the bundled sample beam 100×10×4: upload → analyze → verdict → suggestions",
+  "试试内置示例模型": "Try the bundled sample model",
+  // server-authored preset use sentences (whole-sentence, desc precedent)
+  "要受力的零件（支架 / 夹具 / 结构件）":
+    "Parts that carry load (brackets / jigs / structural)",
+  "普通功能件 —— 不确定就选这个":
+    "General functional parts — pick this if unsure",
+  "快速打草稿，验证形状 / 尺寸": "Quick drafts — shape / fit checks",
+  "摆件 / 外观件，表面质量优先": "Display pieces — surface quality first",
+  // auto-tune loop chrome (toasts are runtime-composed → fragments in
+  // LANG_WORDS; these exact keys cover the static/complete forms)
+  "自动调参（最多 ": "Auto-tune (max ",
+  "轮）": " rounds)",
+  "每轮自动应用引擎全部可应用建议并重新分析；结论变安全、建议用尽、建议不再变化或满 ":
+    "Each round applies all engine-applicable suggestions and re-analyzes; stops when the verdict is safe, suggestions run out, suggestions stop changing, or after ",
+  " 轮即停（每轮都是一次真实引擎分析）": " rounds (every round is a real engine run)",
+  "已手动停止自动调参（共 ": "auto-tune stopped manually (",
+  // next-step card
+  "拿去打印": "Take it to print",
+  "照抄进切片软件的参数": "Copy these parameters into your slicer",
+  "复制全部参数": "Copy all parameters",
+  "参数已复制": "parameters copied",
+  "复制失败——请手动选择文本复制": "copy failed — select and copy manually",
+  "下载优化后的 3MF": "Download optimized 3MF",
+  "优化档位": "optimize profile",
+  "优化档位 ": "optimize profile ",
+  "已下载优化后的 3MF（": "downloaded the optimized 3MF (",
+  "下载「按所选档位优化过参数」的 3MF，拖回切片软件直接切片打印。每次下载都会真实跑一次引擎写回（审计随下载披露）。":
+    "Download a 3MF with parameters optimized for the chosen profile, drop it back into your slicer and print. Each download runs a real engine write-back (audit disclosed with the file).",
+  "想让参数自动写回？在切片软件里把模型连配置另存为 .3mf（含切片设置）再上传。":
+    "Want parameters written back automatically? Re-save the model as .3mf (with slice settings) in your slicer and upload that.",
+  "该 3MF 无切片设置（CAD 裸导出），不可自动写回；带切片设置的 3MF 可一键写回参数。":
+    "This 3MF has no slice settings (bare CAD export) — no auto write-back; a 3MF with settings can write parameters back in one click.",
+  "壁数：": "walls: ", "填充率：": "infill: ", "填充图案：": "infill pattern: ",
+  "层高：": "layer height: ", "喷嘴直径：": "nozzle: ",
+  "喷嘴温度：": "nozzle temp: ", "热床温度：": "bed temp: ",
+  "打印速度：": "speed: ", "冷却风扇：": "cooling fan: ",
+  "载入示例模型…": "loading the sample model…",
+  "已载入示例 ": "sample loaded: ",
+  "（材料按你的选择：": " (material per your choice: ",
 };
 // word-level fallback for concatenated strings (labels + counts + values).
 // Longest-first replacement; exact full-string hits above take precedence.
@@ -4340,6 +4806,29 @@ var LANG_WORDS = (function () {
     ["几何风险", "geometric risks"],
     ["引擎提示", "engine hints"],
     ["条提示", "notices"],
+    // ---- v0.27 auto-tune / sample / next-step runtime-composed fragments ----
+    ["自动调参开始：最多 ", "auto-tune started: max "],
+    [" 轮，每轮应用引擎全部可应用建议并重新分析",
+     " rounds; each applies all engine-applicable suggestions and re-analyzes"],
+    ["自动调参完成：结论已安全（共 ", "auto-tune done: verdict is safe ("],
+    ["自动调参停止：已无可应用的建议（共 ", "auto-tune stopped: no more applicable suggestions ("],
+    ["自动调参停止：引擎建议不再变化（共 ", "auto-tune stopped: engine suggestions stopped changing ("],
+    ["自动调参停止：已达 ", "auto-tune stopped: reached the "],
+    [" 轮上限，仍有建议——可再点继续", "-round cap; suggestions remain — click again to continue"],
+    ["自动调参停止：本轮分析未完成（失败或已取消）",
+     "auto-tune stopped: this round's analysis did not finish (failed or cancelled)"],
+    ["自动调参中（第 ", "auto-tuning (round "],
+    [" 轮）· 点击停止", " · click to stop)"],
+    [" 轮）", " rounds)"], ["（共 ", " ("],
+    [" 档）", " profile)"],
+    ["写回失败：", "write-back failed: "],
+    ["示例载入失败", "sample load failed"],
+    ["已停止", "stopped"],
+    // preset-card sub-lines are label + " · " + desc compositions — the
+    // label must ride WORD-level, but a bare 安全 would mangle 安全系数
+    // elsewhere; the separator-suffixed form can only match the composition
+    ["安全 · ", "Safe · "], ["均衡 · ", "Balanced · "],
+    ["高速 · ", "Fast · "], ["外观 · ", "Appearance · "],
     // fullwidth punctuation → latin, LAST resort so chrome lines don't end
     // with CJK punctuation. Applied to every translated node; engine-authored
     // prose rendered outside skip nodes was already word-mangle-prone.
@@ -4548,6 +5037,14 @@ document.addEventListener("keydown", function (e) {
   }
 });
 $("model-file").addEventListener("change", onFile);
+// v0.27 novice-flow entries: sample button (empty-guide) + durable link
+// (模型 panel) + the preset material question
+$("btn-sample").addEventListener("click", loadSample);
+$("lnk-sample").addEventListener("click", function (e) {
+  e.preventDefault();  // <a href="#"> is for affordance, not navigation
+  loadSample();
+});
+$("preset-material-sel").addEventListener("change", onPresetMaterial);
 // dropzone overlay (presentation only): routes a drop onto the SAME file
 // input + change event as a click-pick, so onFile/tests see identical input
 (function () {

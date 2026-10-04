@@ -32,7 +32,8 @@ if ($p.ExitCode -ne 0) { Fail "install rc=$($p.ExitCode)" }
 foreach ($f in "StratumWebUI.exe","VERSION.txt","LICENSE","LICENSE-Stratum-Engine.txt",
                "THIRD-PARTY-NOTICES","unins000.exe",
                "bin\stratum.exe","_internal\index.html",
-               "_internal\report.js","_internal\stl-preview.js") {
+               "_internal\report.js","_internal\stl-preview.js",
+               "_internal\sample\beam_100x10x4.stl") {
     $ok = Test-Path (Join-Path $dir $f)
     Write-Host ("  {0,-28} {1}" -f $f, $ok)
     if (-not $ok) { Fail "layout missing $f" }

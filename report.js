@@ -51,6 +51,71 @@ function fmtSig(x) {
     ? x : parseFloat(Number(x).toPrecision(6));
 }
 
+// ---------- v0.27 verdict rank + auto-tune decision ----------
+// verdictRank: the v0.22 hero worst-of edge color, extracted top-level so
+// the auto-tune loop driver (index.html) reuses the SAME display mapping
+// instead of a drifting copy. Engine signals only (emoji chars in the
+// engine-authored assessment, structured phase_d warning, SF<1) — pure
+// display mapping, no UI-side re-scoring (red line 2; same precedent as the
+// SF band colors). 0 = engine wrote no rank-bearing signal.
+//   rank 1 ✅ emoji < rank 2 ⚠ emoji / phase_d buckling|fracture warning
+//   < rank 3 ❌ emoji / SF < 1
+function safetyFactorScalar(pb) {
+  if (!pb) return null;
+  var sf = pb.safety_factor;
+  if (sf !== null && sf !== undefined && typeof sf === "object")
+    return sf.nominal;
+  return sf;
+}
+function verdictRank(pb, pd) {
+  var txt = (pb && typeof pb.assessment === "string") ? pb.assessment : "";
+  var rank = txt.indexOf("❌") >= 0 ? 3
+    : txt.indexOf("⚠") >= 0 ? 2
+    : txt.indexOf("✅") >= 0 ? 1 : 0;
+  // structured phase_d warning present? Engine payload, not the mirror DOM
+  // (immune to DOM textContent semantics in vm stubs — v0.22 lesson)
+  var hasPdWarn = !!((typeof pd !== "undefined" && pd)
+              && (pd.buckling_warning
+                  || (pd.fracture_risk_detected === true && pd.fracture_assessment)));
+  if (hasPdWarn) rank = Math.max(rank, 2);
+  var sf = safetyFactorScalar(pb);
+  if (typeof sf === "number" && isFinite(sf) && sf < 1)
+    rank = Math.max(rank, 3);
+  return rank;
+}
+
+// Auto-tune round cap. Each round is a FULL engine run, so the loop is
+// bounded for cost as much as for patience (a novice clicking away at 3
+// rounds has seen the pattern; the stop toast invites a fresh click to
+// continue — product decision, not an engine contract).
+var AUTO_TUNE_MAX_ROUNDS = 3;
+
+// autoTuneStepDecision — the pure per-round policy of the v0.27 auto-tune
+// loop (driver in index.html). Pure so render_check can exercise every stop
+// shape with synthetic inputs; the driver owns toasts/DOM/analyze. Returns:
+//   {action:"stop", code:"safe"|"exhausted"|"unchanged"|"cap"}
+//   {action:"apply", sig, picked}
+// Stop precedence: verdict safe → cap reached → no applicable suggestions →
+// suggestion signature unchanged (oscillation guard: engine re-suggesting
+// the same key:value pair after a round would ping-pong within the cap).
+function autoTuneStepDecision(opts) {
+  var rank = opts.rank, round = opts.round, maxRounds = opts.maxRounds,
+      lastSig = opts.lastSig, applyable = opts.applyable || [];
+  if (rank === 1) return { action: "stop", code: "safe" };
+  if (round >= maxRounds) return { action: "stop", code: "cap" };
+  var picked = [];
+  for (var i = 0; i < applyable.length; i++)
+    if (applyable[i] && applyable[i].applicable) picked.push(applyable[i]);
+  if (!picked.length) return { action: "stop", code: "exhausted" };
+  var bits = [];
+  for (var j = 0; j < picked.length; j++)
+    bits.push(picked[j].ui_key + ":" + picked[j].recommended_value);
+  bits.sort();
+  var sig = bits.join("|");
+  if (sig === lastSig) return { action: "stop", code: "unchanged" };
+  return { action: "apply", sig: sig, picked: picked };
+}
+
 // ---------- render ----------
 function renderReport(d, consoleText, applyable) {
   // v0.10: a successful render supersedes the empty-state guide (「分析结果」) and any
@@ -1387,47 +1452,33 @@ function renderReport(d, consoleText, applyable) {
   // hidden via CSS :empty).
   var scBox = $("summary-cards");
   if (scBox) {
-    // v0.22: lift the pd-warn mirror node OUT before the container reset
-    // (innerHTML below would destroy it) and re-seat it INSIDE the grid,
-    // directly under the verdict hero — an attached banner reads as part of
-    // the verdict row; after the advice card it read as a stray third card.
-    // vm-stub safety: fake parents have no removeChild — skip the move there
-    // (position is cosmetic; content rendering is position-independent).
-    var pdwNode = $("pd-warn-promoted");
-    var pdwMoved = false;
-    if (pdwNode && pdwNode.parentNode && pdwNode.parentNode.removeChild) {
-      pdwNode.parentNode.removeChild(pdwNode);
-      pdwMoved = true;
-    }
-    scBox.innerHTML = "";
-    // ---- v0.22 verdict hero: ONE card above the fold answering "能不能用".
-    // Edge color = worst-of the engine's own signals, so a ✅ phrase can no
-    // longer sit green next to an amber buckling banner (they fought):
-    //   rank 1 ✅ emoji < rank 2 ⚠ emoji / structured phase_d warning
-    //   < rank 3 ❌ emoji / SF < 1 (engine numbers, display mapping only —
-    //   same class as the SF band colors, no UI-side re-scoring)
-    var vc = el("div", "sum-card sum-verdict");
-    vc.appendChild(el("h3", null, "结论"));
-    var verdictTxt = typeof pb.assessment === "string" && pb.assessment
-      ? pb.assessment : "";
-    var sfNum = (pb.safety_factor !== null && pb.safety_factor !== undefined
-                 && typeof pb.safety_factor === "object")
-      ? pb.safety_factor.nominal : pb.safety_factor;
-    // structured phase_d warning present? Read from the ENGINE payload, not
-    // the mirror DOM — same truth the mirror write uses (phase_d section
-    // above), and immune to DOM textContent semantics (vm stubs don't fold
-    // child text into .textContent)
-    var hasPdWarn = !!((typeof pd !== "undefined" && pd)
-      && (pd.buckling_warning
-          || (pd.fracture_risk_detected === true && pd.fracture_assessment)));
-    var vRank = verdictTxt.indexOf("❌") >= 0 ? 3
-      : verdictTxt.indexOf("⚠") >= 0 ? 2
-      : verdictTxt.indexOf("✅") >= 0 ? 1 : 0;
-    if (hasPdWarn) vRank = Math.max(vRank, 2);
-    if (typeof sfNum === "number" && isFinite(sfNum) && sfNum < 1)
-      vRank = Math.max(vRank, 3);
-    if (vRank) vc.className += ["", " ok", " warn", " bad"][vRank];
-    var vBig = el("div", "big", verdictTxt
+  // v0.22: lift the pd-warn mirror node OUT before the container reset
+  // (innerHTML below would destroy it) and re-seat it INSIDE the grid,
+  // directly under the verdict hero — an attached banner reads as part of
+  // the verdict row; after the advice card it read as a stray third card.
+  // vm-stub safety: fake parents have no removeChild — skip the move there
+  // (position is cosmetic; content rendering is position-independent).
+  var pdwNode = $("pd-warn-promoted");
+  var pdwMoved = false;
+  if (pdwNode && pdwNode.parentNode && pdwNode.parentNode.removeChild) {
+    pdwNode.parentNode.removeChild(pdwNode);
+    pdwMoved = true;
+  }
+  scBox.innerHTML = "";
+  // ---- v0.22 verdict hero: ONE card above the fold answering "能不能用".
+  // Edge color = worst-of the engine's own signals, so a ✅ phrase can no
+  // longer sit green next to an amber buckling banner (they fought):
+  //   rank 1 ✅ emoji < rank 2 ⚠ emoji / structured phase_d warning
+  //   < rank 3 ❌ emoji / SF < 1 (engine numbers, display mapping only —
+  //   same class as the SF band colors, no UI-side re-scoring)
+  var vc = el("div", "sum-card sum-verdict");
+  vc.appendChild(el("h3", null, "结论"));
+  var verdictTxt = typeof pb.assessment === "string" && pb.assessment
+    ? pb.assessment : "";
+  var vRank = verdictRank(pb, pd);
+  if (vRank) vc.className += ["", " ok", " warn", " bad"][vRank];
+  var sfNum = safetyFactorScalar(pb);
+  var vBig = el("div", "big", verdictTxt
       || "引擎未给出结论短语 — 见下方各项数值。");
     vBig.setAttribute("data-i18n-skip", "1");
     vc.appendChild(vBig);
@@ -1513,6 +1564,25 @@ function renderReport(d, consoleText, applyable) {
           applyCheckedSuggestions(picked);
       };
       acard.appendChild(sumCta);
+      // v0.27 auto-tune: multi-round apply→re-analyze loop (driver in
+      // index.html). Offered ONLY on a rank≥2 verdict — the loop exists to
+      // work a risk down, and on a ✅ verdict (or a verdict with no
+      // rank-bearing signal, rank 0) the one-shot apply-all CTA above is the
+      // honest entry. Display mapping of engine signals, same as the hero
+      // edge (verdictRank); never "调到绿" phrasing — stops are honest
+      // (safe / exhausted / unchanged / cap).
+      var vRankAll = verdictRank(pb, pd);
+      if (vRankAll >= 2) {
+        var tuneCta = el("button", "sum-cta tune simple-only",
+          "自动调参（最多 " + AUTO_TUNE_MAX_ROUNDS + " 轮）");
+        tuneCta.id = "btn-auto-tune";
+        tuneCta.title = "每轮自动应用引擎全部可应用建议并重新分析；结论变安全、建议用尽、建议不再变化或满 "
+          + AUTO_TUNE_MAX_ROUNDS + " 轮即停（每轮都是一次真实引擎分析）";
+        tuneCta.onclick = function () {
+          if (typeof startAutoTune === "function") startAutoTune();
+        };
+        acard.appendChild(tuneCta);
+      }
     } else if (nRecs) {
       acard.appendChild(el("div", "big",
         "引擎建议 " + nRecs + " 项（无可一键应用项，见下方明细）"));

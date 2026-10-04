@@ -354,7 +354,7 @@ async function main() {
            JSON.stringify({ advCols, cols: simple.cols }));
     // v0.23: G-code 工具面板（评分入口）有意暴露给简单模式，插在快速预设之后
     expect("E7 flow: panel order = 模型→快速预设→G-code→分析结果→档位对比, 档位对比 visible",
-           simple.names === "模型,快速预设,G-code,分析结果,档位对比" && simple.candVis,
+           simple.names === "模型,这个零件拿来做什么？,G-code,分析结果,档位对比" && simple.candVis,
            JSON.stringify(simple));
     expect("E7 v0.22: idle sticky hidden in simple mode (hero carries SF once)",
            !simple.svVis, JSON.stringify(simple));
@@ -590,6 +590,160 @@ async function main() {
            sawReset && !sawStale && finalWalls === "2",
            JSON.stringify({ sawReset: sawReset, sawStale: sawStale,
                             finalWalls: finalWalls }));
+
+    // ---- E13 (v0.27) bundled sample: durable entry + full novice flow ----
+    // E12c left a live beam session (empty-guide hidden), so the prominent
+    // #btn-sample inside it is not addressable — the DURABLE link in the
+    // 模型 panel is the re-entry under test (REFUTE#4: first render must
+    // not kill the only sample entry)
+    const durLink = JSON.parse(await evalJs("(function(){var l=document.getElementById('lnk-sample');" +
+      "return JSON.stringify({shown:l&&l.offsetParent!==null,text:l?l.textContent:''})})()"));
+    expect("E13 sample: durable 模型-panel link visible (status-gated)",
+           durLink.shown === true && durLink.text.indexOf("示例") >= 0,
+           JSON.stringify(durLink));
+    await evalJs("document.getElementById('lnk-sample').click()");
+    const sampleRun = await waitDone("sample run");
+    const sampleState = JSON.parse(await evalJs("(function(){return JSON.stringify({" +
+      "msg:document.getElementById('upload-msg').textContent," +
+      "badge:document.getElementById('model-badge').textContent," +
+      "hero:(document.getElementById('summary-cards').children||[]).length," +
+      "guideHidden:document.getElementById('empty-guide').style.display==='none'," +
+      "autoTune:!!(window.state&&state.autoTune)})})()"));
+    expect("E13 sample: click stages an ordinary session and renders the hero",
+           sampleRun && /已载入示例/.test(sampleState.msg)
+           && /STL/.test(sampleState.badge)
+           && sampleState.hero >= 1 && sampleState.guideHidden
+           && sampleState.autoTune === false,
+           JSON.stringify(sampleState));
+
+    // ---- E14 (v0.27) use-case preset cards + the material question -------
+    const pq = JSON.parse(await evalJs("(function(){var h=" +
+      "document.querySelector('#preset-panel h2');" +
+      "var cs=document.querySelectorAll('.preset-btn.preset-card');" +
+      "var mr=document.getElementById('preset-material');" +
+      "var sel=document.getElementById('preset-material-sel');" +
+      "return JSON.stringify({h2:h?h.textContent.trim():''," +
+      "n:cs.length," +
+      "use1:(cs[1]&&cs[1].querySelector('.pu')||{}).textContent||''," +
+      "buttons:cs.length&&cs[0].tagName==='BUTTON'&&!cs[0].disabled," +
+      "matVis:mr&&mr.offsetParent!==null," +
+      "opts:sel?[].map.call(sel.options,function(o){return o.value}):[]})})()"));
+    expect("E14 presets: use-case question header + 4 card BUTTONS",
+           pq.h2.indexOf("这个零件拿来做什么") >= 0 && pq.n === 4
+           && pq.buttons === true && pq.use1.indexOf("不确定") >= 0,
+           JSON.stringify(pq).slice(0, 300));
+    expect("E14 material: row visible for STL input, PLA default, enum from schema",
+           pq.matVis === true && pq.opts.indexOf("PLA") >= 0 && pq.opts.length >= 2,
+           JSON.stringify(pq.opts));
+    const petg = await evalJs("(function(){var s=document.getElementById('preset-material-sel');" +
+      "if([].indexOf.call([].map.call(s.options,function(o){return o.value}),'PETG')<0)return 'no';" +
+      "s.value='PETG';s.dispatchEvent(new Event('change'));return 'ok'})()");
+    // the auto re-run is SILENT by design (auto runs never toast), so poll
+    // the engine echo itself instead of a toast
+    let matEcho1 = "";
+    for (let i = 0; i < 100; i++) {
+      matEcho1 = await evalJs("document.getElementById('cp-material').textContent");
+      if (/PETG/i.test(matEcho1)) break;
+      await sleep(300);
+    }
+    expect("E14 material: PETG answer flows into the engine echo",
+           petg === "ok" && /PETG/i.test(matEcho1),
+           petg + " | echo=" + matEcho1);
+    await clearToasts();
+    await evalJs("(function(){var b=document.querySelector('.preset-btn[data-preset=safe]');" +
+      "if(b)b.click();return 1})()");
+    const safeRun = await waitDone("safe preset run");
+    const afterSafe = JSON.parse(await evalJs("(function(){var w=" +
+      "document.querySelector('[data-param=walls]');" +
+      "return JSON.stringify({walls:w?w.value:'?',mat:document.getElementById('cp-material').textContent})})()"));
+    expect("E14 preset+material: safe card sets walls=5 AND keeps PETG in the SAME run",
+           safeRun && afterSafe.walls === "5" && /PETG/i.test(afterSafe.mat),
+           JSON.stringify(afterSafe));
+
+    // ---- E15 (v0.27) auto-tune loop over a REAL risky fixture ------------
+    // beam_60x5x1p5: default params → 🟡 + structured buckling warning
+    // (rank 2) + exactly one applicable suggestion (nozzle 0.4→0.25, engine
+    // 0.26 probe 2026-10-04) → one honest round then 已无可应用的建议
+    const riskyB64 = fs.readFileSync(
+      path.join(ROOT, "test_data", "beam_60x5x1p5.stl")).toString("base64");
+    await inject("beam_60x5x1p5.stl", riskyB64);
+    const riskyRun = await waitDone("risky fixture run");
+    const tune0 = await evalJs("(function(){var b=document.getElementById('btn-auto-tune');" +
+      "return b?JSON.stringify({txt:b.textContent,dis:b.disabled}):'absent'})()");
+    expect("E15 loop: rank2 + applicable → auto-tune CTA rendered",
+           riskyRun && tune0 !== "absent"
+           && tune0.indexOf("自动调参") >= 0,
+           tune0);
+    await clearToasts();
+    await evalJs("(function(){var b=document.getElementById('btn-auto-tune');if(b)b.click();return 1})()");
+    let stopToast = "";
+    for (let i = 0; i < 200; i++) {  // one engine round at grid 24 + margin
+      const ts = JSON.parse(await toastState());
+      const hit = ts.find(t => /已无可应用的建议/.test(t.txt)
+                    && t.cls.indexOf("toast info") >= 0);
+      if (hit) { stopToast = hit.txt; break; }
+      await sleep(300);
+    }
+    const afterLoop = JSON.parse(await evalJs("(function(){var n=" +
+      "document.querySelector('[data-param=nozzle_diameter]');" +
+      "var b=document.getElementById('btn-auto-tune');" +
+      "return JSON.stringify({nozzle:n?n.value:'?'," +
+      "cpNozzle:document.getElementById('cp-nozzle').textContent," +
+      "autoTune:!!(window.state&&state.autoTune)," +
+      "btn:b?b.textContent:'absent'})})()"));
+    expect("E15 loop: one honest round (nozzle 0.25 written) then exhausted stop",
+           /已无可应用的建议/.test(stopToast)
+           && afterLoop.nozzle === "0.25"
+           && /0\.25/.test(afterLoop.cpNozzle)
+           && afterLoop.autoTune === false
+           && (afterLoop.btn === "absent"
+               || afterLoop.btn.indexOf("点击停止") < 0),
+           stopToast + " | " + JSON.stringify(afterLoop));
+
+    // ---- E16 (v0.27) next-step card variants ------------------------------
+    const ns1 = JSON.parse(await evalJs("(function(){var n=" +
+      "document.getElementById('next-step');" +
+      "return JSON.stringify({vis:n&&n.offsetParent!==null," +
+      "txt:n?n.textContent:''})})()"));
+    expect("E16 next-step: STL session → copy card + write-back hint",
+           ns1.vis === true
+           && ns1.txt.indexOf("照抄进切片软件的参数") >= 0
+           && ns1.txt.indexOf("复制全部参数") >= 0
+           && ns1.txt.indexOf(".3mf") >= 0
+           && ns1.txt.indexOf("材料：") >= 0 && ns1.txt.indexOf("层高：") >= 0,
+           JSON.stringify(ns1).slice(0, 260));
+    await evalJs("(function(){var l=document.querySelector('.sw');l.click();return 1})()");
+    const nsAdv = await evalJs("(function(){var n=document.getElementById('next-step');" +
+      "return n?String(n.offsetParent===null):'absent'})()");
+    expect("E16 next-step: hidden in advanced mode (simple-only)", nsAdv === "true");
+    await evalJs("(function(){var l=document.querySelector('.sw');l.click();return 1})()");
+    const w3mf = fs.readFileSync(
+      path.join(ROOT, "test_data", "distinct_100x10x4.3mf")).toString("base64");
+    await inject("distinct.3mf", w3mf);
+    const run3mf = await waitDone("writable 3MF run");
+    const ns2 = JSON.parse(await evalJs("(function(){var n=" +
+      "document.getElementById('next-step');var s=" +
+      "document.getElementById('next-export-profile');" +
+      "var mr=document.getElementById('preset-material');" +
+      "return JSON.stringify({vis:n&&n.offsetParent!==null,txt:n?n.textContent:''," +
+      "selOpts:s?[].map.call(s.options,function(o){return o.value}):[]," +
+      "matHiddenFor3mf:!mr||mr.offsetParent===null})})()"));
+    expect("E16 next-step: writable 3MF → engine writeback CTA + profile picker",
+           run3mf && ns2.vis === true
+           && ns2.txt.indexOf("下载优化后的 3MF") >= 0
+           && ns2.selOpts.join(",") === "safe,balanced,fast,appearance"
+           && ns2.matHiddenFor3mf === true,
+           JSON.stringify(ns2).slice(0, 300));
+    const bare3mf = fs.readFileSync(
+      path.join(ROOT, "test_data", "bare_no_metadata.3mf")).toString("base64");
+    await inject("bare.3mf", bare3mf);
+    const runBare = await waitDone("bare 3MF run");
+    const ns3 = await evalJs("(function(){var n=document.getElementById('next-step');" +
+      "return n?n.textContent:'absent'})()");
+    expect("E16 next-step: bare 3MF → copy variant + 不可自动写回 hint",
+           runBare && ns3.indexOf("照抄进切片软件的参数") >= 0
+           && ns3.indexOf("无切片设置") >= 0,
+           String(ns3).slice(0, 260));
 
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");

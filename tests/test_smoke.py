@@ -2345,6 +2345,59 @@ def main():
         _sh.rmtree(log_dir, ignore_errors=True)
         _sh.rmtree(aux_log_dir, ignore_errors=True)
 
+        # ---------- v0.27 novice flow ----------
+        # T107 — bundled sample: status disclosure + a POST that stages an
+        # ORDINARY model session (same response shape as upload, kind gate
+        # holds: analyze works on it like any STL)
+        status, body = request(port, "GET", "/api/status")
+        _st107 = json.loads(body)
+        check("T107 status discloses sample_available",
+              _st107.get("sample_available") is True, body[:120])
+        status, body = request(port, "POST", "/api/sample", b"",
+                               {"Content-Type": "application/json"})
+        _sm = json.loads(body)
+        check("T107b /api/sample stages an ordinary model session",
+              status == 200 and _sm.get("ok") and _sm.get("is_3mf") is False
+              and _sm.get("kind") == "model" and _sm.get("writable") is None
+              and isinstance(_sm.get("token"), str)
+              and _sm.get("name") == "示例模型-测试梁.stl",
+              body[:160])
+        if _sm.get("ok"):
+            st2, body2 = request(
+                port, "POST", "/api/analyze",
+                json.dumps({"token": _sm["token"]}).encode(),
+                {"Content-Type": "application/json"})
+            _an107 = json.loads(body2)
+            check("T107c sample session analyzes through the real engine",
+                  st2 == 200 and _an107.get("ok")
+                  and (_an107.get("report") or {}).get("input") is not None,
+                  body2[:160])
+
+        # T108 — presets carry the use-case question text (presentation
+        # layer; params themselves unchanged — safe still pins walls=5)
+        status, body = request(port, "GET", "/api/params")
+        _pm108 = json.loads(body)
+        _pres = _pm108.get("presets") or []
+        _uses = [p.get("use", "") for p in _pres]
+        check("T108 presets expose use-case text for all four",
+              len(_pres) == 4
+              and all(_uses)
+              and "受力" in _uses[0] and "不确定" in _uses[1],
+              str(_uses)[:160])
+        _safe = next((p for p in _pres if p["name"] == "safe"), None)
+        check("T108b preset params unchanged by the use field",
+              _safe and _safe["params"].get("walls") == 5
+              and _safe["params"].get("material") == "PLA",
+              str(_safe)[:160])
+        # presets_for passthrough keeps `use` through the drift sanitizer
+        sys.path.insert(0, ROOT)
+        import server as _srv108
+        _pf = _srv108.presets_for(["PLA", "PETG"], ["gyroid"])
+        check("T108c presets_for passes use through the sanitizer",
+              all(p.get("use") == _orig.get("use")
+                  for p, _orig in zip(_pf, _srv108.PRESETS)),
+              str([p.get("use") for p in _pf])[:160])
+
     finally:
         proc.terminate()
         proc.wait(timeout=10)

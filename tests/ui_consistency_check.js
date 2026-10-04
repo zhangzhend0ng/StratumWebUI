@@ -83,6 +83,12 @@ expect("C4 select rides --ctl-h",
        /select\s*\{\s*height:\s*var\(--ctl-h\)/.test(css));
 expect("C4 hero presets ride --ctl-h-hero",
        /\.preset-btn\s*\{[^}]*height:\s*var\(--ctl-h-hero\)/.test(css));
+// v0.27 use-case preset cards: the two-line card moves the hero height
+// from a fixed lock to a FLOOR (height:auto + min-height token); the base
+// .preset-btn pin above stays as the single-line default contract
+expect("C4 preset cards keep --ctl-h-hero as min-height floor",
+       /\.preset-card\s*\{[^}]*min-height:\s*var\(--ctl-h-hero\)/.test(css)
+       && /\.preset-card\s*\{[^}]*height:\s*auto/.test(css));
 expect("C4 bare icon buttons opt out with height:auto",
        /\.p-reset\s*\{[^}]*height:\s*auto/.test(css)
        && /\.toast-x[^{]*\{[^}]*height:\s*auto/.test(css.replace(/\n\s*/g, " ")));

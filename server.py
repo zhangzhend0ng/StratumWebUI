@@ -130,7 +130,7 @@ def _validated_float(raw, lo, hi):
 #         discloses gcode_diff_available; companion absence hides the panel
 #         (degrade, never a blocker); console channel = stderr (the
 #         one-line summary lives there, unlike stratum.exe's stdout).
-UI_VERSION = "0.26.0"
+UI_VERSION = "0.27.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -250,6 +250,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(os.path.abspath(sys.executable)) if FROZEN else HERE
 RESOURCE_DIR = getattr(sys, "_MEIPASS", None) or HERE
 INDEX_PATH = os.path.join(RESOURCE_DIR, "index.html")
+# v0.27 bundled sample model (same file as test_data/beam_100x10x4.stl —
+# committed under sample/ so dev and frozen resolve ONE path; PyInstaller
+# datas ships it as sample/). The empty-state "先试一个示例" entry degrades
+# to hidden when the file is absent (status-gated, gcode-panel precedent).
+SAMPLE_STL = "beam_100x10x4.stl"
+SAMPLE_DISPLAY = "示例模型-测试梁.stl"
+SAMPLE_PATH = os.path.join(RESOURCE_DIR, "sample", SAMPLE_STL)
 # zero-build UI split: index.html + classic <script src> modules served from
 # RESOURCE_DIR (same layout as the PyInstaller datas). Explicit whitelist —
 # no directory traversal, no content-type guessing.
@@ -1232,24 +1239,31 @@ PROFILES = ["safe", "balanced", "fast", "appearance"]
 PRESETS = [
     {"name": "safe", "label": "安全",
      "desc": "厚壁高填充，强度优先",
+     # v0.27 use-case question text: the novice answers "这个零件拿来做什么",
+     # not tradeoff jargon. Presentation layer only — the params below are
+     # unchanged server-authored product defaults.
+     "use": "要受力的零件（支架 / 夹具 / 结构件）",
      "params": {"walls": 5, "infill": 40, "pattern": "tri-hexagon",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 210, "bed_temperature": 65,
                 "print_speed": 30, "cooling_fan": 60, "layer_height": 0.16}},
     {"name": "balanced", "label": "均衡",
      "desc": "接近引擎默认，强度与速度兼顾",
+     "use": "普通功能件 —— 不确定就选这个",
      "params": {"walls": 3, "infill": 20, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 200, "bed_temperature": 60,
                 "print_speed": 50, "cooling_fan": 100, "layer_height": 0.2}},
     {"name": "fast", "label": "高速",
      "desc": "低填充高速度，出件最快",
+     "use": "快速打草稿，验证形状 / 尺寸",
      "params": {"walls": 2, "infill": 10, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 210, "bed_temperature": 60,
                 "print_speed": 80, "cooling_fan": 100, "layer_height": 0.28}},
     {"name": "appearance", "label": "外观",
      "desc": "慢速细表面，外观优先",
+     "use": "摆件 / 外观件，表面质量优先",
      "params": {"walls": 4, "infill": 15, "pattern": "gyroid",
                 "material": "PLA", "nozzle_diameter": 0.4,
                 "nozzle_temperature": 205, "bed_temperature": 60,
@@ -1277,7 +1291,8 @@ def presets_for(materials, patterns):
                 value = meta["default"]
             params[name] = value
         out.append({"name": p["name"], "label": p["label"],
-                    "desc": p["desc"], "params": params})
+                    "desc": p["desc"], "use": p.get("use", ""),
+                    "params": params})
     return out
 
 
@@ -1758,6 +1773,9 @@ class StratumHandler(BaseHTTPRequestHandler):
                 # v0.23: gcode-diff companion readiness — the UI hides the
                 # whole G-code tools panel when absent (degrade, not error)
                 "gcode_diff_available": GCODE_DIFF_BIN is not None,
+                # v0.27: bundled sample availability — same degrade-not-error
+                # gate for the empty-guide "先试一个示例" entry
+                "sample_available": os.path.isfile(SAMPLE_PATH),
             })
         elif path == "/api/params":
             # surface tells the UI where the enums came from; drift lists
@@ -2064,6 +2082,8 @@ class StratumHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/upload":
                 self._upload()
+            elif path == "/api/sample":
+                self._sample()
             elif path == "/api/analyze":
                 self._analyze()
             elif path == "/api/open-logs":
@@ -2193,6 +2213,35 @@ class StratumHandler(BaseHTTPRequestHandler):
         _send_json(self, 200, {"ok": True, "token": token, "name": basename,
                                "is_3mf": is_3mf, "writable": writable,
                                "kind": kind, "size": len(raw)})
+
+    def _sample(self):
+        """v0.27 '先试一个示例' — stage the bundled sample STL as an ordinary
+        model session (same FIFO/eviction/shape as an upload; the bytes are
+        ours, so no re-validation needed beyond existence). The client treats
+        the response exactly like /api/upload's."""
+        if BINARY is None:
+            _send_json(self, 503, {"ok": False,
+                                   "error": "stratum.exe 未找到（设置 STRATUM_BIN 或放 bin/stratum.exe）"})
+            return
+        if not os.path.isfile(SAMPLE_PATH):
+            _send_json(self, 503, {"ok": False,
+                                   "error": "示例模型文件缺失（安装包不完整？）"})
+            return
+        with open(SAMPLE_PATH, "rb") as fh:
+            raw = fh.read()
+        token = secrets.token_hex(8)
+        path = os.path.join(WORK_DIR, token + ".stl")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        with _session_lock:
+            _sessions[token] = {"token": token, "path": path,
+                                "name": SAMPLE_DISPLAY, "is_3mf": False,
+                                "writable": None, "kind": "model"}
+            while len(_sessions) > MAX_SESSIONS:
+                _evict_oldest_session_locked()
+        _send_json(self, 200, {"ok": True, "token": token, "name": SAMPLE_DISPLAY,
+                               "is_3mf": False, "writable": None,
+                               "kind": "model", "size": len(raw)})
 
     # ---- G-code companion tools (gcode-diff, v0.23) ------------------------
     # Pure orchestration of an external CLI (same pattern as the engine):
