@@ -1076,11 +1076,11 @@ d25v18.phase_d.buckling_warning =
 d25v18.phase_d.fracture_risk_detected = true;
 d25v18.phase_d.fracture_assessment = "检出 K_Iz 超限";
 rerender(d25v18);
-expect("v0.18: buckling warning mirrored above the fold (engine text verbatim)",
-       boxText("pd-warn-promoted").indexOf("⚠ 屈曲警示: 细长件屈曲风险") >= 0,
+expect("v0.18: buckling warning mirrored above the fold (v0.28 human note + engine text verbatim)",
+       boxText("pd-warn-promoted").indexOf("⚠ 屈曲警示: 零件可能被压弯/压塌（屈曲）——引擎原文：细长件屈曲风险") >= 0,
        boxText("pd-warn-promoted"));
-expect("v0.18: fracture detected+assessment mirrored",
-       boxText("pd-warn-promoted").indexOf("⚠ 断裂判定: 检出 K_Iz 超限") >= 0,
+expect("v0.18: fracture detected+assessment mirrored (v0.28 human note + verbatim)",
+       boxText("pd-warn-promoted").indexOf("⚠ 断裂判定: 零件可能出现裂纹并扩展（断裂风险）——引擎原文：检出 K_Iz 超限") >= 0,
        boxText("pd-warn-promoted"));
 expect("v0.18: wall lines carry pd-warn class on both engine channels",
        (function () {
@@ -1468,5 +1468,120 @@ let nsTune3 = null;
 })(elements["summary-cards"]);
 expect("29 CTA: rank2 + zero applicable → no auto-tune button",
        !nsTune3, nsTune3 && nsTune3.textContent);
+
+// 30. (v0.28) language layer: banner human-note prefix (banner-only), term
+// "?" buttons, error-card action extension, cand-bars novice summary.
+// Teeth: pre-v0.28 code renders the bare label (no note), no .term-q
+// children, no memory/queue branches, and no summary line — every positive
+// below reads absent/empty and fails cleanly.
+// a) A1 wall discipline: the engine detail wall keeps the BARE label+prose
+// (the human sentence targets the novice banner only — never the wall)
+rerender(d25v18);
+expect("30 A1: wall stays verbatim (no human note, no 引擎原文 marker)",
+       boxText("phase-d-detail").indexOf("屈曲警示: 细长件屈曲风险") >= 0
+       && boxText("phase-d-detail").indexOf("零件可能被压弯") < 0
+       && boxText("phase-d-detail").indexOf("引擎原文") < 0,
+       boxText("phase-d-detail").slice(0, 160));
+// PD6: empty-string buckling warning is falsy → no line anywhere
+const d30e = JSON.parse(JSON.stringify(real));
+d30e.phase_d.run = true;
+d30e.phase_d.buckling_warning = "";
+rerender(d30e);
+expect("30 A1: empty-string buckling_warning → no banner line",
+       boxText("pd-warn-promoted").indexOf("屈曲") < 0,
+       boxText("pd-warn-promoted"));
+// b) A3 term buttons: real3 fires the phase_c glossary rows (delamination
+// site asserted since v0.10); every .term-q must carry the title (popup
+// source) and an onclick
+function findAll(root, cls, out) {
+  (root.children || []).forEach(function (c) {
+    if ((c.className || "").indexOf(cls) >= 0) out.push(c);
+    findAll(c, cls, out);
+  });
+  return out;
+}
+rerender(real3);
+const tqs = findAll(elements["phase-c-detail"], "term-q", [])
+  .concat(findAll(elements["phase-d-detail"], "term-q", []));
+expect("30 A3: term rows carry ?-buttons with title + onclick",
+       tqs.length >= 1 && tqs.every(function (b) {
+         return typeof b.title === "string" && b.title.length > 4
+                && typeof b.onclick === "function"; }),
+       "n=" + tqs.length);
+// S6: the vm stub has no document.body — openTermPop must no-op, not throw
+let popNoThrow = true;
+try { ctx.openTermPop({ title: "x" }); ctx.closeTermPop(); }
+catch (e) { popNoThrow = false; }
+expect("30 A3: popup no-ops without document.body (vm-stub guard)",
+       popNoThrow && ctx._termPop === null);
+// c) A4 error-card extensions
+ctx.analyzeCalls = 0;
+ctx.analyze = function () { ctx.analyzeCalls++; };
+ctx.renderAnalyzeError({ error: "stratum.exe 失败 (rc=3): std::bad_alloc" });
+let fastBtn = findBtn(elements["analyze-error"], "开快速预览并重跑");
+expect("30 A4: memory-class error → quick-preview rerun button",
+       !!fastBtn, boxText("analyze-error").slice(0, 120));
+if (fastBtn) fastBtn.onclick();
+expect("30 A4: clicking it checks opt-fast and re-runs",
+       elements["opt-fast"].checked === true && ctx.analyzeCalls === 1,
+       "checked=" + elements["opt-fast"].checked +
+       " calls=" + ctx.analyzeCalls);
+// timeout class: contains 分辨率 (would match the legacy grid regex) but
+// the grid×2 button must be SUPPRESSED — doubling the grid worsens timeouts
+ctx.renderAnalyzeError({ error:
+  "分析超时（180s）——模型过大/面数过高（52.3 MB）。可尝试：① 用环境变量 STRATUM_UI_GRID 调低体素分辨率后重启；② 换用更小/更简化的模型" });
+expect("30 A4: timeout text (contains 分辨率) suppresses the harmful grid-×2 button",
+       !findBtn(elements["analyze-error"], "提高网格精度")
+       && !findBtn(elements["analyze-error"], "开快速预览")
+       && boxText("analyze-error").indexOf("分析超时") >= 0,
+       boxText("analyze-error").slice(0, 120));
+// queue full: hint line only, no invented retry CTA
+ctx.renderAnalyzeError({ error: "引擎忙（排队已满）——稍后重试或取消其他任务" });
+expect("30 A4: queue-full → one guidance line, no extra button",
+       boxText("analyze-error").indexOf("本次请求未开始") >= 0
+       && !findBtn(elements["analyze-error"], "开快速预览")
+       && !findBtn(elements["analyze-error"], "提高网格精度"),
+       boxText("analyze-error").slice(0, 160));
+// E3 overlap: grid + memory in one message → both buttons coexist
+ctx.renderAnalyzeError({ error: "网格部件解析失败: out of memory" });
+expect("30 A4: grid+memory overlap → both buttons",
+       !!findBtn(elements["analyze-error"], "提高网格精度")
+       && !!findBtn(elements["analyze-error"], "开快速预览"),
+       boxText("analyze-error").slice(0, 120));
+// d) A5 cand-bars novice summary (enumeration fact — candidates carry no
+// rank field, so the wording must NOT claim one)
+const d30c = JSON.parse(JSON.stringify(real3));
+d30c.process_optimization.candidates = [
+  {name: "safe", feasible: true, search_est_safety_factor: 2.6},
+  {name: "fast", feasible: true, search_est_safety_factor: 1.2}];
+rerender(d30c);
+expect("30 A5: first feasible row stated (Math.round SF, table convention)",
+       boxText("cand-bars").indexOf("第一个可行档位（引擎枚举序）：safe —— 安全系数 3") >= 0,
+       boxText("cand-bars").slice(0, 200));
+// C2: SF null on the first row → name only, no "null" fragment
+d30c.process_optimization.candidates = [
+  {name: "safe", feasible: true},
+  {name: "fast", feasible: true, search_est_safety_factor: 1.2}];
+rerender(d30c);
+const cb2 = boxText("cand-bars");
+expect("30 A5: first row without SF → name only (never renders null)",
+       cb2.indexOf("第一个可行档位（引擎枚举序）：safe") >= 0
+       && cb2.indexOf("安全系数 null") < 0 && cb2.indexOf("undefined") < 0,
+       cb2.slice(0, 200));
+// C4: missing name → "??", not "undefined"
+d30c.process_optimization.candidates = [
+  {feasible: true, search_est_safety_factor: 2},
+  {name: "fast", feasible: true, search_est_safety_factor: 1}];
+rerender(d30c);
+expect("30 A5: missing name → ?? placeholder",
+       boxText("cand-bars").indexOf("第一个可行档位（引擎枚举序）：?? —— 安全系数 2") >= 0,
+       boxText("cand-bars").slice(0, 200));
+// C3: <2 feasible rows → the whole block (summary included) stays empty
+d30c.process_optimization.candidates = [
+  {name: "safe", feasible: true, search_est_safety_factor: 2.6}];
+rerender(d30c);
+expect("30 A5: <2 feasible → no summary line (gate unchanged)",
+       boxText("cand-bars").indexOf("第一个可行档位") < 0,
+       boxText("cand-bars").slice(0, 120));
 
 process.exit(fails ? 1 : 0);

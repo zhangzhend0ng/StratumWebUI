@@ -628,6 +628,25 @@
     color: inherit; font-size: var(--fs-md); padding: 0; line-height: 1.3;
     height: auto; }  /* bare icon button */
 
+  /* v0.28 term popup ("?" beside glossary terms / KPI labels — the
+     touch-discoverable sibling of the title hover; zero dependencies) */
+  .term-q {
+    display: inline-block; width: 16px; height: 16px; line-height: 15px;
+    margin-left: 4px; padding: 0; vertical-align: middle;
+    border: 1px solid var(--line-strong); border-radius: 50%;
+    background: var(--surface-1); color: var(--muted);
+    font-size: var(--fs-xs); font-weight: 700; cursor: pointer;
+  }
+  .term-q:hover { border-color: var(--accent); color: var(--accent); }
+  .term-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #term-pop {
+    position: fixed; z-index: 1100; max-width: 320px;
+    padding: 10px 14px; border-radius: var(--r-md);
+    border: 1px solid var(--line-strong); background: var(--surface-1);
+    color: var(--text); box-shadow: var(--shadow-3);
+    font-size: var(--fs-sm); line-height: 1.55;
+  }
+
   /* ============ v0.10/v0.11 productization (light restyle) ============ */
   /* brand wordmark gradient (violet tail reserved for the wordmark only) */
   .hero-mark {
@@ -1833,10 +1852,6 @@ function applyPreset(p) {
   // no batch gate (only scheduleAuto does), so a click mid-batch would run
   // the engine concurrently with /api/batch on the same token.
   if (state.batchRunning) { toast("批量运行进行中，请稍候", "info"); return; }
-  // v0.18: the strip's step-2 ✓ means "the user picked a preset" — the
-  // choosing action, not the analysis result (a failed analyze still had a
-  // real choice made). New model upload resets it (resetTuningState).
-  state.presetApplied = true;
   Object.keys(p.params || {}).forEach(function (name) {
     var input = findRowInput(name);
     if (!input) return;  // param not rendered (defensive; presets are sanitized)
@@ -2470,7 +2485,6 @@ function resetTuningState() {
                         // gcode result even if the coming analyze fails
   state.dirty = {};
   state.hasReport = false;  // v0.13: flow restarts at step 2 for the new model
-  state.presetApplied = false;  // v0.18: fresh model = no preset chosen yet
   state.lastApplied = null;  // v0.24: model A's written values must not be
                              // reconciled against model B's echo (would
                              // fabricate a 「引擎按域调整为X」 toast)
@@ -3694,9 +3708,15 @@ function exportOrca() {
     a.download = (state.name.replace(/\.3mf$/i, "") || "model") + "_orca_suggestions.3mf";
     document.body.appendChild(a); a.click(); a.remove();
     $("export-msg").textContent = "已下载仅含 Orca 建议的 3MF（该通道无 sidecar 审计）";
+    // v0.28: mirror of the v0.27 export3mf pair — today the only trigger is
+    // the advanced-area button (next to #export-msg), so this is redundancy
+    // rather than a simple-mode visibility fix; kept as the family contract
+    // so a future simple-mode caller cannot resurrect the single-layer gap
+    toast("已下载仅含 Orca 建议的 3MF（该通道无 sidecar 审计）", "ok");
   }).catch(function (e) {
     $("export-msg").className = "err";
     $("export-msg").textContent = String(e);
+    toast("写回失败：" + e, "err");  // same visibility family as export3mf
   });
 }
 
@@ -4608,6 +4628,16 @@ var LANG_EN = {
   "载入示例模型…": "loading the sample model…",
   "已载入示例 ": "sample loaded: ",
   "（材料按你的选择：": " (material per your choice: ",
+  // ---- v0.28 language layer: banner human-note prefixes (whole text
+  // nodes — assessLine composes label+note before the verbatim skip span),
+  // error-card action strings ----
+  "⚠ 屈曲警示: 零件可能被压弯/压塌（屈曲）——引擎原文：":
+    "⚠ Buckling warning: the part may bend sideways or collapse (buckling) — engine text: ",
+  "⚠ 断裂判定: 零件可能出现裂纹并扩展（断裂风险）——引擎原文：":
+    "⚠ Fracture: the part may develop growing cracks (fracture risk) — engine text: ",
+  "开快速预览并重跑": "Enable quick preview and re-run",
+  "本次请求未开始——稍后重新点「分析」即可。":
+    "This request never started — click Analyze again in a moment.",
 };
 // word-level fallback for concatenated strings (labels + counts + values).
 // Longest-first replacement; exact full-string hits above take precedence.
@@ -4829,6 +4859,10 @@ var LANG_WORDS = (function () {
     // elsewhere; the separator-suffixed form can only match the composition
     ["安全 · ", "Safe · "], ["均衡 · ", "Balanced · "],
     ["高速 · ", "Fast · "], ["外观 · ", "Appearance · "],
+    // v0.28 cand-bars novice summary (name + SF compose at runtime); the
+    // em-dash separators keep 安全系数 out of bare-word reach
+    ["第一个可行档位（引擎枚举序）：", "First feasible preset (engine order): "],
+    [" —— 安全系数 ", " — safety factor "],
     // fullwidth punctuation → latin, LAST resort so chrome lines don't end
     // with CJK punctuation. Applied to every translated node; engine-authored
     // prose rendered outside skip nodes was already word-mangle-prone.
@@ -5091,6 +5125,22 @@ Array.prototype.forEach.call(
   document.querySelectorAll('input[name="gcode-mode"]'),
   function (r) { r.addEventListener("change", gcodeSyncMode); });
 gcodeSyncMode();  // initial slot placeholder + button gate
+// v0.28: KPI labels gain the "?" popup (touch path for the static scale
+// explanations that lived as title hover only — same openTermPop the
+// report.js glossary rows use). The .k title stays the single source; the
+// button copies it at boot so hover and card can never drift. Static scale
+// text only: what the number IS, never a UI-invented band (overall_band is
+// an engine contract gap — ROADMAP v0.9).
+(function () {
+  var ks = document.querySelectorAll(".ui-kpi .k[title]");
+  for (var i = 0; i < ks.length; i++) (function (k) {
+    var b = el("button", "term-q", "?");
+    b.type = "button";
+    b.title = k.title;
+    b.onclick = function () { openTermPop(b); };
+    k.appendChild(b);  // rides inline at the end of the label line
+  })(ks[i]);
+})();
 $("btn-export").addEventListener("click", export3mf);
 $("btn-export-orca").addEventListener("click", exportOrca);
 $("btn-report").addEventListener("click", function () {

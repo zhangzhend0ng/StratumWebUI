@@ -16,6 +16,65 @@ var TERM_INFO = {
   thermal_stress: "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。",
 };
 
+// v0.28 term popup — the touch-discoverable sibling of the title hover.
+// Reads the TRIGGER's own title attribute (single source: desktop hover and
+// card body can never drift; EN mode reuses the _langAttrs translation the
+// MutationObserver already applies to [title] elements — no second hop).
+// Zero dependencies (red line 1). Singleton on document.body; renderReport
+// calls closeTermPop() so a re-render (which rebuilds the trigger rows)
+// never leaves an orphaned card. vm-stub safety: report.js only declares
+// functions — the listeners are installed lazily on first open, and every
+// touch on document/body/getBoundingClientRect is guarded (the render_check
+// stub has none of them).
+var _termPop = null, _termPopWired = false;
+function closeTermPop() {
+  if (_termPop && _termPop.parentNode && _termPop.parentNode.removeChild)
+    _termPop.parentNode.removeChild(_termPop);
+  _termPop = null;
+}
+function openTermPop(btn) {
+  if (typeof document === "undefined" || !document.body
+      || !document.createElement) return;
+  var text = btn && btn.title;
+  if (typeof text !== "string" || !text) return;
+  closeTermPop();  // only one card at a time
+  if (!_termPopWired && document.addEventListener) {
+    _termPopWired = true;
+    // click-outside: the same click that OPENED the card has the .term-q
+    // trigger as its target — must not insta-close (bubbling race)
+    document.addEventListener("click", function (ev) {
+      var t = ev.target;
+      if (_termPop && t && !(t.closest && t.closest("#term-pop"))
+          && !(t.closest && t.closest(".term-q"))) closeTermPop();
+    });
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") closeTermPop();
+    });
+  }
+  _termPop = document.createElement("div");
+  _termPop.id = "term-pop";
+  var body = document.createElement("div");
+  body.className = "term-pop-body";
+  body.textContent = text;  // locale-correct by construction (see above)
+  _termPop.appendChild(body);
+  if (btn.getBoundingClientRect) {
+    var r = btn.getBoundingClientRect();
+    _termPop.style.left =
+      Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - 320)) + "px";
+    _termPop.style.top = (r.bottom + 8) + "px";
+  }
+  document.body.appendChild(_termPop);
+}
+// "?" affordance for a glossary term: title carries the explanation (hover
+// on desktop, popup text on click — one string, both surfaces).
+function termQ(key) {
+  var b = el("button", "term-q", "?");
+  b.type = "button";
+  b.title = TERM_INFO[key] || "";
+  b.onclick = function () { openTermPop(b); };
+  return b;
+}
+
 // v0.16 (engine 0.26): recommendation motivation tokens → zh display label.
 // The token is an engine enum (same mapping practice as LOAD_LABELS / goal
 // tags — chrome, not engine prose); null = engine-declared "unclassified"
@@ -118,6 +177,9 @@ function autoTuneStepDecision(opts) {
 
 // ---------- render ----------
 function renderReport(d, consoleText, applyable) {
+  // v0.28: a re-render rebuilds the term-popup trigger rows — no orphaned
+  // card may survive pointing at a dead trigger
+  closeTermPop();
   // v0.10: a successful render supersedes the empty-state guide (「分析结果」) and any
   // error card from a previous failed run
   var eg = $("empty-guide");
@@ -477,6 +539,7 @@ function renderReport(d, consoleText, applyable) {
       var h48 = el("div", "hint",
         "Hill48 SF: " + numEnv(pc.hill48_safety_factor, 1));
       h48.title = TERM_INFO.hill48;  // v0.10 term glossary hover
+      h48.appendChild(termQ("hill48"));  // v0.28 touch popup
       pcd.appendChild(h48);
     }
     if (pc.plastic_safety_factor != null) {
@@ -491,6 +554,7 @@ function renderReport(d, consoleText, applyable) {
                            pc.max_thermal_stress_mpa_envelope) + " MPa" +
         (pc.thermal_is_upper_bound === true ? "（上界）" : ""));
       ths.title = TERM_INFO.thermal_stress;
+      ths.appendChild(termQ("thermal_stress"));  // v0.28 touch popup
       pcd.appendChild(ths);
     }
     if (pc.max_layer_residual_stress_mpa != null) {
@@ -506,6 +570,7 @@ function renderReport(d, consoleText, applyable) {
         (pc.delamination_risk_layers != null
           ? "（" + pc.delamination_risk_layers + " 层）" : ""));
       dlr.title = TERM_INFO.delamination;
+      dlr.appendChild(termQ("delamination"));  // v0.28 touch popup
       pcd.appendChild(dlr);
     }
     if (pc.max_fracture_peel_risk != null || pc.max_fracture_shear_risk != null) {
@@ -520,6 +585,7 @@ function renderReport(d, consoleText, applyable) {
         "Weibull: Pf " + numEnv(pc.weibull_failure_probability, 6) +
         " / R " + numEnv(pc.weibull_reliability_factor, 4));
       wbr.title = TERM_INFO.weibull;
+      wbr.appendChild(termQ("weibull"));  // v0.28 touch popup
       pcd.appendChild(wbr);
     }
     // (iter 72) yielded_elements: 0 is meaningful information ("no element
@@ -603,9 +669,12 @@ function renderReport(d, consoleText, applyable) {
   // Simple mode folds the wall, and these two engine channels
   // (phase_d.buckling_warning / fracture_risk_detected) have no other
   // above-the-fold outlet, so the same value echoes above it. Same-render
-  // echo of the exact wall text — never a UI-side rephrasing (verdict-first
-  // discipline); CSS shows the mirror in simple mode only (snapshot-safe:
-  // buildSnapshotDoc copies no body class and the mirror defaults hidden).
+  // echo of the wall's label + VERBATIM prose — never a rephrasing of the
+  // engine text (v0.28 adds a banner-only plain-language prefix sentence
+  // naming the failure mechanism; it grades nothing and the engine prose
+  // stays verbatim in the skip span); CSS shows the mirror in simple mode
+  // only (snapshot-safe: buildSnapshotDoc copies no body class and the
+  // mirror defaults hidden).
   var pdw = $("pd-warn-promoted");
   if (pdw) pdw.innerHTML = "";
   if (pd.run) {
@@ -616,9 +685,18 @@ function renderReport(d, consoleText, applyable) {
     // The label is UI chrome (translatable); the assessment prose is
     // engine-authored → skip span. Same-render echo discipline: the mirror
     // below re-renders the exact label+prose pair, never a rephrase.
-    function assessLine(box, labelText, proseText, warnClass, prefix) {
+    // v0.28 banner-only humanNote: ONE plain-language sentence naming the
+    // physical failure mode, prefixed to the verbatim prose (「…——引擎原文：」
+    // separates UI chrome from engine text). It carries NO severity grading —
+    // the word describes the mechanism (buckling = bending/collapse,
+    // fracture = crack growth), the engine's own text stays the verdict.
+    // The wall (#phase-d-detail) keeps the bare label+prose — the human
+    // sentence targets the novice banner only.
+    function assessLine(box, labelText, proseText, warnClass, prefix, humanNote) {
       var line = el("div", ("hint " + (warnClass || "")).trim());
-      line.appendChild(document.createTextNode((prefix || "") + labelText + ": "));
+      line.appendChild(document.createTextNode(
+        (prefix || "") + labelText + ": "
+        + (humanNote ? humanNote + "——引擎原文：" : "")));
       var prose = el("span", null, proseText);
       prose.setAttribute("data-i18n-skip", "1");
       line.appendChild(prose);
@@ -635,9 +713,11 @@ function renderReport(d, consoleText, applyable) {
       // truthy guard on the assessment text too: risk_detected=true with a
       // null assessment must not render "null" (REFUTE P-shape fix)
       if (pd.buckling_warning)
-        assessLine(pdw, "屈曲警示", pd.buckling_warning, "", "⚠ ");
+        assessLine(pdw, "屈曲警示", pd.buckling_warning, "", "⚠ ",
+                   "零件可能被压弯/压塌（屈曲）");
       if (pd.fracture_risk_detected === true && pd.fracture_assessment)
-        assessLine(pdw, "断裂判定", pd.fracture_assessment, "", "⚠ ");
+        assessLine(pdw, "断裂判定", pd.fracture_assessment, "", "⚠ ",
+                   "零件可能出现裂纹并扩展（断裂风险）");
     }
     // skipped sub-modules with the engine's own reasons (v0.8.1 render gap —
     // previously only visible if the user opened the raw console)
@@ -672,6 +752,7 @@ function renderReport(d, consoleText, applyable) {
         wb += "，σ_eff " + num(pd.weibull_sigma_eff_mpa, 1) + " MPa";
       var wbd = el("div", "hint", wb);
       wbd.title = TERM_INFO.weibull;
+      wbd.appendChild(termQ("weibull"));  // v0.28 touch popup
       pdd.appendChild(wbd);
     }
     if (pd.findley_ran && pd.findley_sf != null) {
@@ -1386,6 +1467,19 @@ function renderReport(d, consoleText, applyable) {
       cbBox.appendChild(el("p", "hint",
         // v0.19: one line (page-height budget, round B) — semantics unchanged
         "条长=组内相对值：绿=安全系数 / 琥珀=时间 / 蓝=材料；排序以引擎为准。"));
+      // v0.28 novice summary: ONE line stating the enumeration fact — the
+      // first FEASIBLE row of the engine's candidate list. Candidates carry
+      // NO rank field (probed report.json: the array is the preset
+      // enumeration safe/balanced/fast/appearance), so "first" states table
+      // order only — never a claim that the engine ranked it, and no
+      // recommendation tone. SF rounds like the table's own SF column
+      // (Math.round; fmtSig is the scores/infill/speed convention — REFUTE).
+      var top = feas[0];
+      cbBox.appendChild(el("p", "hint cand-top",
+        "第一个可行档位（引擎枚举序）：" + (top.name || "??")
+        + (typeof top.search_est_safety_factor === "number"
+           ? " —— 安全系数 " + Math.round(top.search_est_safety_factor)
+           : "")));
     }
   }
 
@@ -1665,7 +1759,12 @@ function renderAnalyzeError(j) {
   // grid / resolution / multi-part errors → double --grid and rerun (the
   // engine's own appendix-C guidance surfaced as a button)
   var msg = String(j.error);
-  if (/网格|分辨率|部件|grid|resolution/i.test(msg)) {
+  // v0.28: the rc=124 timeout text itself contains 「分辨率」 (it suggests
+  // LOWERING the voxel resolution) — doubling the grid there would make the
+  // next run slower still, so the button is suppressed for timeout-class
+  // errors (harmful-action fix found by REFUTE while extending this card)
+  var timedOut = /超时|timed out|timeout/i.test(msg);
+  if (/网格|分辨率|部件|grid|resolution/i.test(msg) && !timedOut) {
     act("提高网格精度（--grid ×2）并重跑", function () {
       var inp = $("opt-grid");
       var cur = parseInt(inp && inp.value, 10);
@@ -1675,7 +1774,25 @@ function renderAnalyzeError(j) {
       if (typeof analyze === "function") analyze(false);
     });
   }
+  // v0.28 memory-class failures → quick preview + rerun: --fast caps the
+  // FEM voxel grid (12³), which is where engine OOM actually allocates.
+  // Timeout-class gets NO button (mesh-parse time dominates it and --fast
+  // does not touch that — the verbatim server text already names the levers)
+  if (/内存|bad_alloc|out of memory/i.test(msg)) {
+    act("开快速预览并重跑", function () {
+      var cb = $("opt-fast");
+      if (cb) cb.checked = true;
+      if (typeof analyze === "function") analyze(false);
+    });
+  }
   if (acts.childNodes.length) box.appendChild(acts);
+  // v0.28 queue full: the verbatim server text already guides (稍后重试或
+  // 取消其他任务), so the UI adds only the one fact the error cannot state:
+  // THIS request never started. No retry button — the standing 分析 button
+  // (restored by now) is the retry path; a second CTA would duplicate the
+  // guidance the engine-adjacent text already carries verbatim.
+  if (/排队已满|引擎忙/.test(msg))
+    box.appendChild(el("div", "hint", "本次请求未开始——稍后重新点「分析」即可。"));
 }
 
 // ---------- v0.23 G-code companion tools (gcode-diff) ----------

@@ -745,6 +745,70 @@ async function main() {
            && ns3.indexOf("无切片设置") >= 0,
            String(ns3).slice(0, 260));
 
+    // ---- E17 (v0.28) language layer: banner human note / term "?" popup /
+    // error-card actions / cand-bars novice summary ------------------------
+    // risky beam again (fresh session): default params → rank2 + structured
+    // buckling warning — the banner fixture for the human-note prefix
+    await inject("beam_60x5x1p5.stl", riskyB64);
+    const langRun = await waitDone("v0.28 language fixture");
+    const bannerTxt = await evalJs("(function(){var p=document.getElementById('pd-warn-promoted');" +
+      "return p?p.textContent:''})()");
+    expect("E17 banner: human note prefixes the verbatim engine warning",
+           langRun && bannerTxt.indexOf("零件可能被压弯/压塌（屈曲）——引擎原文：") >= 0
+           && bannerTxt.indexOf("屈曲安全系数") >= 0,  // engine prose survives
+           String(bannerTxt).slice(0, 200));
+    const sumTxt = await evalJs("(function(){var b=document.getElementById('cand-bars');" +
+      "return b?b.textContent:''})()");
+    expect("E17 cand summary: first-feasible line states the enumeration fact",
+           langRun && sumTxt.indexOf("第一个可行档位（引擎枚举序）：") >= 0
+           && /安全系数 \d/.test(sumTxt),
+           String(sumTxt).slice(0, 160));
+    // KPI "?" buttons (static labels → popup; title is the popup source)
+    const kpiQ = JSON.parse(await evalJs("(function(){var q=document.querySelectorAll('.ui-kpi .term-q');" +
+      "return JSON.stringify({n:q.length,txt:q.length?q[0].textContent:''," +
+      "ttl:q.length?q[0].title:''})})()"));
+    expect("E17 popup: 4 KPI labels carry ?-buttons with the scale note",
+           kpiQ.n === 4 && kpiQ.txt === "?" && kpiQ.ttl.indexOf("综合打分") >= 0,
+           JSON.stringify(kpiQ));
+    // open (a real bubbling .click() exercises the close-handler race),
+    // swap to another trigger (only one card), ESC closes
+    const popState = JSON.parse(await evalJs("(function(){" +
+      "var q=document.querySelectorAll('.ui-kpi .term-q');" +
+      "if(q[0])q[0].click();" +
+      "var a={one:!!document.getElementById('term-pop')};" +
+      "if(q[1])q[1].click();" +
+      "var all=document.querySelectorAll('#term-pop');" +
+      "a.stillOne=all.length===1;" +
+      "a.swapped=all[0]&&all[0].textContent.indexOf('材料强度 ÷ 实际应力')>=0;" +
+      "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));" +
+      "a.escClosed=!document.getElementById('term-pop');" +
+      "return JSON.stringify(a)})()"));
+    expect("E17 popup: open → swap keeps ONE card, ESC closes",
+           popState.one && popState.stillOne && popState.swapped && popState.escClosed,
+           JSON.stringify(popState));
+    // re-render orphan guard: open a card, re-run WITHOUT any click (a
+    // physical button click would close the card via the click-outside path
+    // and mask the guard — direct analyze() isolates renderReport's hook)
+    await evalJs("(function(){var q=document.querySelectorAll('.term-q');" +
+      "for(var i=0;i<q.length;i++){if(q[i].closest('#phase-c-detail')||q[i].closest('#phase-d-detail')){q[i].click();break}}" +
+      "return !!document.getElementById('term-pop')})()");
+    await evalJs("(typeof analyze==='function')?analyze(false):0");
+    await waitDone("re-run for orphan guard");
+    expect("E17 popup: re-render closes the card (no orphan on dead trigger)",
+           !(await evalJs("!!document.getElementById('term-pop')")));
+    // error-card actions on the real page (no server dependency: direct call)
+    const memBtns = await evalJs("(function(){renderAnalyzeError({error:'stratum.exe 失败 (rc=3): std::bad_alloc'});" +
+      "var b=document.getElementById('analyze-error');" +
+      "return JSON.stringify([].map.call(b.querySelectorAll('button'),function(x){return x.textContent}))})()");
+    expect("E17 error card: memory-class → quick-preview rerun button (live page)",
+           memBtns.indexOf("开快速预览并重跑") >= 0, memBtns);
+    const qHint = await evalJs("(function(){renderAnalyzeError({error:'引擎忙（排队已满）——稍后重试或取消其他任务'});" +
+      "var b=document.getElementById('analyze-error');" +
+      "renderAnalyzeError(null);" +  // leave the page clean for later suites
+      "return b.style.display})()");
+    expect("E17 error card: queue-full hint rendered then cleared",
+       qHint === "none");
+
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");
     process.exit(fails === 0 ? 0 : 1);

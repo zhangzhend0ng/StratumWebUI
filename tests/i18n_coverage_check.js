@@ -57,7 +57,14 @@ var INTENTIONAL = [
   // rendered inside data-i18n-skip nodes (engine-authored override/rheology
   // disclosure — UI label prefixes on skip-flagged items stay zh by design)
   "参数回退: ", " 请求 ", " → 实际 ",
-  "层间键合: ", "转角: ", "流变: ", "（质量 "
+  "层间键合: ", "转角: ", "流变: ", "（质量 ",
+  // v0.28 assessLine banner composition: the humanNote fragments compose
+  // into ONE text node whose exact full string rides LANG_EN whole-node
+  // entries (「⚠ 屈曲警示: 零件可能…——引擎原文：」) — the bare fragments
+  // never render alone (same precedent as 实时分析： above)
+  "零件可能被压弯/压塌（屈曲）",
+  "零件可能出现裂纹并扩展（断裂风险）",
+  "——引擎原文："
 ];
 
 // ---- collect candidates: {file, line, text, kind} ----

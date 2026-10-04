@@ -859,6 +859,43 @@
       状态；多轮真链 E2E（待引擎建议面扩容）；P1 语言层（人话解读扩面/术语弹卡
       /错误行动化扩展/档位对比摘要行）与 P2 首启（端口占用自动换位）见规划轮
 
+### v0.28.0 — 小白语言层 + 同族小修：屈曲/断裂人话前缀 / KPI+术语「?」弹卡 / 错误行动化扩展 / 档位摘要行（2026-10-04）
+
+> 背景：v0.27 闭环四件套清偿规划轮 P1 语言层 backlog。独立 REFUTE 一轮
+> （VERDICT: REJECT——1 blocker + 6 major + 7 minor 全采纳，详见 loop-journal
+> 迭代 102）；blocker 推翻「引擎排序第一」措辞前提（candidates 是 preset 枚举
+> 无 rank 字段，对照 orient.candidates 有显式 rank），摘要行改述枚举事实。
+> 顺修 REFUTE 抓出的既有有害按钮：rc=124 超时文案含「分辨率」会命中网格×2
+> 正则——加倍网格让超时更糟，现已按超时类抑制。
+
+- [x] **A1 屈曲/断裂横幅人话前缀**：`#pd-warn-promoted`（简单模式横幅）在引擎
+      verbatim 前加一句机制人话（「零件可能被压弯/压塌（屈曲）——引擎原文：…」），
+      键于 `pd.buckling_warning` / `fracture_risk_detected===true && fracture_assessment`
+      ；字段缺一不加；引擎 prose 仍走 data-i18n-skip span；**墙内（#phase-d-detail）
+      保持纯 verbatim**（人话只上横幅）；前缀零严重度用词（REFUTE 核）
+- [x] **A2+A3 术语「?」弹卡**：自研零依赖单例弹卡（.term-q 按钮读自身 title——
+      悬停与卡同源不漂移；EN 走 MutationObserver 既有 _langAttrs 通道零新跳；
+      点外/ESC 关、同开一张、惰性注册 + vm-stub 全守卫）；TERM_INFO 5 位点 +
+      KPI 行 4 标签（刻度静态说明进卡，overall_band 缺口不自造档位）；
+      renderReport 开头 closeTermPop 防跨渲染孤儿
+- [x] **A4 错误行动化扩展**：内存类（bad_alloc/内存/out of memory）→「开快速
+      预览并重跑」（--fast 封顶 FEM 体素网格=OOM 分配点）；排队满→一句
+      「本次请求未开始」引导（verbatim 已自带稍后/取消指引，不造重复按钮）；
+      stderr verbatim 不动
+- [x] **A5 档位对比 novice 摘要行**：#cand-bars 门内（≥2 可行）一行只述枚举
+      事实「第一个可行档位（引擎枚举序）：safe —— 安全系数 3」（SF 口径=
+      表格 Math.round；REFUTE blocker 修正措辞）
+- [x] **A6/A7 同族小修**：exportOrca 补成功/失败双 toast（今日唯一触发点在
+      高级区=冗余保险，防未来简单模式调用方复活单层缺口）；presetApplied 死
+      状态连注释全删（v0.22 删步骤条后零读者，写点两处）
+- 配套：LANG_EN 整句 4 + 词级 2（em-dash 分隔符防「安全系数」误伤）；
+      INTENTIONAL +3（组合前缀片段，判例同「实时分析：」）；UI_VERSION 0.28.0
+- 验证：smoke **152/152**；render_check **195**（原 182+§30 13 条）；ux_alignment
+      **全绿**（+E17 8 项真引擎：横幅前缀/摘要行/弹卡四态/孤儿守卫——孤立化
+      修正后 sabotage 翻红实证：btn click 的点外关闭路径会掩盖守卫，改直调
+      analyze(false)）；browser/browser_en/i18n/consistency 全绿；sabotage ×3 刀
+      （砍前缀/砍摘要行/注释 closeTermPop）对应断言全翻红后还原
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 
@@ -880,6 +917,13 @@
 - [ ] **D1 分发野心**：个人/内部调参工具 vs 对外安装包产品？
       → 产品化则 v0.4（方向三）前插到 v0.3（方向二）之前
 - [ ] **D2 单文件红线**：方向四若启动，允许内嵌 three.js，还是自研最小渲染器保红线？
+- [ ] **D3 自动调参停止语义**（v0.27 起）：今日循环停止码（safe/exhausted/
+      unchanged/cap）全是 UI 侧从报告推导的哨兵——引擎若提供收敛/稳定信号
+      （如「建议面与上轮一致」的一手判定），停止可变一手语义、多轮链路也可
+      被 E2E 触达；接入前 UI 哨兵不动（显示映射纪律）。需与引擎队定字段。
+- [ ] **D4 SnapmakerOrca 集成路线**：出口卡的「拿去打印」止于下载优化 3MF；
+      Orca 侧如何接（预设包导入 / 原生读 stratum 写回键 / 插件）决定
+      v0.27 出口卡与写回审计的下一跳，未定前不造 UI 侧转换器。
 
 ## 5. 过程约定
 
