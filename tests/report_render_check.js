@@ -837,7 +837,10 @@ d25t.phase_c.max_delamination_risk = 0.000123;
 d25t.phase_c.hill48_safety_factor = 2.5;
 d25t.phase_d.weibull_ran = true;
 rerender(d25t);
-expect("v0.10: delamination hint carries the interlaminar glossary",
+expect("v0.10: delamination hint carries the layer-strength glossary note",
+       // v0.30: matches TERM_INFO.delamination's own text (「与层间强度
+       // Z/XY 直接相关」) — the standalone interlaminar key was deleted
+       // as a dead entry; this pin keeps biting on the real text
        findTitle(elements["phase-c-detail"], "层间强度") !== null);
 expect("v0.10: phase-d Weibull row carries the reliability glossary",
        findTitle(elements["phase-d-detail"], "缺陷分布") !== null);

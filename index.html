@@ -523,9 +523,26 @@
      task-flow cap (centered, then left-aligned in v0.21) produced two
      panel widths on one page next to the full-width results stack — user
      verdict: stacked cards must be equal-width. Full-width it is; the
-     page-height budget (≤2200px on the beam sample, 1440×900) is re-
-     measured ad hoc per round (v0.18: 2197 → v0.27 accumulation broke it
-     at 2376 → v0.29 bars-to-wall reclaim: 2118). */
+     page-height budget (≤2200px on the beam sample, 1440×900) is GUARDED
+     in the ux_alignment suite since v0.30 (real beam runs E13h/E17h —
+     drift turns red instead of accumulating silently; history: v0.18 2197
+     → v0.27 accumulation 2376 → v0.29 bars-to-wall 2118 → v0.30 risky
+     shape 2408 → density pass below). */
+  /* v0.30 density pass (simple mode only — advanced keeps its roomier
+     rhythm): the risky-beam shape (rank2: banner + expanded risk card +
+     auto-tune CTA + novice line) measured 2408 against the same ≤2200
+     budget the canonical beam was reclaimed to in v0.29. Panel rhythm and
+     risk-list density carry the reclaim; no evidence is folded away (the
+     ⚠ auto-expand and the raw-table outlet invariant are untouched). */
+  body.mode-simple .panel { padding: var(--sp-4); margin-bottom: var(--sp-3); }
+  body.mode-simple .panel h2 { margin-bottom: var(--sp-3); }
+  body.mode-simple .ui-drop { padding: var(--sp-3) var(--sp-4); }
+  /* risk evidence: one flowing line per entry — the suggestion hint
+     inlines after the engine's description instead of taking its own
+     block row (halves the expanded card on real models with many risks) */
+  body.mode-simple .risk-item { padding: var(--sp-1) 0; }
+  body.mode-simple .risk-item .hint { display: inline; }
+  body.mode-simple .risk-item .hint::before { content: " "; }
   /* inverse of .advanced-only: flow-only chrome (step strip) — hidden
      whenever advanced mode is on */
   body:not(.mode-simple) .simple-only { display: none !important; }
@@ -2768,6 +2785,12 @@ var gcodeState = { mode: "score", a: null, b: null, t0: 0, timer: null };
 function showGcodeResultPanel(on) {
   $("gcode-result-panel").style.display = on ? "" : "none";
   $("result-panel").style.display = on ? "none" : "";
+  // v0.30: the term popup is a singleton on document.body and outlives its
+  // trigger rows — a panel swap hides (or rebuilds) the model result area
+  // but would leave the card hovering over nothing. This funnel is the
+  // last panel-swap site outside renderReport's own closeTermPop hook
+  // (refuter 102 minor; all three callers pass through here).
+  if (typeof closeTermPop === "function") closeTermPop();
 }
 
 function gcodeSyncMode() {
@@ -4430,8 +4453,8 @@ var LANG_EN = {
     "Hill48 yield criterion: accounts for FDM print anisotropy (X/Y/Z strength differs) — closer to real interlayer strength than isotropic von Mises.",
   "Weibull 统计强度：把材料内部缺陷分布计入的可靠性模型。Pf=失效概率，R=可靠度；等级 A+ 为最优。":
     "Weibull statistical strength: reliability model accounting for the internal defect distribution. Pf = failure probability, R = reliability; grade A+ is best.",
-  "层间强度（Z/XY）：FDM 件层与层之间靠热融合连接，Z 方向（垂直于层平面）通常只有 XY 的 30–60%，是最常见的失效面。":
-    "Interlayer strength (Z/XY): FDM layers bond by thermal fusion; Z (perpendicular to the layers) typically reaches only 30–60% of XY — the most common failure plane.",
+  // (v0.30) the standalone interlayer-strength TERM_INFO entry and its
+  // translation were removed together — dead key, zero consumers
   "分层（delamination）：层间结合失效，载荷沿层界面拉开——FDM 件在 Z 向载荷下的典型失效模式；与层间强度 Z/XY 直接相关。":
     "Delamination: interlayer bond failure, the load pulls along layer interfaces — the typical FDM failure mode under Z loads; directly related to the Z/XY interlayer strength.",
   "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。":

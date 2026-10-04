@@ -11,7 +11,10 @@
 var TERM_INFO = {
   hill48: "Hill48 屈服准则：考虑 FDM 打印各向异性（X/Y/Z 方向强度不同）的屈服判定，比各向同性的 von Mises 更贴近层间真实强度。",
   weibull: "Weibull 统计强度：把材料内部缺陷分布计入的可靠性模型。Pf=失效概率，R=可靠度；等级 A+ 为最优。",
-  interlaminar: "层间强度（Z/XY）：FDM 件层与层之间靠热融合连接，Z 方向（垂直于层平面）通常只有 XY 的 30–60%，是最常见的失效面。",
+  // (v0.30) a standalone `interlaminar` entry used to live here — deleted
+  // as a dead key: zero consumers (termQ sites are hill48/thermal_stress/
+  // delamination/weibull only). The layer-strength concept stays alive
+  // inside the delamination text below.
   delamination: "分层（delamination）：层间结合失效，载荷沿层界面拉开——FDM 件在 Z 向载荷下的典型失效模式；与层间强度 Z/XY 直接相关。",
   thermal_stress: "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。",
 };

@@ -929,6 +929,53 @@
       全绿；安装包 verify 全绿；sabotage ×2 刀（分类器恒 False→T109b/c/d 红；
       sample 断言换不可能模式→verify FAIL）翻红后还原
 
+### v0.30.0 — 债务清偿轮：页高预算守卫化 + 弹卡孤儿收尾 + 死键清理（2026-10-05）
+
+> 背景：清偿 v0.28/v0.29 两轮遗留 backlog（页高无自动守卫 / 弹卡锚点滞留 /
+> interlaminar 死键 / 建议面探针复验 / mismatch 切片定案）。独立 REFUTE 一轮
+> （VERDICT: REJECT——**实验实证 risky-beam 形状 2408px 现行超预算 208px**，
+> 初版守卫点位会掩蔽这条活回归，详见 loop-journal 迭代 104）。
+
+- [x] **C1 页高预算入 E 系列 + risky 形状回收**：refuter 复刻 E17 末态实测
+      beam_60x5x1p5（rank2：横幅+展开风险卡+自动调参+摘要行全在）= **2408px
+      超预算 208**——v0.27 三件套从未在其触发形状上复测（iter 103 预言的债）。
+      回收=simple 域密度通行（panel padding/margin 收一档、风险条目「建议」hint
+      行内化+行距减半、ui-drop 收紧；⚠ 自动展开与 raw 表出口不变式不动）→
+      risky **2137** / canonical **1986**，双双 ≤2200。守卫=E13h（canonical）
+      + E17h（risky=最坏形状）双断言挂 ux_alignment 真跑（mode-simple 正向
+      判定——`mode-advanced` 类全仓零赋值，反向判定是恒真死肢）；ad-hoc 脚本
+      tests/_height_v029.js 删除（被取代）。跨机器注记：绝对页高 pin 沿用
+      1440×900 同口径（v0.19 裁决），套件本身已 win32+Chrome 路径绑定，余量
+      63px（risky）覆盖轻微字体度量漂移
+- [x] **C2 弹卡锚点滞留收尾**（refuter 102 minor）：showGcodeResultPanel
+      切换只隐藏宿主面板不关 #term-pop（单例挂 body）——gcode 跑完切走时
+      弹卡滞留。修法=funnel 内 closeTermPop（三调用点全收）；守卫孤立化直调
+      切换路径（无点击），开卡步骤自身断言（防 .term-q 缺失空转绿灯）
+- [x] **C3 interlaminar 死键清理**：TERM_INFO.interlaminar 零消费（termQ 位点
+      仅 hill48/thermal_stress/delamination/weibull），report_render:840 断言
+      实际比对 delamination 词条文本（其含「层间强度」子串）——核实后删除键
+      + LANG_EN 对应词条横扫，测试标签同步改写；咬合证明=临时抽掉
+      delamination 文本→断言红。裁决：不接线（层间强度数值行不存在，自造行
+      违反「引擎是唯一事实源」）
+- [x] **C4 建议面探针复验**（engine 0.26.0）：默认 PLA 维持 ≤1 applyable
+      （iter 101 口径）；PETG 截面=2 applyable（nozzle_temperature 进入建议面）
+      但应用两建议后重跑 items=0——**多轮链仍不可达**，auto-tune E2E 维持 §29
+      合成覆盖（v0.27 挂账继续挂，引擎队压力点在案）
+- [x] **C5 mismatch 切片引导定案**（journal 落盘，实现升格 v0.31）：真跑
+      beam+a.gcode——星座 candidates=0/tuned=0/coverage_pct=0.0/
+      excluded_feature=13(=挤出段总数)/pcr=0.004，引擎无专用 mismatch 字段，
+      零域跨因歧义（几何不匹配/特征排除/热区门槛三因同象）→ UI 只能陈述
+      事实句（keyed on tuned===0）+可能因核对清单，不得断言成因
+- [x] **C6 首启文案走查**：换位披露措辞小白可懂（主事实+浏览器自动开新址+
+      banner 重复实际地址）；server.py 文案 ↔ README 端口段 ↔ verify-installer
+      动态端口三方口径一致，不改
+- 配套：README 测试数 152→157 修正（v0.29 漏更的 stale-doc）；UI_VERSION 0.30.0
+- 验证：smoke **157/157**；render_check **195**（:840 标签改写，断言不动）；
+      ux_alignment 全绿（+E13h/E17h/C2 守卫 3 项）；browser/browser_en/i18n
+      （FAIL 0，intentional 13）/consistency 全绿；sabotage ×4 刀（上限 2000→
+      E17h 红、上限 1900→E13h 红、注释 closeTermPop→swap 守卫红、抽 delamination
+      文本→:840 红）全部翻红后还原
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 

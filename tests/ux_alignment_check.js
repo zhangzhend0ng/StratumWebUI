@@ -616,6 +616,24 @@ async function main() {
            && sampleState.autoTune === false,
            JSON.stringify(sampleState));
 
+    // ---- E13h (v0.30) page-height budget: canonical beam, simple mode ----
+    // The ≤2200px budget (@1440×900, ROADMAP/README) lived in a comment +
+    // an ad-hoc script nobody re-ran (+176px crept in over v0.19–v0.27,
+    // v0.29 B3) — now it is guarded on every suite pass. Conditions match
+    // the published口径: fresh sample session, simple mode, detail wall
+    // folded, toasts position:fixed (never in scrollHeight); the beat
+    // lets the toast fade finish. mode-simple is asserted POSITIVELY
+    // (a `!mode-advanced` limb would be a always-true dead check — the
+    // class is never assigned anywhere).
+    await sleep(600);
+    const hA = JSON.parse(await evalJs("(function(){return JSON.stringify({" +
+      "h:document.documentElement.scrollHeight," +
+      "simple:document.body.classList.contains('mode-simple')," +
+      "wallOpen:document.body.classList.contains('detail-open')})})()"));
+    expect("E13h height: canonical beam simple page ≤2200 (budget)",
+           hA.simple === true && hA.wallOpen === false && hA.h <= 2200,
+           JSON.stringify(hA));
+
     // ---- E14 (v0.27) use-case preset cards + the material question -------
     const pq = JSON.parse(await evalJs("(function(){var h=" +
       "document.querySelector('#preset-panel h2');" +
@@ -796,6 +814,24 @@ async function main() {
     await waitDone("re-run for orphan guard");
     expect("E17 popup: re-render closes the card (no orphan on dead trigger)",
            !(await evalJs("!!document.getElementById('term-pop')")));
+    // panel-swap orphan (v0.30 C2): open a card, then swap the right column
+    // to the gcode result with a DIRECT call — a click-based trigger would
+    // close the card via click-outside and mask the guard (guard-masking-e2e,
+    // same discipline as the re-render guard above). The open step itself
+    // is asserted: without it a missing .term-q would idle through to a
+    // vacuous green (refuter 104).
+    const popOpened = await evalJs("(function(){var q=document.querySelectorAll('.term-q');" +
+      "if(!q.length)return false;q[0].click();" +
+      "return !!document.getElementById('term-pop')})()");
+    const swapOrphan = await evalJs("(function(){" +
+      "if(typeof showGcodeResultPanel!=='function')return 'nofn';" +
+      "showGcodeResultPanel(true);" +
+      "var gone=!document.getElementById('term-pop');" +
+      "showGcodeResultPanel(false);" +  // restore the model result column
+      "return gone})()");
+    expect("E17 popup: gcode panel swap closes the card (direct call)",
+           popOpened === true && swapOrphan === true,
+           "opened=" + popOpened + " swap=" + swapOrphan);
     // error-card actions on the real page (no server dependency: direct call)
     const memBtns = await evalJs("(function(){renderAnalyzeError({error:'stratum.exe 失败 (rc=3): std::bad_alloc'});" +
       "var b=document.getElementById('analyze-error');" +
@@ -808,6 +844,21 @@ async function main() {
       "return b.style.display})()");
     expect("E17 error card: queue-full hint rendered then cleared",
        qHint === "none");
+
+    // ---- E17h (v0.30) page-height budget: risky beam = the worst shape ---
+    // rank2 carries every tall element at once (buckling banner + expanded
+    // risk card + auto-tune CTA + novice line + raw-fold summary); it
+    // measured 2408 before the v0.30 density pass while the canonical
+    // shape sat at 2118 — guarding only the comfortable fixture would
+    // have masked a live regression (refuter 104). Same口径 as E13h.
+    await sleep(600);
+    const hB = JSON.parse(await evalJs("(function(){return JSON.stringify({" +
+      "h:document.documentElement.scrollHeight," +
+      "simple:document.body.classList.contains('mode-simple')," +
+      "wallOpen:document.body.classList.contains('detail-open')})})()"));
+    expect("E17h height: risky beam simple page ≤2200 (worst shape)",
+           hB.simple === true && hB.wallOpen === false && hB.h <= 2200,
+           JSON.stringify(hB));
 
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");
