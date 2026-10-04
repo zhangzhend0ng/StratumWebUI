@@ -53,9 +53,18 @@ $app = Join-Path $dist "StratumWebUI"
 New-Item -ItemType Directory -Force -Path (Join-Path $app "bin") | Out-Null
 # whole bin\ dir, not just the exe: SDK manifests ship stratum_shared.dll
 # alongside stratum.exe (VERSION.txt 0.21.0) — an exe needing the dll must
-# not have it silently dropped from the layout.
-Copy-Item (Join-Path $root "bin\*") (Join-Path $app "bin") -Force
+# not have it silently dropped from the layout. -Recurse covers the
+# bin\gcode-diff\ companion subdir (v0.23: without it Copy-Item creates the
+# folder but drops its contents — an empty dir ships a broken tool).
+Copy-Item (Join-Path $root "bin\*") (Join-Path $app "bin") -Force -Recurse
 Copy-Item (Join-Path $root "VERSION.txt") $app -Force
+# v0.23: the gcode-diff companion (bin\gcode-diff\gcode-diff.exe + its own
+# stratum_shared.dll) is OPTIONAL — a build without it still ships a fully
+# working engine UI (the G-code tools panel hides at runtime). Warn, don't
+# fail, mirroring the server's degrade-not-block resolve behavior.
+if (-not (Test-Path (Join-Path $root "bin\gcode-diff\gcode-diff.exe"))) {
+    Write-Warning "bin\gcode-diff\gcode-diff.exe not found — the installer will ship WITHOUT the G-code tools panel (optional companion; see README)."
+}
 # license surface: WebUI MIT + engine MIT (renamed, both are "LICENSE" at
 # source) + engine's third-party notices (miniz/tinyxml2, statically linked
 # into bin\stratum.exe — MIT requires the notices travel with the binary)

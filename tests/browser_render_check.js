@@ -108,6 +108,17 @@ async function main() {
            await evalJs("(function(){var t=document.querySelectorAll('#cand-body td[title]');for (var i=0;i<t.length;i++){if(t[i].title.indexOf('材料 ')>=0)return true}return false})()"));
     expect("real page: SF source tooltip",
            await evalJs("(function(){var t=document.querySelectorAll('#cand-body td[title]');for (var i=0;i<t.length;i++){if(t[i].title.indexOf('SF 来源')>=0)return true}return false})()"));
+    // (v0.19 round B) raw-table fold: outlet invariant holds for whatever
+    // candidate shape report.json carries (bars rendered ⇔ fold closed)
+    // Tripwire: a stale report.js (file-write race seen once in round B)
+    // lacks fmtSig and fails HERE with a clear cause instead of a mystery.
+    expect("v0.19: page runs current report.js (fmtSig present — stale-file tripwire)",
+           await evalJs("typeof fmtSig === 'function'"));
+    expect("v0.19: fold wraps raw table, bars outside, open mirrors outlet invariant",
+           await evalJs("(function(){var f=document.getElementById('cand-raw-fold');" +
+             "var b=document.getElementById('cand-bars');" +
+             "return !!f&&f.contains(document.getElementById('cand-table'))&&" +
+             "!f.contains(b)&&f.open===(b.children.length===0)})()"));
 
     // (v0.8 iter 1) schema v3 fixture (real 0.24 engine output): the v3 rule
     // is "plain field = scalar, band = *_envelope twin". numEnv must show the
@@ -126,6 +137,20 @@ async function main() {
            await evalJs("document.getElementById('cp-lh').textContent.indexOf('0.2 mm') >= 0"));
     expect("v3 fixture: refusal box hidden after clean render",
            await evalJs("document.getElementById('validate-refused').style.display === 'none'"));
+    // (v0.19 round B) v3 real candidates (70.712937…) denoised to 6 significant
+    // digits; summary toggles the fold. Teeth: pre-0.19 shows the raw floats.
+    expect("v0.19: v3 real values denoised — no ≥5-decimal floats in the table",
+           await evalJs("(function(){var t=document.getElementById('cand-body').textContent;" +
+             "var ok=/\\d\\.\\d{5,}/.test(t)===false && t.indexOf('70.7129')>=0 && " +
+             "t.indexOf('70.712937')<0;" +
+             "return ok||JSON.stringify({m:(t.match(/\\d+\\.\\d+/g)||[]).filter(" +
+             "function(x){return x.split('.')[1].length>=4}).slice(0,5)," +
+             "raw:t.indexOf('70.712937')>=0,fmt:t.indexOf('70.7129')>=0})})()"));
+    expect("v0.19: summary click toggles the fold, label present",
+           await evalJs("(function(){var f=document.getElementById('cand-raw-fold');" +
+             "var s=f.querySelector('summary');var before=f.open;" +
+             "s.click();var after=f.open;s.click();return before===false&&after===true&&" +
+             "s.textContent.indexOf('原始对比表')>=0})()"));
     // (v0.9) engine assessment verdict line + applyable checkbox/CTA render
     // path in the REAL page. applyable here is forged client-side (identity
     // keys of the fixture item) — the server-side whitelist itself is pinned
@@ -636,11 +661,20 @@ async function main() {
                               done: presetDone }));
     }
 
-    // (v0.10) productization UI on the real page: empty-guide lifecycle,
-    // summary cards, SF band class, term tooltips, param plain-language
-    // hints, warnings card toggle, first-run guide show/close + persistence.
-    expect("v0.10: empty-guide hidden + 3 summary cards after render",
-           await evalJs("document.getElementById('empty-guide').style.display==='none' && document.getElementById('summary-cards').children.length===3"));
+    // (v0.10→v0.22) productization UI on the real page: empty-guide
+    // lifecycle, summary hero cards, SF band class, term tooltips, param
+    // plain-language hints, merged alerts card toggle. The v0.10 first-run
+    // guide bar is GONE (v0.22: #empty-guide is the single onboarding
+    // surface — its three steps were taught three times on first visit).
+    expect("v0.22: empty-guide hidden + hero/advice cards after render",
+           await evalJs("document.getElementById('empty-guide').style.display==='none'" +
+                        " && document.querySelectorAll('#summary-cards > .sum-card').length===2"));
+    expect("v0.22: pd-warn banner re-seated INSIDE the card grid (under the hero)",
+           await evalJs("(function(){var p=document.getElementById('pd-warn-promoted');" +
+             "return p.parentElement.id==='summary-cards'" +
+             " && (!p.previousElementSibling || p.previousElementSibling.className.indexOf('sum-verdict')>=0)})()"));
+    expect("v0.22: first-run guide bar + step strip removed, empty-guide is the lone onboarding",
+           await evalJs("!document.getElementById('first-guide') && !document.getElementById('flow-steps') && !!document.getElementById('empty-guide')"));
     expect("v0.10: SF KPI carries a display-band class from the engine number",
            await evalJs("/^v sf-(low|mid|high)$/.test(document.getElementById('res-sf').className)"),
            await evalJs("document.getElementById('res-sf').className"));
@@ -654,41 +688,27 @@ async function main() {
            await evalJs("(function(){var i=document.querySelector('[data-param=walls]');" +
              "if(!i)return false;var l=i.parentNode.querySelector('.lbl');" +
              "return !!(l&&l.title&&l.title.indexOf('外壁圈数')===0)})()"));
-    // render the v2 fixture (carries the 41-part warning) so the badge has
-    // real content to count/toggle on — the page was reloaded since __r was
-    // first set (session-restore step), so re-inject the JSON
+    // render the v2 fixture (carries the 41-part warning) so the merged
+    // alerts card has real content to count/toggle on — the page was
+    // reloaded since __r was first set (session-restore step), so re-inject
+    // the JSON
     await evalJs("window.__r = " + report + "; renderReport(window.__r,'')");
-    const wToggle = JSON.parse(await evalJs(
-      "(function(){var c=document.getElementById('warnings-card');" +
-      "var before=getComputedStyle(document.getElementById('warning-list')).display==='none';" +
-      "document.getElementById('warnings-toggle').click();" +
-      "var after=getComputedStyle(document.getElementById('warning-list')).display!=='none';" +
+    const aToggle = JSON.parse(await evalJs(
+      "(function(){var c=document.getElementById('alerts-card');" +
+      "var body=document.getElementById('alerts-body');" +
+      "var before=getComputedStyle(body).display==='none';" +
+      "document.getElementById('alerts-toggle').click();" +
+      "var after=getComputedStyle(body).display!=='none';" +
       "return JSON.stringify({shown:c.style.display!=='none'," +
-      "count:document.getElementById('warnings-count').textContent," +
+      "count:document.getElementById('alerts-count').textContent," +
+      "head:document.getElementById('alerts-headline').textContent," +
       "collapsedBefore:before,openAfter:after})})()"));
-    expect("v0.10: warnings badge + click-to-expand",
-           wToggle.shown && /^\d+$/.test(wToggle.count)
-           && parseInt(wToggle.count, 10) > 0
-           && wToggle.collapsedBefore && wToggle.openAfter,
-           JSON.stringify(wToggle));
-    // first-run guide: visible on a fresh profile, closable, and the
-    // dismissal persists across a reload via localStorage (ui.guide-done)
-    const g1 = JSON.parse(await evalJs(
-      "(function(){var g=document.getElementById('first-guide');" +
-      "var vis=getComputedStyle(g).display!=='none';" +
-      "document.getElementById('guide-close').click();" +
-      "return JSON.stringify({vis:vis,afterHidden:g.style.display==='none'," +
-      "stored:localStorage.getItem('ui.guide-done')})})()"));
-    expect("v0.10: first-run guide visible, closes, persists flag",
-           g1.vis === true && g1.afterHidden === true && g1.stored === "1",
-           JSON.stringify(g1));
-    await send("Page.reload", {});
-    for (let i = 0; i < 50; i++) {
-      if (await evalJs("typeof renderReport") === "function") break;
-      await sleep(200);
-    }
-    expect("v0.10: guide stays dismissed after reload",
-           await evalJs("getComputedStyle(document.getElementById('first-guide')).display==='none'"));
+    expect("v0.22: merged alerts card — combined count, headline, click-to-expand",
+           aToggle.shown && /^\d+$/.test(aToggle.count)
+           && parseInt(aToggle.count, 10) > 0
+           && aToggle.head.indexOf("条提示") >= 0
+           && aToggle.collapsedBefore && aToggle.openAfter,
+           JSON.stringify(aToggle));
 
     // (v0.16) HTML snapshot: sanitized results-panel clone → self-contained
     // single-file doc. Re-render first: the reload above may have left the
@@ -910,6 +930,165 @@ async function main() {
     expect("v0.17: old 3MF degrade copy removed from stl-preview.js",
            fs.readFileSync(path.join(ROOT, "stl-preview.js"), "utf8")
              .indexOf("3MF 预览暂不支持") < 0, "");
+
+    // ---------- v0.23 gcode-diff e2e ----------
+    // Real page, real server, real companion exe. Covers: the status gate
+    // actually unhides #gcode-panel, the full fetch→mutual-exclusion→render
+    // pipeline works in the REAL DOM (report.js functions against live
+    // nodes, not the vm stub), and the fail-closed score state renders its
+    // own card. File inputs can't be driven programmatically, so the upload
+    // leg reuses the page's own fetch path via gcodeState (gcodeRun reads
+    // gcodeState tokens) — same code the change-handler feeds.
+    const gdBin = path.join(ROOT, "bin", "gcode-diff", "gcode-diff.exe");
+    if (!fs.existsSync(gdBin)) {
+      console.log("v0.23 gcode e2e SKIP — companion exe not present");
+    } else {
+      const ga = fs.readFileSync(path.join(ROOT, "test_data", "gcode", "a.gcode"));
+      const gb = fs.readFileSync(path.join(ROOT, "test_data", "gcode", "b.gcode"));
+      const gv = fs.readFileSync(path.join(ROOT, "test_data", "gcode", "void.gcode"));
+      const b64 = (b) => Buffer.from(b).toString("base64");
+      const g1 = JSON.parse(await evalJs("(async function(){" +
+        "var d=function(b64){var b=atob(b64);var u=new Uint8Array(b.length);" +
+        "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};" +
+        "var pa=await fetch('/api/upload?name=e2e-a.gcode',{method:'POST'," +
+        "headers:{'X-Stratum-UI':'1'},body:d('" + b64(ga) + "')})" +
+        ".then(function(r){return r.json()});" +
+        "var pb=await fetch('/api/upload?name=e2e-b.gcode',{method:'POST'," +
+        "headers:{'X-Stratum-UI':'1'},body:d('" + b64(gb) + "')})" +
+        ".then(function(r){return r.json()});" +
+        "if(!pa.ok||!pb.ok)return JSON.stringify({stage:'upload',e:pa.error||pb.error});" +
+        // feed the page's own state (what gcodeUpload writes), then run the
+        // page's own gcodeRun — the real click path minus the file picker
+        "gcodeState.a={token:pa.token,name:pa.name};" +
+        "gcodeState.b={token:pb.token,name:pb.name};" +
+        "gcodeState.mode='diff';gcodeGate();" +
+        "var panelVisible=document.getElementById('gcode-panel').style.display!=='none';" +
+        "gcodeRun();" +
+        "for(var t=0;t<120;t++){await new Promise(function(r){setTimeout(r,50)});" +
+        "if(document.getElementById('gcode-result').textContent.indexOf('CLEAN')>=0)break;}" +
+        "var gr=document.getElementById('gcode-result');" +
+        "var rp=document.getElementById('result-panel');" +
+        "return JSON.stringify({stage:'ok',panel:panelVisible," +
+        "runBtn:!document.getElementById('btn-gcode-run').disabled," +
+        "verdict:gr.textContent.indexOf('CLEAN')>=0," +
+        "names:gr.textContent.indexOf('e2e-a.gcode')>=0," +
+        "swapped:rp.style.display==='none'," +
+        "snap:document.getElementById('btn-snapshot').disabled," +
+        "link:(gr.querySelector('a')||{}).href||''})})()"));
+      expect("v0.23 e2e: status gate unhides panel; diff run swaps columns",
+             g1.stage === "ok" && g1.panel && g1.verdict && g1.names
+             && g1.swapped && g1.runBtn && g1.snap,
+             JSON.stringify(g1).slice(0, 220));
+      expect("v0.23 e2e: diff render carries the deep link",
+             // live DOM resolves the relative href to an absolute URL —
+             // match the path substring, not the string start
+             g1.stage === "ok"
+             && String(g1.link).indexOf("/api/gcode-report?token=") >= 0,
+             JSON.stringify(g1).slice(0, 220));
+      // fail-closed score state (void fixture → dimensions_scored=0) in the
+      // real DOM: its own card, no 0/100 hero
+      const g2 = JSON.parse(await evalJs("(async function(){" +
+        "var b=atob('" + b64(gv) + "');var u=new Uint8Array(b.length);" +
+        "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+        "var p=await fetch('/api/upload?name=e2e-void.gcode',{method:'POST'," +
+        "headers:{'X-Stratum-UI':'1'},body:u})" +
+        ".then(function(r){return r.json()});" +
+        "if(!p.ok)return JSON.stringify({stage:'upload',e:p.error});" +
+        "gcodeState.a={token:p.token,name:p.name};gcodeState.b=null;" +
+        "gcodeState.mode='score';gcodeGate();gcodeRun();" +
+        "for(var t=0;t<120;t++){await new Promise(function(r){setTimeout(r,50)});" +
+        "if(document.getElementById('gcode-result').textContent.indexOf('不可评估')>=0)break;}" +
+        "var gr=document.getElementById('gcode-result');" +
+        "return JSON.stringify({stage:'ok'," +
+        "na:gr.textContent.indexOf('整体不可评估')>=0," +
+        "noHero:gr.textContent.indexOf('/ 100')<0})})()"));
+      expect("v0.23 e2e: void score renders the not-assessable card",
+             g2.stage === "ok" && g2.na && g2.noHero,
+             JSON.stringify(g2).slice(0, 220));
+      // regression (simple-mode edge): a diff selection carried over from
+      // advanced mode must NOT survive a switch to simple mode — the diff
+      // radio is advanced-only, so leaving mode=diff would show an unchecked
+      // radio group, a compare-flavored A-slot label, and a dead run button
+      // with no visible B slot to satisfy it (novice dead-end, probe-found
+      // 2026-09-30). Simple must always land on score.
+      const g3 = JSON.parse(await evalJs("(function(){" +
+        "var adv=document.getElementById('mode-toggle');" +
+        "if(!adv.checked)adv.click();" +
+        "var dr=document.querySelector('input[name=gcode-mode][value=diff]');" +
+        "if(dr&&!dr.checked)dr.click();" +
+        "adv.click();" +  // back to simple
+        "return JSON.stringify({mode:gcodeState.mode," +
+        "scoreChecked:document.querySelector('input[name=gcode-mode][value=score]').checked," +
+        "aLabel:document.getElementById('gcode-a-name').textContent," +
+        "bSlotHidden:document.getElementById('gcode-slot-b').style.display==='none'})})()"));
+      expect("v0.23 e2e: diff selection resets to score when entering simple mode",
+             g3.mode === "score" && g3.scoreChecked === true
+             && g3.aLabel === "选择 G-code 文件" && g3.bSlotHidden === true,
+             JSON.stringify(g3));
+      // v0.26: machine/hotend selects ride the diff+advanced visibility
+      const g4 = JSON.parse(await evalJs("(function(){" +
+        "var adv=document.getElementById('mode-toggle');" +
+        "if(!adv.checked)adv.click();" +
+        "var mr=document.getElementById('gcode-mach-row');" +
+        "var sc=document.getElementById('gcode-machine');" +
+        "var opts=sc?sc.options.length:0;" +
+        "var visDiff=mr.style.display!=='none';" +
+        "var dr=document.querySelector('input[name=gcode-mode][value=diff]');" +
+        "if(dr&&!dr.checked)dr.click();" +
+        "var visDiffOn=mr.style.display!=='none';" +
+        "var sr=document.querySelector('input[name=gcode-mode][value=score]');" +
+        "if(sr&&!sr.checked)sr.click();" +
+        "var visScore=mr.style.display!=='none';" +
+        "return JSON.stringify({opts:opts,visIdle:visDiff," +
+        "visDiff:visDiffOn,visScore:visScore})})()"));
+      expect("v0.26 e2e: machine/hotend selects populated + diff-gated",
+             g4.opts >= 11 && !g4.visIdle && g4.visDiff && !g4.visScore,
+             JSON.stringify(g4));
+    }
+
+    // ---- v0.25 e2e: slice-gcode stress-tune attachment end-to-end --------
+    // (real engine; a.gcode is deliberately mismatched to the beam model —
+    // coverage 0 is the LEGAL tune state, the card must still render)
+    if (fs.existsSync(path.join(ROOT, "test_data", "gcode", "a.gcode"))) {
+      const gAv = fs.readFileSync(
+        path.join(ROOT, "test_data", "gcode", "a.gcode")).toString("base64");
+      const t1 = JSON.parse(await evalJs("(async function(){" +
+        "if(!state.token)return JSON.stringify({stage:'no-model'});" +
+        "var b=atob('" + gAv + "');var u=new Uint8Array(b.length);" +
+        "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+        "var f=new File([u],'e2e-slice.gcode');var dt=new DataTransfer();" +
+        "dt.items.add(f);var inp=document.getElementById('gcode-tune-file');" +
+        "inp.files=dt.files;inp.dispatchEvent(new Event('change'));" +
+        "for(var t=0;t<120;t++){await new Promise(function(r){setTimeout(r,50)});" +
+        "var note=document.getElementById('gcode-tune-note').textContent;" +
+        "if(note.indexOf('已附加')>=0)break;}" +
+        "for(var t2=0;t2<120;t2++){await new Promise(function(r){setTimeout(r,50)});" +
+        "var box=document.getElementById('gcode-tune-box');" +
+        "if(box.style.display!=='none'&&box.textContent.indexOf('应力覆盖率')>=0)break;}" +
+        "var bx=document.getElementById('gcode-tune-box');" +
+        "return JSON.stringify({stage:'ok'," +
+        "note:document.getElementById('gcode-tune-note').textContent," +
+        "vis:bx.style.display!=='none'," +
+        "cov:bx.textContent.indexOf('应力覆盖率')>=0," +
+        "btn:(bx.querySelector('button')||{}).textContent||''})})()"));
+      expect("v0.25 e2e: attach → auto analyze → tune audit card renders",
+             t1.stage === "ok" && t1.note.indexOf("未附加") < 0
+             && t1.note.indexOf("e2e-slice.gcode") >= 0
+             && t1.vis && t1.cov && t1.btn.indexOf("下载调优后 G-code") >= 0,
+             JSON.stringify(t1).slice(0, 220));
+      const t2 = JSON.parse(await evalJs("(async function(){" +
+        "document.getElementById('btn-gcode-detach').click();" +
+        "for(var t=0;t<120;t++){await new Promise(function(r){setTimeout(r,50)});" +
+        "var box=document.getElementById('gcode-tune-box');" +
+        "if(box.style.display==='none')break;}" +
+        "return JSON.stringify({stage:'ok'," +
+        "note:document.getElementById('gcode-tune-note').textContent," +
+        "hidden:document.getElementById('gcode-tune-box').style.display==='none'})})()"));
+      expect("v0.25 e2e: detach → channel off → audit card hides",
+             t2.stage === "ok" && t2.hidden
+             && t2.note.indexOf("未附加") >= 0,
+             JSON.stringify(t2).slice(0, 220));
+    }
 
     ws.close(); cleanup();
     console.log(fails ? "%d FAIL".replace("%d", fails) : "browser E2E all green");

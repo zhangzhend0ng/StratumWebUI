@@ -38,6 +38,19 @@ var SUPPRESSION_REASONS = {
     "当前机型无该喷嘴变体 — 更换喷嘴/机型后可解除",
 };
 
+// ---------- v0.19 numeric denoise (round B) ----------
+// Candidate-table cells: engine floats carry arithmetic noise (observed
+// 70.712937, report-v3.json) that reads as fake precision. 6 significant
+// digits kills the noise while keeping real distinctions — 71.812937 vs
+// 71.814511 stay 71.8129 vs 71.8145 (fixed-decimal rounding was explicitly
+// rejected: it collapses that pair — ROADMAP v0.18「明确不做」).
+// Non-numbers pass through untouched (iter 76: a string here threw inside
+// toFixed — same guard convention).
+function fmtSig(x) {
+  return typeof x !== "number" || !isFinite(x)
+    ? x : parseFloat(Number(x).toPrecision(6));
+}
+
 // ---------- render ----------
 function renderReport(d, consoleText, applyable) {
   // v0.10: a successful render supersedes the empty-state guide (「分析结果」) and any
@@ -120,9 +133,16 @@ function renderReport(d, consoleText, applyable) {
     var slotBits = inp.filament_slots.map(function (s) {
       return "#" + s.slot + " " + (s && s.filament_type || "?");
     }).join("，");
-    fnote.textContent = "多喷嘴文件（" + slotBits + "）。" +
-      (typeof inp.analysis_material_note === "string"
-        ? inp.analysis_material_note : "");
+    // prefix is UI chrome (translatable); the engine's analysis_material_note
+    // is engine-authored prose → skip span (textContent identical to the old
+    // single-string form)
+    fnote.appendChild(document.createTextNode("多喷嘴文件（" + slotBits + "）。"));
+    if (typeof inp.analysis_material_note === "string"
+        && inp.analysis_material_note) {
+      var noteSpan = el("span", null, inp.analysis_material_note);
+      noteSpan.setAttribute("data-i18n-skip", "1");
+      fnote.appendChild(noteSpan);
+    }
     fnote.style.display = "";
   } else if (typeof inp.analysis_material_note === "string"
              && inp.analysis_material_note) {
@@ -306,7 +326,9 @@ function renderReport(d, consoleText, applyable) {
   }
   if (pbd.cg_converged === false) {
     var w1 = el("div", "risk-item");
-    w1.setAttribute("data-i18n-skip", "1");
+    // no data-i18n-skip here (unlike w2/w3 below): this line is fully
+    // static UI copy — zero engine-authored content — so EN mode may
+    // translate it (keyed in LANG_EN)
     w1.appendChild(el("span", "sev sev-2", "⚠"));
     w1.appendChild(document.createTextNode(
       "Phase B: 线性求解器未收敛 — 数值结果不可靠"));
@@ -327,30 +349,11 @@ function renderReport(d, consoleText, applyable) {
     warnBox.appendChild(w3);
   }
 
-  // v0.10 warnings card: count badge + click-to-expand (progressive
-  // disclosure — the summary risk card above shows the first 3 in plain
-  // sight; the full engine list unrolls on demand). open state is user-owned
-  // and survives re-renders via the data-open flag.
-  var wc = $("warnings-card");
-  if (wc) {
-    var wcount = warnBox.childNodes.length;
-    wc.style.display = wcount ? "" : "none";
-    var wcnt = $("warnings-count");
-    if (wcnt) wcnt.textContent = String(wcount);
-    warnBox.style.display = wc.dataset.open === "1" ? "" : "none";
-  }
-  // snapshot for the summary risk card (built at the end of this render)
-  var warnTexts = [];
-  function deepText(n) {
-    var t = n.textContent || "";
-    // HTMLCollection has no .forEach (only NodeList does) — use the call form
-    Array.prototype.forEach.call(n.children || [], function (c) { t += deepText(c); });
-    return t;
-  }
-  Array.prototype.forEach.call(warnBox.childNodes, function (c) {
-    var t = deepText(c);
-    if (t) warnTexts.push(t);
-  });
+  // v0.22: the standalone warnings-card count/toggle is gone — warnings and
+  // geometric risks share ONE 「风险与提示」 card (#alerts-card) whose header
+  // is written in the risks section below (both counts are known there). The
+  // list itself stays visible; the #alerts-body wrapper owns the fold.
+  warnBox.style.display = "";
 
   // Phase C (plasticity / thermal / layer residual / delamination / fracture
   // / aging). Every row is null-gated on the engine's own value — a null IS
@@ -388,11 +391,16 @@ function renderReport(d, consoleText, applyable) {
     // accounting for the infill structure; disclosure tag verbatim
     var wi = pc.weld_infill_aware;
     if (pc.run && wi && typeof wi === "object") {
-      pciBox.appendChild(el("div", "hint",
+      var wiLine = el("div", "hint",
         "有效键合(含填充): a_eff " + num(wi.a_eff, 4) +
-        "，键合质量 " + num(wi.bond_quality_eff, 4) +
-        (typeof wi.disclosure === "string" && wi.disclosure
-          ? "（" + wi.disclosure + "）" : "")));
+        "，键合质量 " + num(wi.bond_quality_eff, 4));
+      // disclosure tag is engine-authored prose → skip span (verbatim)
+      if (typeof wi.disclosure === "string" && wi.disclosure) {
+        var wiDisc = el("span", null, "（" + wi.disclosure + "）");
+        wiDisc.setAttribute("data-i18n-skip", "1");
+        wiLine.appendChild(wiDisc);
+      }
+      pciBox.appendChild(wiLine);
     }
     var pcsWrap = $("phase-c-solver");
     if (pcsWrap) pcsWrap.style.display = pciBox.childNodes.length ? "" : "none";
@@ -477,16 +485,22 @@ function renderReport(d, consoleText, applyable) {
     // (v0.9: stays in the MAIN flow — it carries an actionable suggestion.)
     var ts = pc.thermal_speed;
     if (ts && typeof ts === "object" && ts.assessable === true) {
-      pcd.appendChild(el("div", "hint",
+      var tsLine = el("div", "hint",
         "热-速闭环: 基板温 " + num(ts.t_sub_current_c, 1) + "°C / 上限 " +
         num(ts.cap_c, 1) + "°C" +
         (ts.overheated === true
           ? " — 超温，建议速度 " + num(ts.suggested_speed_mms, 1) +
             " mm/s（层时间 " + num(ts.suggested_layer_time_s, 1) + " s）"
           : " — 未超温") +
-        (typeof ts.tier === "string" && ts.tier ? "［" + ts.tier + "］" : "") +
-        (typeof ts.rationale === "string" && ts.rationale
-          ? "；" + ts.rationale : "")));
+        (typeof ts.tier === "string" && ts.tier ? "［" + ts.tier + "］" : ""));
+      // rationale is engine-authored prose → skip span (verbatim)
+      if (typeof ts.rationale === "string" && ts.rationale) {
+        tsLine.appendChild(document.createTextNode("；"));
+        var tsR = el("span", null, ts.rationale);
+        tsR.setAttribute("data-i18n-skip", "1");
+        tsLine.appendChild(tsR);
+      }
+      pcd.appendChild(tsLine);
     }
     // (v0.9: ABS WLF / crystallinity / weld-infill-aware moved above into
     // #phase-c-internals — model-internal numbers, not conclusions.)
@@ -530,34 +544,47 @@ function renderReport(d, consoleText, applyable) {
   var pdw = $("pd-warn-promoted");
   if (pdw) pdw.innerHTML = "";
   if (pd.run) {
-    // [label, value, warnClass]: warnClass marks the engine's own structured
+    // [label, prose, warnClass]: warnClass marks the engine's own structured
     // warning channels — buckling_warning (truthy string = warning) and
     // fracture_risk_detected === true. fatigue has no structured
     // discriminator and is never marked (always-on = noise).
-    var bucklingLine = null, fractureLine = null;
+    // The label is UI chrome (translatable); the assessment prose is
+    // engine-authored → skip span. Same-render echo discipline: the mirror
+    // below re-renders the exact label+prose pair, never a rephrase.
+    function assessLine(box, labelText, proseText, warnClass, prefix) {
+      var line = el("div", ("hint " + (warnClass || "")).trim());
+      line.appendChild(document.createTextNode((prefix || "") + labelText + ": "));
+      var prose = el("span", null, proseText);
+      prose.setAttribute("data-i18n-skip", "1");
+      line.appendChild(prose);
+      box.appendChild(line);
+    }
     [["疲劳判定", pd.fatigue_assessment, ""],
      ["断裂判定", pd.fracture_assessment,
       pd.fracture_risk_detected === true ? "pd-warn" : ""],
      ["屈曲警示", pd.buckling_warning, "pd-warn"]].forEach(function (pair) {
       if (!pair[1]) return;
-      pdd.appendChild(el("div", ("hint " + pair[2]).trim(),
-        pair[0] + ": " + pair[1]));
-      if (pair[0] === "屈曲警示") bucklingLine = pair[0] + ": " + pair[1];
-      if (pair[0] === "断裂判定") fractureLine = pair[0] + ": " + pair[1];
+      assessLine(pdd, pair[0], pair[1], pair[2]);
     });
     if (pdw) {
-      if (pd.buckling_warning)
-        pdw.appendChild(el("div", "hint", "⚠ " + bucklingLine));
       // truthy guard on the assessment text too: risk_detected=true with a
       // null assessment must not render "null" (REFUTE P-shape fix)
+      if (pd.buckling_warning)
+        assessLine(pdw, "屈曲警示", pd.buckling_warning, "", "⚠ ");
       if (pd.fracture_risk_detected === true && pd.fracture_assessment)
-        pdw.appendChild(el("div", "hint", "⚠ " + fractureLine));
+        assessLine(pdw, "断裂判定", pd.fracture_assessment, "", "⚠ ");
     }
     // skipped sub-modules with the engine's own reasons (v0.8.1 render gap —
     // previously only visible if the user opened the raw console)
     (pd.skipped_reasons || []).forEach(function (r) {
-      if (typeof r === "string" && r)
-        pdd.appendChild(el("div", "hint", "跳过: " + r));
+      if (typeof r === "string" && r) {
+        var sk = el("div", "hint");
+        sk.appendChild(document.createTextNode("跳过: "));
+        var skR = el("span", null, r);  // engine-authored reason → verbatim
+        skR.setAttribute("data-i18n-skip", "1");
+        sk.appendChild(skR);
+        pdd.appendChild(sk);
+      }
     });
     // fatigue life numbers (v0.8.1): the estimated life in cycles + per-cycle
     // damage. fatigue_infinite_life already turns the headline cell into ∞;
@@ -883,7 +910,9 @@ function renderReport(d, consoleText, applyable) {
       });
       eed.appendChild(et);
       if (typeof ee.process_dims_note === "string" && ee.process_dims_note) {
-        eed.appendChild(el("p", "hint", ee.process_dims_note));
+        var pdn = el("p", "hint", ee.process_dims_note);
+        pdn.setAttribute("data-i18n-skip", "1");  // engine-authored, verbatim
+        eed.appendChild(pdn);
       }
     }
   }
@@ -922,12 +951,25 @@ function renderReport(d, consoleText, applyable) {
         calKv.appendChild(el("span", "v", String(p[1])));
       });
       cd.appendChild(calKv);
+      // reason/notes are the engine's own disclosure → prefix chrome +
+      // verbatim skip span (textContent identical to the old concat form)
       if (typeof cal.reason === "string" && cal.reason) {
-        cd.appendChild(el("div", "hint", "原因: " + cal.reason));
+        var cr = el("div", "hint");
+        cr.appendChild(document.createTextNode("原因: "));
+        var crR = el("span", null, cal.reason);
+        crR.setAttribute("data-i18n-skip", "1");
+        cr.appendChild(crR);
+        cd.appendChild(cr);
       }
       (cal.notes || []).forEach(function (n) {
-        if (typeof n === "string" && n)
-          cd.appendChild(el("div", "hint", "注: " + n));
+        if (typeof n === "string" && n) {
+          var cn = el("div", "hint");
+          cn.appendChild(document.createTextNode("注: "));
+          var cnR = el("span", null, n);
+          cnR.setAttribute("data-i18n-skip", "1");
+          cn.appendChild(cnR);
+          cd.appendChild(cn);
+        }
       });
     }
   }
@@ -952,30 +994,42 @@ function renderReport(d, consoleText, applyable) {
     }
     riskBox.appendChild(item);
   });
-  // v0.14: the list collapses behind a count/max-severity toggle (real
-  // models carry hundreds of per-location items). Until the user clicks
-  // (dataset.user), the default adapts to the verdict: ⚠/❌ expand — the
-  // risks ARE the evidence for a non-ok verdict —, ✅ collapses so the
-  // advice / preset-comparison areas below stay in view.
-  var riskCard = $("risk-card");
-  if (riskCard) {
-    if (risks.length) {
-      riskCard.style.display = "";
+  // v0.22 merged 「风险与提示」 card: engine warnings + geometric risks
+  // behind ONE toggle (two same-looking ⚠ cards read as duplication). The
+  // default adapts to the verdict until the user clicks (dataset.user):
+  // ⚠/❌ expand — the risks ARE the evidence for a non-ok verdict —, ✅
+  // collapses so the advice / preset-comparison areas below stay in view.
+  var ac = $("alerts-card");
+  if (ac) {
+    var wCount = warnBox.childNodes.length;
+    var rCount = risks.length;
+    if (wCount || rCount) {
+      ac.style.display = "";
       var maxSev = 1;
       for (var rIdx = 0; rIdx < risks.length; rIdx++)
         maxSev = Math.max(maxSev, sevOf(risks[rIdx]));
-      $("risk-count").textContent = String(risks.length);
-      var msEl = $("risk-max-sev");
-      msEl.textContent = "S" + maxSev;
-      msEl.className = "sev sev-" + maxSev;
-      if (riskCard.dataset.user !== "1") {
+      $("alerts-count").textContent = String(wCount + rCount);
+      // headline chrome (translatable): 「条提示 · N 条几何风险 · 最高 SX」
+      // assembled from the two engine streams; each part shown only when its
+      // stream is non-empty
+      var head = wCount ? "条提示" : "";
+      if (rCount)
+        head += (head ? " · " : "") + rCount + " 条几何风险 · 最高 S" + maxSev;
+      $("alerts-headline").textContent = head;
+      var wh = $("alerts-warn-h");
+      wh.style.display = wCount ? "" : "none";
+      wh.textContent = "引擎提示（" + wCount + "）";
+      var rh = $("alerts-risk-h");
+      rh.style.display = rCount ? "" : "none";
+      rh.textContent = rCount ? "几何风险（" + rCount + " · 最高 S" + maxSev + "）" : "";
+      if (ac.dataset.user !== "1") {
         var vAssess = typeof pb.assessment === "string" ? pb.assessment : "";
-        riskCard.dataset.open = vAssess.indexOf("✅") >= 0 ? "0" : "1";
+        ac.dataset.open = vAssess.indexOf("✅") >= 0 ? "0" : "1";
       }
-      riskBox.style.display = riskCard.dataset.open === "1" ? "" : "none";
+      $("alerts-body").style.display = ac.dataset.open === "1" ? "" : "none";
     } else {
-      riskCard.style.display = "none";
-      riskBox.style.display = "";
+      ac.style.display = "none";
+      $("alerts-body").style.display = "none";
     }
   }
 
@@ -1119,9 +1173,29 @@ function renderReport(d, consoleText, applyable) {
   var body = $("cand-body");
   body.innerHTML = "";
   var cands = po.candidates || [];
+  // v0.19 (REFUTE blocker): the raw table folds into #cand-raw-fold; its
+  // outside-the-fold outlet is #cand-bars, which renders only with ≥2
+  // feasible rows (gate below + #cand-bars:empty CSS). Whenever the bars
+  // can't render, the folded table IS the only outlet for the caveat/note
+  // rows — auto-expand so a fold never buries an unchanneled signal.
+  // Auto-open only, never auto-close: fold state stays user-owned across
+  // renders (same ownership rule as body.detail-open).
+  var rawFold = $("cand-raw-fold");
+  if (rawFold) {
+    var feasCount = cands.filter(function (c) { return c.feasible !== false; }).length;
+    if (!cands.length || feasCount < 2) rawFold.open = true;
+  }
   if (!cands.length) {
-    body.appendChild(el("tr", null, "").appendChild(
-      el("td", "muted", "无候选（报告缺少 process_optimization 数据）").parentNode));
+    // (v0.19 round B bugfix, found by the §26 fold test) the old one-liner
+    // appended `el("td", …).parentNode` — null on an unattached node, so a
+    // report without process_optimization crashed renderReport with
+    // appendChild(null). Standard pattern (same as the note/caveat rows) +
+    // the colSpan the 15-column table needs.
+    var ncRow = el("tr", null);
+    var ncTd = el("td", "muted", "无候选（报告缺少 process_optimization 数据）");
+    ncTd.colSpan = 15;
+    ncRow.appendChild(ncTd);
+    body.appendChild(ncRow);
   }
   cands.forEach(function (c) {
     var tr = el("tr", c.feasible ? "" : "infeasible");
@@ -1149,10 +1223,10 @@ function renderReport(d, consoleText, applyable) {
     var gtd = el("td", null, ""); gtd.appendChild(goalTag); tr.appendChild(gtd);
     tr.appendChild(el("td", null, c.feasible ? "OK" : "No"));
     var p = c.profile || {};
-    td(p.infill_pct !== undefined && p.infill_pct !== null ? p.infill_pct + "%" : "—");
+    td(p.infill_pct !== undefined && p.infill_pct !== null ? fmtSig(p.infill_pct) + "%" : "—");
     td(p.wall_count !== undefined && p.wall_count !== null ? p.wall_count : "—");
-    td(p.print_speed !== undefined && p.print_speed !== null ? p.print_speed + "mm/s" : "—");
-    td(s.overall); td(s.strength); td(s.time); td(s.material); td(s.reliability);
+    td(p.print_speed !== undefined && p.print_speed !== null ? fmtSig(p.print_speed) + "mm/s" : "—");
+    td(fmtSig(s.overall)); td(fmtSig(s.strength)); td(fmtSig(s.time)); td(fmtSig(s.material)); td(fmtSig(s.reliability));
     var sfTd = td(c.search_est_safety_factor !== null && c.search_est_safety_factor !== undefined
        ? Math.round(c.search_est_safety_factor) : "—");
     // (iter 71) SF provenance on hover — engine's own raw sf_source string
@@ -1177,11 +1251,13 @@ function renderReport(d, consoleText, applyable) {
     if (typeof est.solid_volume_mm3 === "number")
       tips.push("实体 " + (est.solid_volume_mm3 / 1000).toFixed(1) + "cm3");
     if (tips.length) volTd.setAttribute("title", tips.join(" · "));
-    td(s.quality);
+    td(fmtSig(s.quality));
     body.appendChild(tr);
     if (!c.feasible && c.note) {
       var note = el("tr", "infeasible");
       var nd = el("td", "muted", c.note); nd.colSpan = 15;
+      // c.note is engine-authored prose → verbatim (skip i18n)
+      nd.setAttribute("data-i18n-skip", "1");
       note.appendChild(nd);
       body.appendChild(note);
     }
@@ -1243,7 +1319,8 @@ function renderReport(d, consoleText, applyable) {
         cbBox.appendChild(row);
       });
       cbBox.appendChild(el("p", "hint",
-        "条长为各候选在本组内的相对值（绿=安全系数、琥珀=时间、蓝=材料）——纯展示，排序仍以引擎为准。"));
+        // v0.19: one line (page-height budget, round B) — semantics unchanged
+        "条长=组内相对值：绿=安全系数 / 琥珀=时间 / 蓝=材料；排序以引擎为准。"));
     }
   }
 
@@ -1310,23 +1387,51 @@ function renderReport(d, consoleText, applyable) {
   // hidden via CSS :empty).
   var scBox = $("summary-cards");
   if (scBox) {
+    // v0.22: lift the pd-warn mirror node OUT before the container reset
+    // (innerHTML below would destroy it) and re-seat it INSIDE the grid,
+    // directly under the verdict hero — an attached banner reads as part of
+    // the verdict row; after the advice card it read as a stray third card.
+    // vm-stub safety: fake parents have no removeChild — skip the move there
+    // (position is cosmetic; content rendering is position-independent).
+    var pdwNode = $("pd-warn-promoted");
+    var pdwMoved = false;
+    if (pdwNode && pdwNode.parentNode && pdwNode.parentNode.removeChild) {
+      pdwNode.parentNode.removeChild(pdwNode);
+      pdwMoved = true;
+    }
     scBox.innerHTML = "";
-    // verdict card — edge color keyed ONLY on the engine's own emoji prefix
+    // ---- v0.22 verdict hero: ONE card above the fold answering "能不能用".
+    // Edge color = worst-of the engine's own signals, so a ✅ phrase can no
+    // longer sit green next to an amber buckling banner (they fought):
+    //   rank 1 ✅ emoji < rank 2 ⚠ emoji / structured phase_d warning
+    //   < rank 3 ❌ emoji / SF < 1 (engine numbers, display mapping only —
+    //   same class as the SF band colors, no UI-side re-scoring)
     var vc = el("div", "sum-card sum-verdict");
     vc.appendChild(el("h3", null, "结论"));
     var verdictTxt = typeof pb.assessment === "string" && pb.assessment
       ? pb.assessment : "";
-    if (verdictTxt.indexOf("✅") >= 0) vc.className += " ok";
-    else if (verdictTxt.indexOf("❌") >= 0) vc.className += " bad";
-    else if (verdictTxt.indexOf("⚠") >= 0) vc.className += " warn";
+    var sfNum = (pb.safety_factor !== null && pb.safety_factor !== undefined
+                 && typeof pb.safety_factor === "object")
+      ? pb.safety_factor.nominal : pb.safety_factor;
+    // structured phase_d warning present? Read from the ENGINE payload, not
+    // the mirror DOM — same truth the mirror write uses (phase_d section
+    // above), and immune to DOM textContent semantics (vm stubs don't fold
+    // child text into .textContent)
+    var hasPdWarn = !!((typeof pd !== "undefined" && pd)
+      && (pd.buckling_warning
+          || (pd.fracture_risk_detected === true && pd.fracture_assessment)));
+    var vRank = verdictTxt.indexOf("❌") >= 0 ? 3
+      : verdictTxt.indexOf("⚠") >= 0 ? 2
+      : verdictTxt.indexOf("✅") >= 0 ? 1 : 0;
+    if (hasPdWarn) vRank = Math.max(vRank, 2);
+    if (typeof sfNum === "number" && isFinite(sfNum) && sfNum < 1)
+      vRank = Math.max(vRank, 3);
+    if (vRank) vc.className += ["", " ok", " warn", " bad"][vRank];
     var vBig = el("div", "big", verdictTxt
       || "引擎未给出结论短语 — 见下方各项数值。");
     vBig.setAttribute("data-i18n-skip", "1");
     vc.appendChild(vBig);
     // SF band: engine scalar (v2 object shape → nominal); display-only
-    var sfNum = (pb.safety_factor !== null && pb.safety_factor !== undefined
-                 && typeof pb.safety_factor === "object")
-      ? pb.safety_factor.nominal : pb.safety_factor;
     var sfCls = null;
     if (typeof sfNum === "number" && isFinite(sfNum))
       sfCls = sfNum < 1 ? "low" : sfNum <= 3 ? "mid" : "high";
@@ -1344,45 +1449,57 @@ function renderReport(d, consoleText, applyable) {
         : "安全系数 > 3 — 余量充足"));
     }
     scBox.appendChild(vc);
-    // risk card — v0.14 aggregates BOTH risk sources, severity-ranked:
-    // phase_a.risks (S-badged lines) first, engine warnings behind them.
-    // Before, a warnings=0 report with S5 geometric risks showed "无警告。"
-    // here while the list below carried them — summary contradicted detail.
-    var aggLines = risks.slice().sort(function (a, b) {
-      return sevOf(b) - sevOf(a);
-    }).map(function (r) {
-      return { sev: sevOf(r),
-               text: (r.type || "risk") + "：" + (r.description || "") };
-    });
-    for (var wIdx = 0; wIdx < warnTexts.length; wIdx++)
-      aggLines.push({ sev: 0, text: warnTexts[wIdx] });
-    var rcard = el("div", "sum-card");
-    rcard.appendChild(el("h3", null, "风险"));
-    if (aggLines.length) {
-      var ul = el("ul", "sum-lines");
-      aggLines.slice(0, 3).forEach(function (ln) {
-        var li = el("li");
-        li.setAttribute("data-i18n-skip", "1");
-        if (ln.sev) li.appendChild(el("span", "sev sev-" + ln.sev, "S" + ln.sev + " "));
-        li.appendChild(document.createTextNode(ln.text));
-        ul.appendChild(li);
-      });
-      rcard.appendChild(ul);
-      if (aggLines.length > 3)
-        rcard.appendChild(el("div", "hint",
-          "还有 " + (aggLines.length - 3) + " 条 — 展开「几何风险」/「N 条提示」看完整列表"));
-    } else {
-      rcard.appendChild(el("div", "big", "无风险。"));
-    }
-    scBox.appendChild(rcard);
-    // advice card — apply CTA front and center
-    var acard = el("div", "sum-card");
+    // banner directly under the hero (simple mode: between hero and advice;
+    // advanced: display:none, so the grid is unaffected)
+    if (pdwNode && pdwMoved) scBox.appendChild(pdwNode);
+    // ---- v0.22 advice card: ONE primary action. Simple mode gets an
+    // apply-ALL CTA (no checkbox ceremony — the per-item list is behind the
+    // detail fold); advanced keeps the checkbox-respecting CTA that reads
+    // #rec-items state. The compact 将调整 line states what would change in
+    // plain slider labels (server-owned labels looked up from the tuning
+    // rows — the client still holds no engine-name knowledge; raw key is the
+    // fallback). v0.14's summary risk-preview card is gone — ONE ⚠ surface
+    // (#alerts-card) carries risks now.
+    var acard = el("div", "sum-card sum-advice");
     acard.appendChild(el("h3", null, "建议"));
     var nRecs = (rec.items || []).length;
     if (nApplicable > 0) {
       acard.appendChild(el("div", "big",
         "引擎建议 " + nRecs + " 项参数调整（" + nApplicable + " 项可一键应用）"));
-      var sumCta = el("button", "sum-cta", "应用可行建议 (" + nApplicable + ")");
+      var changeBits = [];
+      items.forEach(function (it, idx) {
+        var ap = Array.isArray(applyable) ? applyable[idx] : null;
+        if (!(ap && ap.applicable)) return;
+        var lbl = it.parameter || "?";
+        try {
+          var rowInput = document.querySelector
+            ? document.querySelector('#tuning-panel [data-param="' + it.parameter + '"]')
+            : null;
+          var lblEl = rowInput && rowInput.parentNode
+            ? rowInput.parentNode.querySelector(".lbl") : null;
+          if (lblEl && lblEl.textContent) lbl = lblEl.textContent.trim();
+        } catch (e) { /* label lookup is best-effort; raw key is honest */ }
+        changeBits.push(lbl + " " + it.current_value + "→" + it.recommended_value);
+      });
+      if (changeBits.length) {
+        var line = el("div", "hint",
+          "将调整：" + changeBits.slice(0, 3).join("、")
+          + (changeBits.length > 3 ? " 等 " + changeBits.length + " 项" : ""));
+        acard.appendChild(line);
+      }
+      var sumCtaAll = el("button", "sum-cta simple-only",
+        "应用全部建议并重新分析 (" + nApplicable + ")");
+      sumCtaAll.title = "写入全部可应用的参数建议并立即重新分析";
+      sumCtaAll.onclick = function () {
+        var picked = [];
+        for (var i = 0; i < applyable.length; i++)
+          if (applyable[i] && applyable[i].applicable) picked.push(applyable[i]);
+        if (typeof applyCheckedSuggestions === "function")
+          applyCheckedSuggestions(picked);
+      };
+      acard.appendChild(sumCtaAll);
+      var sumCta = el("button", "sum-cta advanced-only",
+        "应用可行建议 (" + nApplicable + ")");
       sumCta.title = "按下方列表的勾选状态写入参数滑杆并立即重新分析";
       sumCta.onclick = function () {
         var picked = [];
@@ -1435,6 +1552,9 @@ function renderReport(d, consoleText, applyable) {
     var row = el("div", "risk-item");
     var b = el("span", cls, m.label || m.level || k);
     b.title = (m.source || "") + (m.decision_safe === false ? " [决策不安全]" : "");
+    // label + source citation are engine-authored → verbatim (skip i18n;
+    // the level class above is the UI's only interpretation)
+    b.setAttribute("data-i18n-skip", "1");
     row.appendChild(b);
     row.appendChild(document.createTextNode(" " + k));
     tBox.appendChild(row);
@@ -1486,4 +1606,374 @@ function renderAnalyzeError(j) {
     });
   }
   if (acts.childNodes.length) box.appendChild(acts);
+}
+
+// ---------- v0.23 G-code companion tools (gcode-diff) ----------
+// Both functions render into #gcode-result (index.html); the main inline
+// script owns the mutual exclusion with the model report — showing this
+// container hides the engine-result containers and vice versa. Every
+// verdict label / issue sentence / suggestion string is gcode-diff-authored
+// text, rendered VERBATIM (red line 2 — same discipline as the stratum
+// engine's Chinese prose staying untranslated). The severity→color maps
+// below are display-only chrome, same class as the SF band colors.
+//
+// Two-state sentinels honored here (null ≠ 0):
+//   dimensions[].score === null  → "不可评估" dash, never 0
+//   dimensions_scored === 0      → whole-report 不可评估 card (the rc=2
+//                                  fail-closed outcome; overall_score's 0.0
+//                                  doubles as "nothing was evaluated")
+//   geometry/physics scalars null → "—" via num()
+
+// verdict enum (gcode-diff DiffOrchestrator) → hero-card tone. Unknown
+// future labels render neutral — forward compatibility over completeness
+// (same practice as MOTIVATION_LABELS).
+var GCODE_VERDICT_CLASS = {
+  CLEAN: " ok",
+  FLOW_CHANGE: " warn",
+  DEGRADATION: " bad",
+};
+
+// severity tokens (observed: CRITICAL / WARNING_MAJOR / WARNING_MINOR /
+// BENIGN) → row/card tone. Substring match keeps future WARNING_* variants
+// toning correctly without enumerating them.
+function _gcodeSevClass(sev) {
+  var s = String(sev || "").toUpperCase();
+  if (s.indexOf("CRITICAL") >= 0) return " bad";
+  if (s.indexOf("WARNING") >= 0) return " warn";
+  if (s.indexOf("MINOR") >= 0 || s.indexOf("BENIGN") >= 0) return " ok";
+  return "";
+}
+
+// shared tail for both modes: collapsible console (gcode-diff's one-line
+// stderr summary) + the self-contained HTML deep link (served by
+// /api/gcode-report — diff reports are zh, score reports en, engine
+// output language passes through untouched).
+function _gcodeFooter(box, consoleText, token) {
+  if (consoleText) {
+    var cd = el("details", "opt-group");
+    cd.appendChild(el("summary", null, "gcode-diff 控制台"));
+    var pre = el("pre");
+    pre.textContent = consoleText;
+    cd.appendChild(pre);
+    box.appendChild(cd);
+  }
+  if (token) {
+    var row = el("div", "actions");
+    var a = el("a", "btn-a", "查看完整报告 (HTML)");
+    a.href = "/api/gcode-report?token=" + encodeURIComponent(token);
+    a.target = "_blank";
+    a.title = "gcode-diff 生成的自包含 HTML 报告（对比报告为中文、评分报告为英文——引擎产物语言原样保留）";
+    row.appendChild(a);
+    box.appendChild(row);
+  }
+}
+
+function renderGcodeDiff(report, consoleText, meta) {
+  meta = meta || {};
+  var box = $("gcode-result");
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "";
+  var d = report || {};
+  // ---- verdict hero ----
+  var vc = el("div", "sum-card sum-verdict"
+              + (GCODE_VERDICT_CLASS[d.overall_verdict] || ""));
+  vc.appendChild(el("h3", null, "对比结论"));
+  var vb = el("div", "big", d.overall_verdict || "—");
+  vb.setAttribute("data-i18n-skip", "1");
+  vc.appendChild(vb);
+  if (d.overall_detail) {
+    var dt = el("div", "hint");
+    dt.textContent = d.overall_detail;
+    dt.setAttribute("data-i18n-skip", "1");
+    vc.appendChild(dt);
+  }
+  // display names: the UI's own upload names beat the report's file_a/file_b
+  // (the argv paths carry the WORK_DIR prefix and read as noise)
+  var names = Array.isArray(meta.names) && meta.names.length >= 2
+    ? meta.names : [d.file_a || "A", d.file_b || "B"];
+  var nf = el("div", "hint", "A: " + names[0] + "  ⇄  B: " + names[1]);
+  nf.setAttribute("data-i18n-skip", "1");
+  vc.appendChild(nf);
+  if (d.slicer_format) {
+    var sf = el("div", "hint", "切片器: " + d.slicer_format);
+    sf.setAttribute("data-i18n-skip", "1");
+    vc.appendChild(sf);
+  }
+  box.appendChild(vc);
+  // ---- layer KPI ----
+  var kp = el("div", "sum-card");
+  kp.appendChild(el("h3", null, "层差异"));
+  kp.appendChild(el("div", "big",
+    "修改 " + num(d.layers_modified, 0) + " 层 · 新增 "
+    + num(d.layers_added, 0) + " · 删除 " + num(d.layers_removed, 0)));
+  box.appendChild(kp);
+  // ---- global metric diffs table ----
+  if (Array.isArray(d.global_diffs) && d.global_diffs.length) {
+    var gc = el("div", "sum-card");
+    gc.appendChild(el("h3", null, "全局指标差异"));
+    var t = el("table");
+    var hr = el("tr");
+    ["指标", "A", "B", "Δ", "Δ%", "显著"].forEach(function (h) {
+      hr.appendChild(el("th", null, h)); });
+    t.appendChild(hr);
+    d.global_diffs.forEach(function (g) {
+      var r = el("tr");
+      r.appendChild(el("td", null, g.metric || "—"));
+      r.appendChild(el("td", "num", num(g.a, 2)));
+      r.appendChild(el("td", "num", num(g.b, 2)));
+      r.appendChild(el("td", "num", num(g.delta, 2)));
+      r.appendChild(el("td", "num", g.delta_pct == null
+        ? "—" : Number(g.delta_pct).toFixed(1) + "%"));
+      r.appendChild(el("td", g.significant ? "num sig" : "num",
+                       g.significant ? "✓" : ""));
+      t.appendChild(r);
+    });
+    gc.appendChild(t);
+    box.appendChild(gc);
+  }
+  // ---- geometry summary (absent-not-null: available !== true hides the
+  // WHOLE card — a hidden distance must never read as "geometries agree")
+  var gd = d.geometry_diff;
+  if (gd && gd.available === true) {
+    var gk = el("div", "sum-card");
+    gk.appendChild(el("h3", null, "几何差异"));
+    gk.appendChild(el("div", "kv-lines",
+      "Chamfer " + num(gd.chamfer_distance, 3)
+      + " · Hausdorff " + num(gd.hausdorff_distance, 3)
+      + " · Fréchet " + num(gd.frechet_distance, 3)
+      + " · 重合率 " + (gd.overlap_ratio == null
+          ? "—" : Number(gd.overlap_ratio).toFixed(3))));
+    box.appendChild(gk);
+  }
+  // ---- physics delta scalars (per-layer array stays in the full report) ----
+  var pd = d.physics_delta;
+  if (pd && pd.assessable === true) {
+    var pc = el("div", "sum-card");
+    pc.appendChild(el("h3", null, "物理后果（对比）"));
+    pc.appendChild(el("div", "kv-lines",
+      "新过热层 " + num(pd.newly_overheated_layers, 0)
+      + " · 焊合回退层 " + num(pd.weld_regressed_layers, 0)
+      + " · 超机器上限层 " + num(pd.over_machine_limit_layers, 0)
+      + " · 超熔体上限层 " + num(pd.over_melt_ceiling_layers, 0)));
+    if (pd.worst_weld_delta_pct != null)
+      pc.appendChild(el("div", "hint",
+        "最差焊合强度变化 " + Number(pd.worst_weld_delta_pct).toFixed(1) + "%"));
+    box.appendChild(pc);
+  }
+  // ---- slicer issues (severity-toned, engine prose verbatim) ----
+  if (Array.isArray(d.slicer_issues) && d.slicer_issues.length) {
+    var ic = el("div", "sum-card");
+    ic.appendChild(el("h3", null, "问题与建议（" + d.slicer_issues.length + "）"));
+    d.slicer_issues.forEach(function (iss) {
+      var it = el("div", "rec-row" + _gcodeSevClass(iss.severity));
+      var head = el("div", null,
+        "[" + (iss.severity || "?") + "] " + (iss.summary || ""));
+      head.setAttribute("data-i18n-skip", "1");
+      it.appendChild(head);
+      if (iss.recommendation) {
+        var rc2 = el("div", "hint");
+        rc2.textContent = "→ " + iss.recommendation;
+        rc2.setAttribute("data-i18n-skip", "1");
+        it.appendChild(rc2);
+      }
+      if (iss.confidence != null && iss.confidence !== "")
+        it.appendChild(el("div", "hint", "置信度: " + iss.confidence));
+      ic.appendChild(it);
+    });
+    box.appendChild(ic);
+  }
+  _gcodeFooter(box, consoleText, meta.token);
+}
+
+function renderGcodeScore(report, consoleText, meta) {
+  meta = meta || {};
+  var box = $("gcode-result");
+  if (!box) return;
+  box.innerHTML = "";
+  box.style.display = "";
+  var d = report || {};
+  // ---- fail-closed outcome: zero dimensions scored (gcode-diff rc=2) is a
+  // legitimate "nothing to evaluate" state — its own card, NOT a score of 0
+  if (d.dimensions_scored === 0) {
+    var na = el("div", "sum-card sum-verdict warn");
+    na.appendChild(el("h3", null, "评分结果"));
+    na.appendChild(el("div", "big", "整体不可评估"));
+    var why = el("div", "hint",
+      (d.summary || "") + "——该 G-code 没有任何可评分的维度（无有效挤出/运动证据）。"
+      + "请确认上传的是切片器导出的 G-code 而非空文件。");
+    why.setAttribute("data-i18n-skip", "1");
+    na.appendChild(why);
+    box.appendChild(na);
+    _gcodeFooter(box, consoleText, meta.token);
+    return;
+  }
+  // ---- score hero ----
+  var vc = el("div", "sum-card sum-verdict"
+              + (d.has_critical ? " bad" : d.overall_score >= 80 ? " ok" : " warn"));
+  vc.appendChild(el("h3", null, "评分结果"));
+  var vb = el("div", "big",
+    num(d.overall_score, 1) + " / 100" + (d.has_critical ? " · 含 CRITICAL 项" : ""));
+  vb.setAttribute("data-i18n-skip", "1");
+  vc.appendChild(vb);
+  if (d.summary) {
+    var sm = el("div", "hint", d.summary + " · 可评估维度 " + num(d.dimensions_scored, 0)
+      + "/" + (Array.isArray(d.dimensions) ? d.dimensions.length : "—"));
+    sm.setAttribute("data-i18n-skip", "1");
+    vc.appendChild(sm);
+  }
+  var metaBits = [];
+  if (d.material) metaBits.push("材料 " + d.material);
+  if (d.slicer) metaBits.push("切片器 " + d.slicer);
+  if (metaBits.length) {
+    var mb = el("div", "hint", metaBits.join(" · "));
+    mb.setAttribute("data-i18n-skip", "1");
+    vc.appendChild(mb);
+  }
+  box.appendChild(vc);
+  // ---- dimension table (score null = 不可评估 dash, never 0) ----
+  if (Array.isArray(d.dimensions) && d.dimensions.length) {
+    var dc = el("div", "sum-card");
+    dc.appendChild(el("h3", null, "维度明细"));
+    var t = el("table");
+    var hr = el("tr");
+    ["维度", "得分", "等级", "判定"].forEach(function (h) {
+      hr.appendChild(el("th", null, h)); });
+    t.appendChild(hr);
+    d.dimensions.forEach(function (dim) {
+      var r = el("tr", dim.assessable === false ? "muted" : "");
+      r.appendChild(el("td", null, dim.name || "—"));
+      r.appendChild(el("td", "num", dim.score == null ? "—" : num(dim.score, 1)));
+      r.appendChild(el("td", null, dim.severity || "—"));
+      var vd = el("td", null, dim.verdict || (dim.assessable === false ? "不可评估" : "—"));
+      vd.setAttribute("data-i18n-skip", "1");
+      r.appendChild(vd);
+      t.appendChild(r);
+    });
+    dc.appendChild(t);
+    box.appendChild(dc);
+  }
+  // ---- tuning suggestions (gcode-diff-authored, same card shape as the
+  // engine's recommendation rows) ----
+  if (Array.isArray(d.suggestions) && d.suggestions.length) {
+    var sc2 = el("div", "sum-card sum-advice");
+    sc2.appendChild(el("h3", null, "调参建议（" + d.suggestions.length + "）"));
+    d.suggestions.forEach(function (s) {
+      var it = el("div", "rec-row");
+      var head = el("div", null,
+        (s.parameter || "?") + (s.suggested_value != null
+          ? " → " + s.suggested_value : ""));
+      head.setAttribute("data-i18n-skip", "1");
+      it.appendChild(head);
+      if (s.reason) {
+        var rn = el("div", "hint");
+        rn.textContent = s.reason;
+        rn.setAttribute("data-i18n-skip", "1");
+        it.appendChild(rn);
+      }
+      if (s.expected_effect) {
+        var ee = el("div", "hint");
+        ee.textContent = "预期效果: " + s.expected_effect;
+        ee.setAttribute("data-i18n-skip", "1");
+        it.appendChild(ee);
+      }
+      sc2.appendChild(it);
+    });
+    box.appendChild(sc2);
+  }
+  // ---- appearance block (present only when gcode-diff could assess it) ----
+  if (d.appearance) {
+    var ap = d.appearance;
+    var ac2 = el("div", "sum-card");
+    ac2.appendChild(el("h3", null, "外观"));
+    var bits = [];
+    if (ap.overhang && ap.overhang.assessable) {
+      bits.push("悬垂评分 " + num(ap.overhang.score, 1)
+        + "（最差层 " + num(ap.overhang.worst_layer, 0)
+        + "，" + num(ap.overhang.worst_overhang_angle_deg, 0) + "°）");
+    }
+    if (ap.bridge && ap.bridge.verdict)
+      bits.push("桥接: " + ap.bridge.verdict);
+    if (bits.length) {
+      var bt = el("div", "kv-lines", bits.join(" · "));
+      bt.setAttribute("data-i18n-skip", "1");
+      ac2.appendChild(bt);
+      box.appendChild(ac2);
+    }
+  }
+  _gcodeFooter(box, consoleText, meta.token);
+}
+
+// ---------- v0.25 slice-gcode stress-tune audit card ----------
+// Renders the engine's <out>.tune.json sidecar (coordinate-level stress
+// tuning along the attached slice gcode). Pure display of engine numbers —
+// NO UI-side thresholds: coverage 50%/70% are the ENGINE's own console
+// warning semantics and stay in the console verbatim; here every stat is a
+// plain number. Engine prose (alignment / blind_spots) carries the i18n
+// skip marker like every other engine-authored string.
+function renderGcodeTune(tune, token) {
+  var box = $("gcode-tune-box");
+  if (!box) return;
+  var body = $("gcode-tune-body");
+  if (!tune || !tune.gcode_tune) {
+    box.style.display = "none";   // absent = channel off (no attachment /
+    if (body) body.innerHTML = ""; // old engine dropped the flags)
+    return;
+  }
+  var t = tune.gcode_tune;
+  box.style.display = "";
+  body.innerHTML = "";
+  // -1 is the engine's "not applicable" sentinel for patch coverage when
+  // nothing was tuned (two-state sentinel: -1 ≠ a real ratio, never show it
+  // as a number)
+  var pcr = t.patch_coverage_ratio;
+  var rows = [
+    ["段总数", num(t.segments, 0)],
+    ["挤出段", num(t.extrude_segments, 0)],
+    ["空驶段", num(t.travel_segments, 0)],
+    ["圆弧段", num(t.arc_segments, 0)],
+    ["未解析行", num(t.unparsed_lines, 0)],
+    ["忽略行", num(t.ignored_lines, 0)],
+    ["热区候选", num(t.candidates, 0)],
+    ["已调节数", num(t.tuned, 0)],
+    ["无应力跳过", num(t.no_stress, 0)],
+    ["特征排除", num(t.excluded_feature, 0)],
+    ["应力覆盖率", num(t.coverage_pct, 1) + "%"],
+    ["E 漂移", (t.e_drift_pct >= 0 ? "+" : "") + num(t.e_drift_pct, 2) + "%"],
+    ["热区覆盖率", pcr === -1 || pcr === null || pcr === undefined
+      ? "—" : num(pcr, 2)],
+    ["热区百分位", num(t.p_hi, 2)],
+    ["热区倍率", num(t.m_hot, 2)],
+    ["应力下限", num(t.vm_floor_mpa, 1) + " MPa"],
+  ];
+  var tbl = el("table");
+  var tb = el("tbody", null, "");
+  rows.forEach(function (r) {
+    var tr = el("tr", null, "");
+    tr.appendChild(el("td", "k", r[0]));
+    var v = el("td", "v", String(r[1]));
+    v.setAttribute("data-i18n-skip", "1");
+    tr.appendChild(v);
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  body.appendChild(tbl);
+  if (t.alignment || t.alignment_blind_spots) {
+    var al = el("div", "hint",
+      "对齐: " + (t.alignment || "—") +
+      (t.alignment_blind_spots
+        ? "（盲区: " + t.alignment_blind_spots + "）" : ""));
+    al.setAttribute("data-i18n-skip", "1");
+    al.style.marginTop = "6px";
+    body.appendChild(al);
+  }
+  if (token) {
+    var a = el("button", null, "下载调优后 G-code");
+    a.style.marginTop = "6px";
+    a.onclick = function () {
+      window.open("/api/gcode-tuned?token=" + encodeURIComponent(token),
+                  "_blank");
+    };
+    body.appendChild(a);
+  }
 }

@@ -1,6 +1,6 @@
-# Verification Report — 简单模式结论优先分层 (v0.18.0)
+# Verification Report — 四轮迭代：v0.24.0 换模清场 / v0.25.0 G-code 应力调优 / v0.25.x DOGFOOD / v0.26.0 机器热端键
 
-Verification run: python tests/test_smoke.py → 118/118 PASS；node tests/report_render_check.js → 136/136（原 130 + §25 镜像 6 项）；node tests/ux_alignment_check.js → 40/40（原 30 + E10 十项）；node tests/browser_render_check.js → all green（真引擎 E2E 零回归）
-Result: Verified — 四套件全绿；真引擎 beam STL 修前/修后同观测对照成立（步骤条假 ✓→skip「–」；16 行明细墙→折叠钮；屈曲警示埋第 2 屏→镜像琥珀色浮于折叠区之上）；高级模式零变化（v013_advanced_sticky.png 重拍对照）
-Failures / NOT VERIFIED: 无阻塞。E3 一项为 v0.17 遗留既红（e7e53c3 加第 4 按钮未更新 pin），本轮按立法本意修复并记录。遗留 backlog（非缺陷）：对比表收起、reset 半清场、引导条重设计（用户决策点）
-Next action: 人工 review：核对折叠默认收起/告警镜像/步骤条 skip 三态的产品语义；批准后提交
+Verification run: python tests/test_smoke.py → 146/146；node tests/report_render_check.js → 160 PASS；node tests/ux_alignment_check.js → all green（50 项，含 E12 换模/竞态七断言，真引擎 E2E）；node tests/browser_render_check.js → all green（含 v0.25 attach/detach 与 v0.26 下拉断言，真引擎 E2E）；node tests/browser_en_check.js → ALL PASS；node tests/ui_consistency_check.js → all green；node tests/i18n_coverage_check.js → FAIL 0
+Result: Verified — 四个版本全部走完对抗迭代闭环（枚举→REFUTE→修订→实现→测试→journal）：v0.24.0「换模即清场」修复半清场（旧模型结论顶着新模型显示）+ 跨模型 delta 胶囊 + 运行期换模竞态（迟到响应 runToken 双层守卫丢弃、被闸新会话首跑 pendingRun 补跑、取消闭包绑本运行）；v0.25.0 落地 v0.8.1 最重挂账 --gcode-in/out 应力调优（attach/detach 会话通道、tune.json 审计卡、调优产物下载、值感知 fallback 剥离顺带修掉 --heatmap-json/-bins 潜伏债）；DOGFOOD 轮以几何匹配切片夹具首次驱动调优活体形状（tuned=80/E+2.43%，Cura 词表一手探得）；v0.26.0 gcode-diff 机器/热端键（透传+响应回显——白名单来源≠消费者被 REFUTE 证伪后改道；score 侧死接线拒收）
+Failures / NOT VERIFIED: 无阻塞。过程中修掉三处假绿隐患并留实证：①sabotage 三修复点跑 E12 六断言全红（delta:true/sawStale:true/finalWalls:"8" bug 活体在案）后还原全绿；②beam 夹具引擎仅 27-66ms 一切时序窗口不存在——换 cube+grid24 夹具确定性化（timing-fixture-primacy）；③「下载产物≠输入」被证实非两态判别（引擎 tuned=0 也重排格式），T105 注释如实降级、主证改 audit tuned>0
+Next action: 人工 review 四节 ROADMAP（v0.24/v0.25/v0.26）与 loop-journal 迭代 97-100；关注两个裁决点：①简单模式「换模即清场」语义变更是否接受（v0.18 曾判「既有会话语义」保留，本轮推翻——旧绿色结论顶着新模型的危害在 hero 化后已不可接受）；②gcode-diff 机器键透传而非白名单的取舍（版本错配下 fail-loud 承诺自相矛盾，回显披露替代）；批准后提交（UI_VERSION 0.26.0，工作区含 v0.19-v0.26 八个版本未提交改动）

@@ -214,11 +214,11 @@
 - [x] **`--apply-orca` 写回模式**：⑤「仅写回 Orca 建议」→ `/api/export` body
       `mode:"orca"`；3MF+writable 闸、`--strict-tier` 复用；引擎该通道不产
       sidecar（0.24.0 实测），UI 文案如实标注（T83）
-- [ ] **挂账（未接，含原因）**：`--gcode-in/out`+`--gcode-vm-floor/m-hot/p-hi`
-      应力调优工作流（最重：G-code 上传+成对 flag+`<out>.tune.json` 审计渲染，
-      本轮裁决挂账）；`--vtk` ParaView 导出（④ 已有热图，用户面窄）；
-      `--phase-a` 仅几何模式（`--fast` 已覆盖快扫；phase-a 会让 ④ 大半面板
-      空转，需成套空态处理）；`--drucker-prager`（引擎 no-op 兼容位）、
+- [~] **挂账（未接，含原因）**：~~`--gcode-in/out`+`--gcode-vm-floor/m-hot/p-hi`
+      应力调优工作流~~【v0.25.0 已闭环（2026-10-03）：附件会话+成对 flag+tune.json
+      审计渲染+调优产物下载，见 v0.25.0 节】；`--vtk` ParaView 导出（④ 已有热图，
+      用户面窄）；`--phase-a` 仅几何模式（`--fast` 已覆盖快扫；phase-a 会让 ④ 大半
+      面板空转，需成套空态处理）；`--drucker-prager`（引擎 no-op 兼容位）、
       `--report`（文本通道）、`--optimize`（`--compare-profiles` 子集）= 非缺口
 
 验证：`tests/test_smoke.py` 103/103（T74-T83 新增，全部真引擎 round-trip 为准）；
@@ -476,8 +476,345 @@
   候选方案：面板内 details）；resetTuningState 半清场（上模型后旧结论卡残留，既有
   行为，本轮未扩大）；引导条重设计（用户决策点，未拍板不动）
 
-### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
+### v0.19.0 — 档位对比面板收尾：原始表入面板折叠 + 有效数字去噪（2026-09-30）
 
+> 轮 B（v0.18 backlog 收尾）：简单模式页高 2378px 距 ≤2200 验收线的缺口 ≈ 对比表。
+> independent-REFUTE 一轮（VERDICT: REJECT——2 blocker + 2 minor 全采纳后实现）：
+> blocker#1 折叠出口枚举漏格（#cand-bars 是条件渲染，`feas.length>=2` 门 + `:empty`
+> CSS——「有候选但可行 <2」shape 下折叠表在折叠区外零出口，违反
+> `fold-must-not-bury-unchanneled-warnings` → 自动展开谓词改为
+> `!cands.length || 可行数<2`，只自动展开从不已动收起）；blocker#2 页高预算自算
+> 不闭合 + 绝对页高跨机器硬 pin 会假红（→ 收高手段在方案内闭合，验收只走
+> 1440×900 同口径实测）；minor：快照导出只克隆 summary-cards 面板（cand-panel
+> 根本不进快照——数据流模型更正）；minor：真实数据下 infill/speed 格本就渲染
+> "15"/"120"（JS 数字无尾零），fmtSig 的实际可见变化仅在评分格。
+
+- [x] **原始表入面板折叠**：`<details id="cand-raw-fold">` 包住 15 列原始表
+  （summary「原始对比表」，双语进 LANG_EN），置于 `#cand-bars` 之后——刻意不并入
+  「引擎完整明细」（跨面板隐藏语义不成立，iter95 裁决）；默认两模式一致收起；
+  元素本地 open 状态（不用 body class：快照导出不克隆此面板，applyMode
+  「切换只动 CSS 可见性」不变式不破）；`#cand-bars` 保持折叠区外作为出口
+- [x] **数值去噪**：report.js `fmtSig(x)` 6 位有效数字（`toPrecision(6)` + parseFloat
+  去尾零；非 number 原样透传——iter76 防 throw 约定），应用于候选表 8 个数值格
+  （infill/速度/五项评分/quality）。出处：实测噪声形态（report-v3.json
+  70.712937/15.0/120.0）+ ROADMAP v0.18 反例对 71.812937/71.814511 第 4 位小数
+  分叉——6 位保留 71.8129/71.8145 区分度。不碰：EstSF（既有 Math.round）、
+  EstTime/EstMat（既有 toFixed(1) 设计）、tooltips
+- [x] **页高预算闭合**（REFUTE blocker#2）：折叠（-160px）+ bars hint 缩一行
+  （-20px）+ cand-bars/track/fold 局部 CSS 收紧（-30px）→ beam STL 简单模式实测
+  **2197px**（验收 ≤2200，v0.18 基线 2378px；1440×900 同口径，
+  `v019_simple_beam_folded.png` / `v019_simple_beam_fullpage.png`）；折叠收起、
+  bars 渲染、屈曲镜像浮出三状态探针实测在案
+- [x] **顺路 bugfix**（§26 测试首次踩到该分支暴露）：`!cands.length` 的「无候选」行
+  原用 `el("td",…).parentNode` 惯用语——未挂载节点 parentNode=null，真浏览器
+  `appendChild(null)` 必 throw，缺 process_optimization 的报告渲染中途崩溃；
+  且该 td 未设 colSpan=15。改用 note/caveat 行同款模式
+- 验证：smoke **118/118**；render_check **142**（原 136 + §26 六项：twin 对
+  区分度/infill 去噪/收起负向守卫/可行<2 自动展开/无候选自动展开/fmtSig 守卫——
+  旧 report.js 上 4 项结构性必红已 stash 实证）；ux **43**（原 40 + E11 三项：
+  details 包裹/bars 折叠外/出口不变式 openState===(bars 空)）；browser **65**
+  （+4：出口不变式、fmtSig tripwire——首次跑曾遇一次未复现的 stale-file FAIL、
+  去噪无 ≥5 位小数、summary 可点击开合）
+- 遗留 backlog：页高验收仍是本机口径实测（无跨机器 pin，字体/DPI 漂移会移动数值）；
+  EstSF 的 Math.round 呈现（3.19→3）与 fmtSig 口径不一致，待真实 SF 需求再议；
+  ux 套件 fixture 的候选可行性形状若变（<2 可行），E11 出口不变式断言自动适配
+
+### v0.20.0 — i18n 收口：EN 模式残留中文清零（2026-09-30）
+
+> 用户反馈「切到英文模式还有些中文」。静态词典覆盖检查（新 `tests/i18n_coverage_check.js`：
+> 提取 LANG_EN/LANG_WORDS 后对 index.html 静态文本/属性 + 三个 JS 的全部字符串字面量
+> 重放 trText 管线，注释剥离 + 有意保留 allowlist）实测改前 **280 条**翻译后仍含中文。
+
+- [x] **词典补全**：LANG_EN 精确键 +LANG_WORDS 词级片段共 ~180 条——ENV_META 标签/hint、
+  PARAM_HINT 12 条（与 current-params 标题措辞漂移的变体单独键控）、LOAD_LABELS 枚举、
+  PARAM_GROUP 组头、写回审计/批量表头、toast/状态词、TERM_INFO 术语卡、stl-preview
+  预览错误、server 下发预设 desc（拼接进 title → 只能词级）、报表组合行片段
+  （CG/网格/离散误差/相 C 内部/相 D 判定/老化/热-速闭环/拓扑/外观/流变/校准等）
+- [x] **死键移植**：只存在于 LANG_EN 精确表的组合串片段（「结论： 」「原因： 」「已校准估算
+  （…）」「。standard 档仅披露不拒绝。」等）永不命中 → 移入词级；thrown Error 带
+  `Error: ` 前缀使精确键失效 → 词级兜底（上传失败/写回失败等一族）
+- [x] **trTextKeepWs**：文本节点普遍带缩进/尾随空白（`<h2>当前参数 <span>` →
+  "当前参数 "），精确键永不命中；修剪核心精确命中优先于词级循环（词级含新加全角
+  标点条目后恒扰动字符串——首版「先试 trText 再补 core」的门槛使 core 重试不可达，
+  browser sweep DIAG 字符码实测定位）；splice 保留原空白，__zh 无损恢复不受影响
+- [x] **_langAttrs expando 重收养**：boot 后被 app 重写的属性（日志按钮 title 在
+  /api/status 回填路径后缀）因 `__zh_title` 已存在被永久跳过 → 值变化时重新收养
+  （en 值则清快照，restoreZh 不回写英文）
+- [x] **document.title**：`<title>` 在 `<head>`，translateDom 的 body walker 永远够不到
+  → applyLang 显式翻译/恢复
+- [x] **引擎原语渠道 skip 对齐**（设计红线「引擎输出保留中文」的实现补全，非本次回归）：
+  report.js 多处引擎撰写的 prose 渲染进了未打 skip 的节点（fracture/buckling assessment、
+  skipped_reasons、ts.rationale、wi.disclosure、cal.reason/notes、process_dims_note、
+  c.note、trust 徽章、analysis_material_note）→ label 保持可译 + prose 包 skip span
+  （textContent 拼接逐一不变，render_check 142 断言全绿佐证）；w1（CG 未收敛——纯
+  静态 UI 文案、零引擎内容）反向去 skip 进词典
+- [x] **词级单字收敛**：裸「无」词级条目误伤引擎 prose（「无需」→「none需」，browser
+  sweep 实证）→ 收回为精确键；「开/关」用「方向优化 开」「→ 关」等键控形式避免
+  「开裂」类误替换
+- [x] **配套**：全角标点→半角（词级表末位，chrome 行不再以 CJK 标点收尾）；快照导出
+  `lang` 属性跟随捕获时 UI 语言；`UI_VERSION` 0.20.0
+- 验证：静态覆盖检查 **FAIL 0**（有意保留 10 条逐一注释：lang-toggle 自指、skip 节点
+  内 UI 前缀等）；新增 `tests/browser_en_check.js`（CDP 真实页面 EN 启动 + 真实样本
+  report 渲染 + DOM 全量清扫 + skip 红线正对照 + zh 往返 + 组合片段探针）**11 PASS**；
+  既有回归全绿：smoke **118/118**、render_check **142**、ux、browser E2E
+- 遗留 backlog：server.py 错误消息中英混排（服务层输出，与引擎控制台同层保留中文）；
+  引擎 prose 在非 skip 节点的词级误译是既有已接受行为（本次未扩大）；静态检查器按
+  字面量粒度，新拼接模式靠 browser_en_check 兜底
+
+### v0.21.0 — 视觉同一性收口：字号/控件高度/圆角三套刻度 + 边界对齐（2026-09-30）
+
+> 用户反馈「整体 UI 的同一性没有做的很好，大小，高低，边界对齐」。审计实证：v0.11 虽建了
+> spacing/radius token，但字号散落 **13 档**（10.5–24px 含 0.5px 步进）、按钮 padding
+> 4 种、控件高度 24–41px 混杂；简单模式输入列 760px 居中与全宽结果列形成两条左边线，
+> 「调参」面板外壳在简单模式漏隐藏留空壳，header 因 margin/padding 不对称距视口边缘 4px。
+
+- [x] **类型刻度 13→7**：新 token `--fs-xs/sm/md/lg/xl/2xl/kpi`
+      （11/12/13/14/15/18/24px），全量替换硬编码字号；9/21/24/30px 为图形 glyph 刻意豁免；
+      图标字号与文本字号在 token 注释中划界
+- [x] **控件高度三档制**：`--ctl-h 32px`（全部 button/input number·text/select/搜索框，
+      flex 垂直居中）、`--ctl-h-hero 40px`（简单模式预设卡）、`--ctl-h-chip 28px`
+      （header 徽章/语言 pill，避免压过 25px 标题行）；`.p-reset`/`.toast-x` 裸图标钮
+      `height:auto` 豁免；透明 file-input 覆盖层（inset:0）不受高度锁
+- [x] **圆角归 token**：新 `--r-xs 6px`（console pre/内联微输入框）；preset 9px、
+      rec-apply/sum-cta 硬编码 8px、画布 10px、进度条/条形图/滑轨 2–5px 一律归
+      `var(--r-*)`/999px 胶囊；圆角不变量=「token | 999 | 50% | 0」
+- [x] **边界对齐三修**：header 改全出血（负 margin=body padding，内容 20px 线与面板对齐）；
+      简单模式「调参/环境与载荷」外壳面板补 `advanced-only`（不再渲染空壳卡）
+- [x] **简单模式面板同宽（v0.21 r2，用户复核反馈）**：v0.13「限宽 760px 任务流」与全宽
+      结果列叠加产生一页两种卡宽，先改左对齐（r1）仍不满足「堆叠卡片至少同宽」→ 撤销
+      760px 上限，全部面板全宽统一；beam 页高实测 2128px ≤ 2200px 预算线（v0.19 基线）
+- [x] **连带真 bug（假绿暴露）**：`#dirty-chip` CSS `display:none` + JS 置 `""` 回落 none
+      ——徽章实际从不渲染，E9 只断言内联样式故全绿；改 JS 置 `inline-flex`
+- [x] **防回归**：新增 `tests/ui_consistency_check.js`（静态解析 style 块：C1 字号白名单/
+      C2 圆角白名单/C3 token 存在且无 .5px/C4 控件高度契约）——行为 E2E 不盯样式，
+      硬编码 13.5px 可无声回潮，此文件是绊线
+- 配套：快照模板 10px 圆角归 token（快照内联整页 style，var 随整页样式落盘可解析）；
+  solver 折叠区 margin-top 6px 与兄弟区块 8px 对齐；`UI_VERSION` 0.21.0
+- 验证：consistency check **21 PASS**；render_check/ux_alignment E2E 回归见
+  output.verification.md
+
+### v0.22.0 — 简单模式「一屏一答」：去重 / 信号一致 / 单一主行动（2026-09-30）
+
+> 用户复核 v0.21 后判定「简单模式还是不够简单清晰」。对照 v021_simple_fullpage.png
+> 实证清点：同一安全系数出现在 sticky 条+结论卡+KPI 行 3 处、结论文字 2 处、
+> 「应用建议」按钮 2 个；⚠ 信息散布在「N 条提示」卡+「N 条几何风险」卡+结论区
+> 风险预览卡 3 处；三步引导在首访横幅+步骤条+空态卡出现 3 遍；绿色 ✅ 结论卡
+> 与游离的橙色屈曲警示行色彩打架。
+
+- [x] **引导三重→一重**：删 v0.10 首访横幅（first-guide + ui.guide-done 生命周期）与
+      v0.13 持久步骤条（flow-steps + updateFlowSteps 诚实三态）——三步内容只保留
+      结果面板空态卡（#empty-guide，情境化：结论将出现在哪里就在哪里教）
+- [x] **结论 hero（每数字一次）**：summary 三卡 → 两卡（结论 hero + 建议）。hero =
+      引擎亲笔结论 verbatim + SF 刻度条 + 人话解读；**卡色取最坏信号**（结论 emoji ×
+      phase_d 屈曲/断裂结构化告警 × SF<1，仍是引擎数字的显示映射、无 UI 侧打分）；
+      屈曲/断裂镜像横幅**移入卡容器内、贴合 hero 下沿**（渲染时节点搬家，负 margin
+      闭合网格缝隙）——绿卡旁的橙线从"孤线"变成 hero 的"但注意"注脚
+- [x] **单一主行动**：建议卡 = 「应用全部建议并重新分析 (N)」+「将调整：填充率
+      15→25%…」摘要行（标签查自服务端滑杆行 .lbl，客户端仍不持有引擎键名知识；
+      简单模式无需勾选仪式）；高级模式保留按勾选应用 CTA（双按钮 CSS 门控）
+- [x] **风险一个入口**：warnings 卡 + risk 卡 + 结论区风险预览卡 → 一张「风险与提示」
+      合并卡（合计计数 + 「最高 SN」标题行，体内双列表分节）；保留 v0.14 语义：
+      用户开关跨分析保留、未点击时 ⚠️/❌ 展开 ✅ 折叠；两流皆空则整卡隐藏
+- [x] **数字进折叠**：KPI 行（评分/载荷判定/最大应力）+ 参数建议明细 + 引擎判定行
+      （phase-b-assessment，v0.18 时是唯一的上方结论行，hero 落地后成重复）统一挂
+      detail-wall；折叠条更名「全部数值与引擎明细」；sticky SF 条简单模式平时隐藏、
+      仅分析中现身作运行反馈（高级模式两列滑杆工作流不变）
+- [x] **行动行瘦身**：优化对比 / 下载报告 JSON 归高级模式；简单模式主行动行 =
+      分析 + 下载 HTML 快照（可分享产物）
+- [x] **连带修复（vm 假绿防线）**：worst-of 着色初版读 #pd-warn-promoted 的
+      textContent——vm stub 不折叠子文本会假绿，改读引擎 payload（与镜像写入同条件）；
+      横幅搬家在 vm 无 removeChild 的 stub 上跳过（位置属装饰，内容渲染与位置无关）
+- [x] **防回归**：report_render 142 断言重写（两卡结构/合并卡计数·标题·门控/双 CTA/
+      将调整行）；ux_alignment E7/E10 重写（sticky 简单模式隐/运行现、KPI+建议明细
+      进折叠、行动行 2 钮、横幅位于 hero 之下）；browser_render 增「横幅入容器」
+      「单一引导面」断言；i18n 拼装串补 word pairs（coverage 按字面量、运行时按整
+      节点——CDP EN 扫描抓住缺口后补齐）
+- 配套：beam 页高 2128→1819px（v0.19 预算线 2200px）；`UI_VERSION` 0.22.0；
+  截图 gui-test-screenshots/v022_{simple,advanced}_fullpage.png
+- 验证：smoke 118/118；report_render 142/142；ux_alignment 45/45（真引擎 E2E）；
+  browser_render all green（真引擎 E2E）；ui_consistency 21/21；i18n FAIL 0；
+  browser_en ALL PASS
+
+### v0.23.0 — G-code 伴随工具：gcode-diff 双文件对比 + 单文件评分（2026-09-30）
+
+> 集成兄弟仓库 `C:\build\Gcode-diff`（纯 Rust G-code 对比/评分引擎，3.5 万行/550 测试）
+> 为第三条输入流。此前 G-code 在本 UI 是"拒绝面"（.gcode.3mf 上传即拒）。选型：
+> **CLI 子进程 + 版本化 JSON**（与 stratum.exe 调用模式同构、零新依赖保红线 1），
+> 不 import 其 crate、不走其 C ABI。对抗审查（requirements-gap correction pass）
+> 先行打穿三个假设——dist 现成品**落后源码**（空文件评分假绿 100 分，改用仓内
+> 0.27.0 构建重打包）；score 模式 `dimensions_scored==0` 无条件 rc=2 且文件已落盘
+> （fail-closed 合法态，非工具失败）；diff 模式 rc=2 仅在显式 `--fail-on*`（本 UI
+> 永不传 → 成功恒 rc=0）。
+
+- [x] **分发与探测**：`bin/gcode-diff/` 子目录（exe + 自带 stratum_shared.dll，
+      与 bin/stratum.exe 的 DLL 解析隔离——未来 SDK 版本错配最坏封顶为工具自身
+      rc=1，不波及引擎）；`resolve_gcode_diff_binary()` 照 resolve_binary
+      （env STRATUM_GCODE_DIFF_BIN → bin/gcode-diff/ → PATH）；缺失=面板整体隐藏
+      （/api/status `gcode_diff_available` 披露，降级不阻断）；build.ps1 `bin\*`
+      拷贝补 `-Recurse`（子目录内容否则丢失）+ 伴随缺失仅警告
+- [x] **服务端三端点**（纯编排、argv 全常量 flag）：
+      `POST /api/gcode-diff`（A/B 两 session、schema 闸 `gcode-diff-report/v1`
+      fail-loud、console 取 **stderr** —— 一行摘要在彼处，与 stratum.exe 的
+      stdout 相反）；`POST /api/gcode-score`（结构闸、rc∈{0,2} 皆成功、
+      `--no-overhang-viz` 免 4.5MB plotly）；`GET /api/gcode-report`（自包含
+      HTML 深链，RFC 5987 双头）。上传白名单 +gcode/+gco，session 增 `kind`，
+      analyze/batch kind 闸拒绝 G-code 误入几何引擎
+- [x] **报告显示名**：上传以 `<run_hex>-<原basename>` 拷贝入 WORK_DIR 再送 argv
+      （报告 file_a/file_b 显示真实文件名而非 token 乱码；basename 上传时已拒
+      控制字符 + 上游 h_escape 注入测试覆盖）
+- [x] **前端**：左列「G-code 工具」面板（评分=简单模式入口"这份 G-code 打几分"；
+      对比+轻量几何=advanced-only）；右列 **panel 级互斥**（gcode 结果换整个
+      结果列，下次模型分析换回）；HTML 快照仅限模型结果（gcode 的完整产物 =
+      深链自包含报告，title 注明 diff 报告恒中文/score 恒英文——引擎产物语言
+      原样，v0.15 纪律）
+- [x] **渲染两函数**（report.js 只声明约定）：renderGcodeDiff（结论 hero/层差异
+      KPI/全局指标差异表/几何卡【available:false 整块隐藏，absent-not-null】/
+      physics 标量摘要/slicer_issues severity 着色）；renderGcodeScore
+      （**dimensions_scored==0 → 「整体不可评估」卡**——两态哨兵：overall_score
+      的 0.0 兼表"未评估"，判定键必须是 dimensions_scored；**dimension.score
+      null → "—" 绝不渲染 0**）；引擎文本 verbatim + data-i18n-skip
+- 验证：smoke **127/127**（T93-T98：kind 上传/400 引导/两文件 diff schema+
+      names+console/评分/void rc=2 透传/HTML 深链/模型 token kind 闸；exe 缺失
+      响亮 SKIP；T96b 坏实现翻红-回绿闭环）；report_render **153 项**（argv 路径
+      不上屏、null 两态、available:false 整块隐藏、未知 verdict token 中性渲染）；
+      browser E2E +3（status gate 放行/列交换/深链/void 卡）；i18n FAIL 0
+      （+60 词条）；ui_consistency 全绿；截图 v023_gcode_{diff_advanced,score_simple}.png
+- 明确不做：多参考诊断（3+ 文件 UI）；--structure FEM diff（fem_delta/structure
+      恒 null 按 absent 隐藏）；3D 点云可视化；physics_delta.layers[] 逐层明细
+      （只渲染标量，JSON 原样透传——不在服务端裁剪引擎输出）；进度轮询（秒级
+      运行，秒表即可）；--fail-on*/--profile/--machine 暴露（后续版本）
+
+### v0.24.0 — 换模即清场：会话切换滞后状态清扫 + 运行期换模竞态（2026-10-03）
+
+> 背景：v0.18 时被判「既有会话语义」保留的 resetTuningState 半清场（backlog 挂了
+> 五个版本），在 v0.22 hero 重设计后升级为真问题——上传新模型后，旧模型的绿色
+> 「✅ 安全」hero 继续顶着新模型显示（分析失败/取消时无限期）。枚举又抓出两个
+> 同族缺陷：state.history 不随会话清空 → 新模型首轮渲染拿旧模型 run 当 prev 出
+> **跨模型 ▲▼ delta 胶囊**；A 运行中上传 B 时 analyze(B) 被 running 闸**静默丢弃**
+> （非 auto 不排队）且 A 的迟到响应**渲染进 B 的会话**（错报告+错热图+错历史刷新）。
+> independent-REFUTE 一轮（VERDICT: REJECT——2 blocker + 2 major + 5 minor）：
+> blocker#1 `#pd-warn-promoted` 首渲染后常驻 `#summary-cards` 内，`innerHTML=""`
+> 会永久杀死镜像节点（实现期实踩：摘离后 renderReport 的重挂载以它自己的
+> lift-out 为前提，节点脱离 document 后 `getElementById` 恒 null——E10b 探针当场
+> 爆炸；修法=摘离后送回静态老家，boot 缓存 `pdwStaticHome`）；blocker#2 服务端
+> `_batch_cancel` 毒雷——**一手源核查推翻**：analyze 端点起手 discard（server.py
+> 「iter 44 refuter-reproduced」注释在案），B 的补跑请求会先清雷，仅客户端闭包
+> 捕获 runToken 采纳；major：scheduleAuto 受实时分析开关门控（改专用
+> `state.pendingRun` 直连 analyze）；state.lastApplied 不清会伪造「引擎按域调整
+> 为 X」toast（补清）；5 minor（cand-raw-fold 与 detail-open 同属用户所有权——
+> 不收起；cand-body 恢复 boot 占位行需语言恢复后缓存 `candBodyBootHTML`；
+> alerts-card 是 inline display 机制非 :empty；renderHistory 空态「尚无运行。」
+> 断言口径；catch 层也要 token 守卫）全部采纳。
+> 测试期教训：beam 夹具引擎仅 27-66ms，任何时序窗口都不存在——新增
+> `test_data/cube_100.stl`（实心 100mm 立方体）+ suite 服务器 `STRATUM_UI_GRID=24`
+>（cube 运行 1.26s、beam 不受影响），换模/取消/竞态窗口全部确定性化。
+
+- [x] **`resetResultsPanel()`**（resetTuningState 起手调用）：empty-guide 恢复显示
+      （no-report 门随之回开）→ pdw 镜像 lift-out+清空+送回静态老家 →
+      summary-cards 清空（:empty 自隐藏）→ 8 个 KPI 格与 12 个 cp-* 回显格回
+      "—"（sf-*/load 色类一并复位）→ fast-mode-tag/filament-note/engine-console/
+      analyze-error/validate-refused 隐藏 → alerts-card inline 隐藏 →
+      cand-bars 清空 + cand-body 恢复 boot 占位行 → state.history=[]/ab=[] +
+      renderHistory/renderAB 重绘空态 → updateStickyVerdict(false) 自隐
+- [x] **analyze() 会话绑定**：`runToken` 起手捕获；取消闭包发 runToken（取消它
+      代表的那次运行）；then/catch 双层 `state.token !== runToken → return`
+      （迟到的旧会话响应——报告/错误卡/toast——全部丢弃；finally 照常恢复按钮）
+- [x] **pendingRun 队列**：running 闸挡下的 manual 运行置 `state.pendingRun`
+      （不经 scheduleAuto——那受实时分析开关门控，关掉时假队列），finally 优先于
+      autoQueued 直接 `analyze(false)`（新会话首跑不再静默蒸发；手动重入/键盘
+      Ctrl+Enter 同受益）
+- [x] **配套**：resetTuningState += `state.lastApplied=null` + gcode 面板让位
+      （`showGcodeResultPanel(false)`——原先只在 analyze 成功路径换回，失败/被丢
+      时 gcode 结果滞留）；两处 stale 注释更新（no-report 门控理由重写）
+- 验证：smoke **127/127**；render_check **153**；ui_consistency；i18n FAIL 0；
+  browser E2E + browser_en 全绿；ux_alignment **50 项**（新增 E12 七断言：
+  取消式 pristine 窗口断言 8 容器 + pdw 存活 + 跨模型 delta 不出现 + 新会话
+  history 恰 1 行 + 竞态收敛「重置后 cp-walls≠8、终值=2」）。**牙齿实证**：
+  sabotage 三处修复点（resetResultsPanel 早退/守卫失效/队列失效）跑 E12——
+  六断言全红（delta:true、sawStale:true、finalWalls:"8" 三个 bug 活体在案），
+  还原后全绿
+- 遗留 backlog：EN 模式下 cand-body 占位行依赖 boot 缓存（语言切换后上传才会
+  拿到新语言占位——当前语义正确：捕获时语言）；E12c 的竞态窗口依赖 grid=24
+  的 cube 夹具（引擎提速超 10x 需重标定）
+
+### v0.25.0 — G-code 应力调优：--gcode-in/out 全链路（2026-10-03，v0.8.1 最重挂账闭环）
+
+> 契约探针先行（引擎 0.26 一手源）：`--gcode-in/--gcode-out` 成对、`<out>.tune.json`
+> sidecar（段/热区计数、coverage_pct、e_drift_pct、p_hi/m_hot/vm_floor_mpa、
+> patch_coverage_ratio **-1=不适用哨兵**、alignment+盲区）；**JSON 报告 0 diff**
+> （diff 实测）——纯 artifact 通道（heatmap 同族）；mismatch 切片 = coverage 0 +
+> console 告警的合法态。independent-REFUTE 一轮（VERDICT: REJECT——4 major + 7 minor
+> 全采纳）：fallback 剥**带值 flag** 留孤儿 positional（引擎今日 rc=0 容忍是运气非
+> 契约——顺带翻出 `--heatmap-json/-bins` 自 v0.8 起的潜伏同款，一并修=值感知剥离
+> `_strip_fallback_flags` + T103 回归钉）；调优产物无清理语义（对照 heatmap/base
+> profile 读后即删——改「新 run 删旧产物 + tune.json 读后删」，auto 重跑不再堆积
+> MB 级文件）；attach/detach 删文件撞 in-flight 句柄（best-effort + evict 兜底）；
+> 现状陈述纠错（`--progress-json` 是裸 flag 非带值先例；`_validated_float` 不存在
+> ——新建）；rc==0+sidecar absent（旧引擎剥 flag）也须清产物指针；patch_coverage_ratio
+> -1 上屏=裸哨兵（渲染「—」）；tune 卡挂 detail-wall（新手不见不可控卡）；F5 后
+> 数值输入不持久而附件还在服务端（数值随 sessionStorage 走 + 响应 `gcode_attached`
+> 补 chip）；scheduleAuto 委托选择器/渲染调用点接线点名。
+> 明确不做：batch 不带 gcode 通道（快速参数对比定位，逐 combo tune 产物无消费面
+> ——server 注入点只在 single analyze，注释成文）。
+
+- [x] **服务端**：`/api/gcode-attach`（raw body、model session 专属、.gcode/.gco
+      白名单、控制字符拒绝、覆盖式重附）+ `/api/gcode-detach`（清指针删文件）+
+      `GET /api/gcode-tuned`（RFC 5987 双头下载，`<显示名去扩展>.tuned.gcode`）；
+      analyze 在 session 有附件时注入成对 flag（产物指针**逐 run 重算**：成功+有
+      sidecar=设置，失败/取消/absent=清除——旧产物不冒充本次）；响应顶层
+      `gcode_tune`+`gcode_attached`（sibling-key 纪律，同 heatmap/applyable）；
+      `_validated_float` 域校验 400；`_FALLBACK_FLAGS` += 5 flag + 值感知剥离
+- [x] **前端**：分析选项区 advanced-only 附件行（file input+chip+移除钮）+ 三数值
+      （留空=引擎默认，非空才进 body）；attach/detach/数值 change 走 scheduleAuto；
+      `renderGcodeTune`（数字 verbatim 无 UI 侧阈值着色——coverage 50%/70% 是引擎
+      console 语义；对齐/盲区 prose 带 i18n skip；-1 哨兵渲染「—」；token 在场才有
+      下载钮）；resetTuningState 清 UI 附件态（clearGcodeTuneUI——v0.24 交叉点：
+      新 session 无附件，chip 不得谎称）+ resetResultsPanel 隐藏审计卡；F5 数值随
+      sessionStorage 持久、chip 由响应 presence 补
+- 验证：smoke **141/141**（+14：T99 族 4 项 attach 生命周期/域闸 + T100 族 3 项
+  调优分析+审计形状+下载双头 + T101 族 3 项数值域界 + T102 族 2 项 detach 断链 +
+  T103 族 2 项值感知剥离回归）；render_check **159**（+6 §28：审计 verbatim/
+  -1 哨兵/absent 隐藏/无 token 无钮）；browser E2E +2（attach→auto 分析→卡渲染+下载钮、
+  detach→卡隐藏）；i18n FAIL 0（+36 词条）；ux/browser_en/consistency 全绿；
+  fixture `test_data/gcode-tune-audit.json`（真引擎 sidecar）+ `cube_100.stl`（v0.24）
+- 遗留 backlog：调优产物下载在 rc!=0 后按「无本次产物」诚实清除（已实现），但
+  旧产物文件本身在 Windows 句柄占用时靠 evict 兜底（best-effort 已文档化）；
+  mismatch 切片（coverage 0）用户引导文案（当前靠引擎 console 告警原文）——待
+  真实用户样本再议
+
+### v0.26.0 — gcode-diff 机器/热端键暴露 + 调优通道 DOGFOOD（2026-10-03）
+
+> 两轮：**轮 1（DOGFOOD，迭代 99，self-refuted 轻量）**：合成与 beam 几何匹配的
+> 切片夹具 `test_data/gcode/beam-slice.gcode`（Cura 风格 `;TYPE:WALL-OUTER/
+> WALL-INNER` 标记——引擎二进制 strings 一手探得词表；FILL/SPARSE/Sparse Infill
+> 三探均被 excluded_feature 排除，填充段不参与采样是引擎实际行为，如实记录），
+> 首次驱动调优活体形状：**candidates 160 / tuned 80 / coverage 50% / E 漂移
+> +2.43%**，产物 E 值精确 +10% 改写（3.3131→3.64441 逐行核实）；T105 字节级
+> 断言（audit tuned>0 为主证、下载产物≠输入为辅证——引擎 tuned=0 时也会规范化
+> 重排格式，字节差异单用不成两态判别，注释如实降级）。
+> **轮 2（迭代 100，independent-REFUTE：VERDICT REQUEST CHANGES——2 blocker +
+> 3 major 全采纳）**：blocker#1 白名单来源≠消费者——stratum `--schema` 供枚举、
+> gcode-diff.exe 消费（自身无 --schema 且两构件存在 3 天版本错位），fail-loud
+> 400 会错杀或放行静默 miss；修=**透传 + 响应回显**（≤32 字符无空白形状闸）。
+> blocker#2 argv 生效零可观测面（±--machine 报告字节级相同）；修=响应
+> `machine`/`hotend` 回显字段。major：score 侧是死接线（评分机器无关实测）→
+> 拒收 400；selects 显隐复用 `(diff && advanced)`；「自动」文案误导 →「不指定
+> （不钳制固件限速）」。
+
+- [x] 服务端：`--hotend` 枚举进 `_refresh_select_surfaces`（fallback 6 键）+
+      `/api/params` 下发 `hotend_values`；`_gcode_diff` 透传 machine/hotend
+      （形状闸 400）+ 响应回显；`_gcode_score` 拒收两键（400 引导切对比模式）
+- [x] 前端：G-code 工具面板「机器/热端」双 select（options=探针枚举，选项仅
+      便利非闸；显隐=diff+advanced 与 slot B 同一谓词；会话内保留、不进
+      localStorage——与 gcodeState 既有语义一致）
+- 验证：smoke **146/146**（+4：T106 透传+回显/坏键 400/score 拒收/params
+  hotend_values）；browser E2E +1（下拉 populated≥11 且三态显隐）；i18n FAIL 0
+  （+8 词条）；render/consistency/ux/browser_en 全绿
+- 遗留 backlog：gcode-diff `--profile`（评分阈值配置文件上传通道，重、窄受众，
+  挂账）；填充段 excluded_feature 的引擎侧语义（是否漏接 SPARSE 词表——引擎队
+  压力点候选）；mismatch 切片用户引导（延续）
+
+### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 - [x] a) WebUI 侧可先行（2026-08-19 完成主体）：STL WebGL 预览（自研 ~240 行，零依赖保红线 1；
       包围盒定中心/拖拽旋转/滚轮缩放）+ **方向候选箭头 overlay**（iter 63：④ 表行点击 ↔ 预览

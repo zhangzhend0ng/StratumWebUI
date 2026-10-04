@@ -69,6 +69,17 @@ def _validated_int(raw, lo, hi):
     return v if lo <= v <= hi else None
 
 
+def _validated_float(raw, lo, hi):
+    """float(raw) within [lo, hi] or None — float twin of _validated_int
+    (v0.25 gcode stress-tune numbers; the engine validates its own domain
+    at run time, this is the friendly pre-check + 400 gate)."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
 # UI version (semver-ish, single source). Exposed via /api/status and the
 # banner so bug reports from a distributed build are diagnosable — before
 # this, two installs of different vintages were indistinguishable (D1
@@ -110,7 +121,16 @@ def _validated_int(raw, lo, hi):
 # text fixed), 3MF live preview via GET /api/model-mesh (stdlib zip+XML
 # triangle soup in the stlParse buffer shape; capped, token-gated,
 # refuse-not-truncate) feeding the existing WebGL pipeline.
-UI_VERSION = "0.18.0"
+# 0.23.0 — G-code companion tools (gcode-diff CLI, bin/gcode-diff/):
+#         two-file diff + single-file 19-dim quality score as a third input
+#         flow. Upload whitelist +gcode/+gco with session kind=, analyze/
+#         batch kind gates; POST /api/gcode-diff, /api/gcode-score (rc=2
+#         fail-closed passes through as a legal not-assessable result),
+#         GET /api/gcode-report (self-contained HTML deep link); status
+#         discloses gcode_diff_available; companion absence hides the panel
+#         (degrade, never a blocker); console channel = stderr (the
+#         one-line summary lives there, unlike stratum.exe's stdout).
+UI_VERSION = "0.26.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -563,6 +583,31 @@ def resolve_binary():
 BINARY = resolve_binary()
 
 
+# gcode-diff companion tool (same subprocess pattern as the engine). Its own
+# bin/gcode-diff/ SUBDIR keeps stratum_shared.dll (0.27.0, moves with the
+# Gcode-diff repo) away from bin/stratum.exe's DLL resolution — a future
+# version mismatch fails this tool with rc=1, never the engine. Missing
+# binary = G-code panel hidden, never a startup blocker (degrade, not fail).
+def resolve_gcode_diff_binary():
+    env = os.environ.get("STRATUM_GCODE_DIFF_BIN")
+    if env and os.path.isfile(env):
+        return os.path.abspath(env)
+    local = os.path.join(APP_DIR, "bin", "gcode-diff", "gcode-diff.exe")
+    if os.path.isfile(local):
+        return os.path.abspath(local)
+    which = shutil.which("gcode-diff.exe")
+    if which and not _reject_remote_path(which):
+        return which
+    return None
+
+
+GCODE_DIFF_BIN = resolve_gcode_diff_binary()
+# versioned contract emitted by gcode-diff formatters.rs:20; additive within
+# v1. The score JSON deliberately has NO schema_version — that mode is gated
+# structurally instead (dimensions list + overall_score, see _gcode_score).
+GCODE_DIFF_REPORT_SCHEMA = "gcode-diff-report/v1"
+
+
 # --schema probe cache (engine 0.22+): `stratum --schema` prints machine-
 # readable flag domains as JSON, rc=0 — value ranges, enum values, lockable
 # parameters and the engine's own version string. The version field beats the
@@ -662,10 +707,12 @@ class _engine_slot(object):
 _cancelled_gens = set()
 
 
-def run_analyze_cancelable(args, token):
+def run_analyze_cancelable(args, token, binary=None):
     """Run an analyze argv as a cancellable Popen. Returns (rc, out, err).
     rc == CANCELLED_RC only when /api/cancel killed THIS run (explicit flag —
-    a bare rc!=0 with empty stderr cannot distinguish kill/crash/timeout)."""
+    a bare rc!=0 with empty stderr cannot distinguish kill/crash/timeout).
+    binary: which exe fronts the argv (default BINARY) — the gcode-diff
+    companion tool rides the same slot/cancel/timeout machinery."""
     with _inflight_lock:
         _gen_counter[0] += 1
         gen = _gen_counter[0]
@@ -685,7 +732,7 @@ def run_analyze_cancelable(args, token):
                     "sys.stderr.write('{\"type\": \"progress\", \"stage\": \"fem\", \"pct\": 42}\\n'); "
                     "sys.stderr.flush(); time.sleep(%d)" % _ANALYZE_DELAY]
         else:
-            argv = [BINARY] + args
+            argv = [binary or BINARY] + args
         return _run_proc_with_inflight(argv, token, gen)
     # unreachable
 
@@ -808,7 +855,37 @@ def cancel_analyze(token):
 _FALLBACK_FLAGS = ("--orca-suggest", "--optimize-orient", "--explain",
                    "--progress-json", "--heatmap-json", "--appearance",
                    "--rheology", "--est-error-profile", "--resolution-check",
-                   "--voxel-vote", "--heatmap-bins")
+                   "--voxel-vote", "--heatmap-bins",
+                   # v0.25 gcode stress-tune channel (engine 0.26-era)
+                   "--gcode-in", "--gcode-out",
+                   "--gcode-vm-floor", "--gcode-m-hot", "--gcode-p-hi")
+# bonus flags that carry a VALUE as the next argv element — a bare
+# string-filter strip leaves the value behind as an orphan positional
+# (the engine happens to rc=0-ignore stray positionals today, probed
+# 2026-10-03, but that is luck, not contract). --heatmap-json/-bins had
+# this latent hole since v0.8; the value-aware strip closes the family.
+_FALLBACK_VALUE_FLAGS = ("--heatmap-json", "--heatmap-bins", "--gcode-in",
+                         "--gcode-out", "--gcode-vm-floor", "--gcode-m-hot",
+                         "--gcode-p-hi")
+
+
+def _strip_fallback_flags(args, drop):
+    """Remove `drop` flags from argv; value flags take their argument with
+    them (flag + next element, positionally — argv shapes are ours, so the
+    next element IS the value for these flags)."""
+    out = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in drop:
+            if a in _FALLBACK_VALUE_FLAGS and i + 1 < len(args):
+                i += 2  # flag + its value
+            else:
+                i += 1
+            continue
+        out.append(a)
+        i += 1
+    return out
 
 
 def run_analyze_with_fallback(args, run=None):
@@ -823,7 +900,7 @@ def run_analyze_with_fallback(args, run=None):
         drop = [f for f in _FALLBACK_FLAGS
                 if f in args and ("unrecognized argument: %s" % f) in text]
         if drop:
-            args = [a for a in args if a not in drop]
+            args = _strip_fallback_flags(args, drop)
             rc, out, err = run(args)
     return rc, out, err
 
@@ -867,6 +944,11 @@ FALLBACK_LOADS = ["compression", "bending", "torsion", "cantilever"]
 FALLBACK_AXES = ["x", "y", "z"]
 FALLBACK_MACHINES = ["A250", "A350", "Artisan", "J1", "U1", "A1", "A1mini",
                      "P1P", "P1S", "X1", "X1C"]
+# v0.26: --hotend enum fallback (schema-probed values as of engine 0.26;
+# feeds the gcode-tool SELECT OPTIONS only, never a gate — the machine/
+# hotend argv itself is pass-through, see _gcode_diff)
+FALLBACK_HOTENDS = ["e3d_v6", "e3d_volcano", "bambu_x1c", "bambu_a1",
+                    "mosquito", "snapmaker_u1"]
 FALLBACK_VALIDATE_TIERS = ["minimal", "standard", "strict", "paranoid"]
 FALLBACK_PRECOND = ["ic0", "jacobi"]
 PATTERN_DEFAULT = "gyroid"
@@ -1100,11 +1182,12 @@ def _refresh_select_surfaces():
     return (_enum_values(doc, "--axis", FALLBACK_AXES),
             _enum_values(doc, "--machine", FALLBACK_MACHINES),
             _enum_values(doc, "--validate", FALLBACK_VALIDATE_TIERS),
-            _enum_values(doc, "--precond", FALLBACK_PRECOND))
+            _enum_values(doc, "--precond", FALLBACK_PRECOND),
+            _enum_values(doc, "--hotend", FALLBACK_HOTENDS))
 
 
-(AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES) = \
-    _refresh_select_surfaces()
+(AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES,
+ HOTEND_VALUES) = _refresh_select_surfaces()
 
 
 def _apply_schema_domains():
@@ -1437,7 +1520,8 @@ def validated_base_profile(raw):
 def build_analyze_args(model_path, params, locks, compare, json_path, env=None,
                        orient=False, heatmap_path=None, appearance=False,
                        rheology=False, est_error=False, res_check=False,
-                       grid=None, heatmap_bins=None, base_profile_path=None):
+                       grid=None, heatmap_bins=None, base_profile_path=None,
+                       gcode_tune=None):
     """Build the whitelisted argv for an analyze/compare run."""
     # --explain: engine prints per-suggestion trust grounding (kb_module /
     # trust_source) to stdout only — JSON is byte-identical with/without it
@@ -1504,6 +1588,30 @@ def build_analyze_args(model_path, params, locks, compare, json_path, env=None,
         if heatmap_bins:
             args.append("--heatmap-bins")
             args.append(str(heatmap_bins))
+    if gcode_tune:
+        # v0.25 coordinate-level stress tuning (engine 0.26-era, probed
+        # 2026-10-03): --gcode-in/--gcode-out are a PAIR (the engine
+        # requires both), sampling THIS run's FEM von Mises along extruding
+        # segments and rewriting E in the hot zone (add-only). The JSON
+        # report is byte-identical with/without these flags — the products
+        # are the rewritten gcode plus a <out>.tune.json audit sidecar, both
+        # handled by the caller. Numbers: vm-floor MPa (0 = percentile-only,
+        # engine default), m-hot ratio (1.0..1.3, default 1.10), p-hi
+        # percentile (0..1, default 0.90) — sent ONLY when the user set one;
+        # callers pre-validate via _validated_float.
+        args.append("--gcode-in")
+        args.append(gcode_tune["in"])
+        args.append("--gcode-out")
+        args.append(gcode_tune["out"])
+        if gcode_tune.get("vm_floor") is not None:
+            args.append("--gcode-vm-floor")
+            args.append(str(gcode_tune["vm_floor"]))
+        if gcode_tune.get("m_hot") is not None:
+            args.append("--gcode-m-hot")
+            args.append(str(gcode_tune["m_hot"]))
+        if gcode_tune.get("p_hi") is not None:
+            args.append("--gcode-p-hi")
+            args.append(str(gcode_tune["p_hi"]))
     args.append("--json")
     args.append(json_path)
     return args
@@ -1647,6 +1755,9 @@ class StratumHandler(BaseHTTPRequestHandler):
                 # v0.16: where the rolling log lives (tooltip copy); null
                 # when file logging degraded to console-only
                 "log_dir": LOG_DIR if LOG_FILE else None,
+                # v0.23: gcode-diff companion readiness — the UI hides the
+                # whole G-code tools panel when absent (degrade, not error)
+                "gcode_diff_available": GCODE_DIFF_BIN is not None,
             })
         elif path == "/api/params":
             # surface tells the UI where the enums came from; drift lists
@@ -1670,6 +1781,7 @@ class StratumHandler(BaseHTTPRequestHandler):
                     # hardcoded copies)
                     "axis_values": AXIS_VALUES,
                     "machine_values": MACHINE_VALUES,
+                    "hotend_values": HOTEND_VALUES,
                     "validate_tiers": VALIDATE_TIERS,
                     "precond_values": PRECOND_VALUES,
                     "drift": {
@@ -1741,6 +1853,82 @@ class StratumHandler(BaseHTTPRequestHandler):
                     return  # client gone (iter 23 rule)
             else:
                 _send_json(self, 200, {"ok": True, "report": report})
+        elif path == "/api/gcode-report":
+            # v0.23: gcode-diff self-contained HTML (diff or score — the
+            # session's LAST run wins), token-gated like /api/report. The
+            # file was written by gcode-diff into WORK_DIR under a per-run
+            # hex; serving it is a plain byte passthrough (the report's own
+            # inline JS/styles are upstream-authored, injection-tested).
+            query = parse_qs(urlparse(self.path).query)
+            tk = (query.get("token") or [""])[0]
+            with _session_lock:
+                sess = _sessions.get(tk)
+                gl = sess.get("gcode_last") if sess else None
+            if sess is None:
+                _send_json(self, 400, {"ok": False, "error": "unknown token"})
+            elif (not isinstance(gl, dict) or not gl.get("html_path")
+                    or not os.path.isfile(gl["html_path"])):
+                _send_json(self, 400, {"ok": False,
+                                       "error": "尚无 G-code 报告（先运行对比或评分）"})
+            else:
+                try:
+                    with open(gl["html_path"], "rb") as fh:
+                        data = fh.read()
+                except OSError as exc:
+                    _send_json(self, 500, {"ok": False, "error": str(exc)})
+                    return
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    mode = "score" if gl.get("mode") == "score" else "diff"
+                    self.send_header(
+                        "Content-Disposition",
+                        'inline; filename="gcode-%s-report.html"' % mode)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except ConnectionError:
+                    return  # client gone (iter 23 rule)
+        elif path == "/api/gcode-tuned":
+            # v0.25: download the stress-tuned gcode of the session's LAST
+            # successful analyze (token-gated like /api/gcode-report). RFC
+            # 5987 both-header, same as the 3MF writeback download, so the
+            # display name (with CJK) survives.
+            query = parse_qs(urlparse(self.path).query)
+            tk = (query.get("token") or [""])[0]
+            with _session_lock:
+                sess = _sessions.get(tk)
+                tp = sess.get("gcode_tuned_path") if sess else None
+                tn = sess.get("gcode_name") if sess else None
+            if sess is None:
+                _send_json(self, 400, {"ok": False, "error": "unknown token"})
+            elif not tp or not os.path.isfile(tp):
+                _send_json(self, 400, {"ok": False,
+                                       "error": "尚无调优产物（附加切片 G-code 并完成一次分析）"})
+            else:
+                base = os.path.basename(tn or "slice.gcode")
+                stem = base.rsplit(".", 1)[0] if "." in base else base
+                fname = stem + ".tuned.gcode"
+                try:
+                    with open(tp, "rb") as fh:
+                        data = fh.read()
+                except OSError as exc:
+                    _send_json(self, 500, {"ok": False, "error": str(exc)})
+                    return
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type",
+                                     "text/plain; charset=utf-8")
+                    self.send_header(
+                        "Content-Disposition",
+                        "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                        % (fname.encode("ascii", "replace").decode("ascii"),
+                           quote(fname)))
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except ConnectionError:
+                    return
         elif path == "/api/model":
             # raw bytes of the stored upload (STL preview; other formats are
             # served too — the UI just doesn't render them). token-gated like
@@ -1893,6 +2081,14 @@ class StratumHandler(BaseHTTPRequestHandler):
                                        "cancelled": cancel_analyze(session["token"])})
             elif path == "/api/batch":
                 self._batch()
+            elif path == "/api/gcode-diff":
+                self._gcode_diff()
+            elif path == "/api/gcode-score":
+                self._gcode_score()
+            elif path == "/api/gcode-attach":
+                self._gcode_attach()
+            elif path == "/api/gcode-detach":
+                self._gcode_detach()
             elif path == "/api/set-binary":
                 self._set_binary()
             else:
@@ -1913,10 +2109,6 @@ class StratumHandler(BaseHTTPRequestHandler):
                                    "error": "internal error: %r" % (exc,)})
 
     def _upload(self):
-        if BINARY is None:
-            _send_json(self, 503, {"ok": False,
-                                   "error": "stratum.exe 未找到（设置 STRATUM_BIN 或放 bin/stratum.exe）"})
-            return
         query = parse_qs(urlparse(self.path).query)
         filename = (query.get("name") or ["model.stl"])[0]
         basename = os.path.basename(filename)
@@ -1932,9 +2124,26 @@ class StratumHandler(BaseHTTPRequestHandler):
         # tetrahedron fixtures). Saving an .obj body as token.stl used to end
         # in a misleading engine error ("STL: truncated file"), so the real
         # extension is preserved — and unknown extensions are rejected here.
+        # .gcode/.gco (v0.23) feed the gcode-diff companion tools instead —
+        # one upload endpoint, two session kinds; the analyze/export flows
+        # below reject kind=="gcode" so a G-code upload can never reach the
+        # geometry engine by mistake.
         ext = basename.lower().rsplit(".", 1)[-1] if "." in basename else ""
-        if ext not in ("stl", "3mf", "obj", "ply", "amf"):
-            raise ValueError("支持的模型格式: stl / 3mf / obj / ply / amf")
+        if ext not in ("stl", "3mf", "obj", "ply", "amf", "gcode", "gco"):
+            raise ValueError(
+                "支持的模型格式: stl / 3mf / obj / ply / amf（G-code 工具另支持 .gcode / .gco）")
+        kind = "gcode" if ext in ("gcode", "gco") else "model"
+        # readiness gates split by kind: the model flow needs stratum.exe,
+        # the G-code tools need gcode-diff.exe (independent panels — one
+        # being absent must not lock the other's uploads)
+        if kind == "model" and BINARY is None:
+            _send_json(self, 503, {"ok": False,
+                                   "error": "stratum.exe 未找到（设置 STRATUM_BIN 或放 bin/stratum.exe）"})
+            return
+        if kind == "gcode" and GCODE_DIFF_BIN is None:
+            _send_json(self, 503, {"ok": False,
+                                   "error": "gcode-diff.exe 未找到（设置 STRATUM_GCODE_DIFF_BIN 或放 bin/gcode-diff/）"})
+            return
         is_3mf = ext == "3mf"
         # Sliced-plate export (Bambu/Orca "*.gcode.3mf"): zip with gcode +
         # thumbnails but no mesh — the engine always rejects it after a full
@@ -1978,12 +2187,211 @@ class StratumHandler(BaseHTTPRequestHandler):
             # keyed on it without re-trusting the client-supplied token later.
             _sessions[token] = {"token": token, "path": path,
                                 "name": basename, "is_3mf": is_3mf,
-                                "writable": writable}
+                                "writable": writable, "kind": kind}
             while len(_sessions) > MAX_SESSIONS:
                 _evict_oldest_session_locked()
         _send_json(self, 200, {"ok": True, "token": token, "name": basename,
                                "is_3mf": is_3mf, "writable": writable,
-                               "size": len(raw)})
+                               "kind": kind, "size": len(raw)})
+
+    # ---- G-code companion tools (gcode-diff, v0.23) ------------------------
+    # Pure orchestration of an external CLI (same pattern as the engine):
+    # argv is list-form with constant flags only — the ONLY user-controlled
+    # bytes are the two file paths, and those are server-side copies keyed
+    # by server-generated hex + the already-validated upload basename.
+
+    def _gcode_session(self, body, key):
+        """Fetch a kind=='gcode' session by an explicit body key (token /
+        token_a / token_b). Unknown token and a model upload both fail loud
+        with user-actionable text (the POST wrapper maps ValueError→400)."""
+        token = body.get(key)
+        with _session_lock:
+            session = _sessions.get(token)
+        if session is None:
+            raise ValueError("unknown %s（上传可能已过期，请重新上传）" % key)
+        if session.get("kind") != "gcode":
+            raise ValueError("%s 对应的不是 G-code 上传（请用「G-code 工具」面板的文件槽上传）" % key)
+        return session
+
+    def _gcode_load_json(self, path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError) as exc:
+            _send_json(self, 502, {"ok": False,
+                                   "error": "gcode-diff 报告解析失败: %s" % exc})
+            return None
+
+    def _gcode_diff(self):
+        """Two-file G-code comparison: gcode-diff A B --json --html."""
+        if GCODE_DIFF_BIN is None:
+            _send_json(self, 503, {"ok": False,
+                                   "error": "gcode-diff.exe 未找到（设置 STRATUM_GCODE_DIFF_BIN 或放 bin/gcode-diff/）"})
+            return
+        body = _read_json_body(self)
+        sa = self._gcode_session(body, "token_a")
+        sb = self._gcode_session(body, "token_b")
+        lightweight = body.get("lightweight") is True
+        run_hex = secrets.token_hex(4)
+        # gcode-diff copies the argv path into the report (file_a/file_b) —
+        # a bare token path would read as hex gibberish in every rendered
+        # report, so each upload is copied under its own (control-char-
+        # checked at upload) basename; rich_html escapes it on its side
+        # (h_escape, injection-tested upstream). Per-run hex keeps two
+        # concurrent runs from stomping each other's copies.
+        pa = os.path.join(WORK_DIR, "%s.g%s-%s" % (sa["token"], run_hex, sa["name"]))
+        pb = os.path.join(WORK_DIR, "%s.g%s-%s" % (sb["token"], run_hex, sb["name"]))
+        json_path = os.path.join(WORK_DIR, "%s.g%s.json" % (sa["token"], run_hex))
+        html_path = os.path.join(WORK_DIR, "%s.g%s.html" % (sa["token"], run_hex))
+        shutil.copyfile(sa["path"], pa)
+        shutil.copyfile(sb["path"], pb)
+        # success is rc==0 exactly: gcode-diff's rc=2 quality gates only
+        # fire with --fail-on*/--fail-below, which this UI never passes
+        args = [pa, pb, "--json", json_path, "--html", html_path]
+        if lightweight:
+            args.append("--lightweight-geometry")
+        # v0.26 machine/hotend pass-through: gcode-diff looks these up in
+        # the SHARED SDK machine table and a lookup miss is fail-open (no
+        # clamp, disclose only — probed 2026-10-03: --machine BOGUS rc=0).
+        # A server-side whitelist CANNOT close that: our enum source is
+        # stratum.exe --schema while the CONSUMER is gcode-diff.exe, and the
+        # two ships can skew (REFUTE 2026-10-03) — a stale source would
+        # 400-reject keys the consumer actually supports, and a leading
+        # source would pass keys the consumer silently ignores. So:
+        # pass-through with a sanity shape gate (short printable token) +
+        # the response echoes what was sent, making the wiring observable.
+        def _gcode_key(body_dict, name):
+            v = body_dict.get(name)
+            if v is None or v == "":
+                return None
+            if (not isinstance(v, str) or len(v) > 32
+                    or any(ord(c) < 0x20 or c.isspace() for c in v)):
+                raise ValueError("%s 需为 ≤32 字符的无空白键名" % name)
+            return v
+        machine = _gcode_key(body, "machine")
+        hotend = _gcode_key(body, "hotend")
+        if machine:
+            args.extend(["--machine", machine])
+        if hotend:
+            args.extend(["--hotend", hotend])
+        # stale sticky-cancel recheck (same rationale as _analyze)
+        with _inflight_lock:
+            _batch_cancel.discard(sa["token"])
+        self._log("run: gcode-diff (diff) ...")
+        rc, out, err = run_analyze_cancelable(args, sa["token"],
+                                              binary=GCODE_DIFF_BIN)
+        # console channel is STDERR: the one-line summary
+        # ([gcode-diff] A=.. layers .. verdict=..) is eprintln'd there,
+        # unlike stratum.exe whose console lives on stdout
+        console = (err or out).decode("utf-8", "replace").strip()
+        if rc == CANCELLED_RC:
+            self._gcode_cleanup((pa, pb, json_path))
+            _send_json(self, 502, {"ok": False, "error": "已取消"})
+            return
+        if rc != 0:
+            self._gcode_cleanup((pa, pb, json_path))
+            _send_json(self, 502, {"ok": False, "error":
+                "gcode-diff 失败 (rc=%d): %s"
+                % (rc, (err or b"").decode("utf-8", "replace")[:400])})
+            return
+        report = self._gcode_load_json(json_path)
+        self._gcode_cleanup((pa, pb, json_path))  # html_path survives for /api/gcode-report
+        if report is None:
+            return
+        if not isinstance(report, dict) or report.get("schema_version") != GCODE_DIFF_REPORT_SCHEMA:
+            _send_json(self, 502, {"ok": False, "error":
+                "gcode-diff 报告 schema_version=%r 不受支持（本 WebUI 支持 %s）"
+                % ((report or {}).get("schema_version") if isinstance(report, dict) else report,
+                   GCODE_DIFF_REPORT_SCHEMA)})
+            return
+        with _session_lock:
+            sa["gcode_last"] = {"mode": "diff", "report": report,
+                                "html_path": html_path,
+                                "names": [sa["name"], sb["name"]],
+                                "tokens": [sa["token"], sb["token"]]}
+        _send_json(self, 200, {"ok": True, "report": report,
+                               "console": console, "mode": "diff",
+                               "machine": machine, "hotend": hotend,
+                               "names": [sa["name"], sb["name"]],
+                               "token": sa["token"]})
+
+    def _gcode_score(self):
+        """Single-file quality score: gcode-diff --score F --json --html."""
+        if GCODE_DIFF_BIN is None:
+            _send_json(self, 503, {"ok": False,
+                                   "error": "gcode-diff.exe 未找到（设置 STRATUM_GCODE_DIFF_BIN 或放 bin/gcode-diff/）"})
+            return
+        body = _read_json_body(self)
+        # v0.26: --machine/--hotend only feed the DIFF-side feasibility
+        # flags (engine help: "for feasibility flags"); scoring is provably
+        # machine-inert (probed 2026-10-03: score byte-identical ±--machine).
+        # Reject the keys here rather than accept-and-ignore — a silent
+        # no-op flag is the dead-wiring trap (refuter [A], argv with zero
+        # consumers).
+        if body.get("machine") or body.get("hotend"):
+            raise ValueError("machine/hotend 只作用于对比（diff）模式的可行度旗标，"
+                             "评分模式不支持——请切换到对比模式设置")
+        s = self._gcode_session(body, "token")
+        run_hex = secrets.token_hex(4)
+        p = os.path.join(WORK_DIR, "%s.s%s-%s" % (s["token"], run_hex, s["name"]))
+        json_path = os.path.join(WORK_DIR, "%s.s%s.json" % (s["token"], run_hex))
+        html_path = os.path.join(WORK_DIR, "%s.s%s.html" % (s["token"], run_hex))
+        shutil.copyfile(s["path"], p)
+        # --no-overhang-viz skips inlining the 4.5MB plotly 3D point cloud:
+        # the deep-linked report stays light (no 3D rendered in this UI)
+        args = ["--score", p, "--json", json_path, "--html", html_path,
+                "--no-overhang-viz"]
+        with _inflight_lock:
+            _batch_cancel.discard(s["token"])
+        self._log("run: gcode-diff (score) ...")
+        rc, out, err = run_analyze_cancelable(args, s["token"],
+                                              binary=GCODE_DIFF_BIN)
+        console = (err or out).decode("utf-8", "replace").strip()
+        # rc=2 is a LEGAL outcome here, not a tool failure: dimensions_scored
+        # == 0 (fail-closed on empty evidence, run_score_mode tail) still
+        # wrote both output files first. The UI keys "整体不可评估" off
+        # dimensions_scored — NEVER off overall_score, whose 0.0 doubles as
+        # "nothing was evaluated" (two-state sentinel).
+        if rc == CANCELLED_RC:
+            self._gcode_cleanup((p, json_path))
+            _send_json(self, 502, {"ok": False, "error": "已取消"})
+            return
+        if rc not in (0, 2):
+            self._gcode_cleanup((p, json_path))
+            _send_json(self, 502, {"ok": False, "error":
+                "gcode-diff 失败 (rc=%d): %s"
+                % (rc, (err or b"").decode("utf-8", "replace")[:400])})
+            return
+        report = self._gcode_load_json(json_path)
+        self._gcode_cleanup((p, json_path))
+        if report is None:
+            return
+        # structural gate (the score JSON carries no schema_version)
+        if (not isinstance(report, dict)
+                or not isinstance(report.get("dimensions"), list)
+                or "overall_score" not in report):
+            _send_json(self, 502, {"ok": False, "error":
+                "gcode-diff 评分报告结构异常（缺 dimensions/overall_score）"})
+            return
+        with _session_lock:
+            s["gcode_last"] = {"mode": "score", "report": report,
+                               "html_path": html_path,
+                               "names": [s["name"]],
+                               "tokens": [s["token"]]}
+        _send_json(self, 200, {"ok": True, "report": report,
+                               "console": console, "mode": "score",
+                               "names": [s["name"]], "token": s["token"]})
+
+    @staticmethod
+    def _gcode_cleanup(paths):
+        """Best-effort delete of the per-run input copies and JSON (the
+        self-contained HTML survives in WORK_DIR for GET /api/gcode-report
+        until the session is overwritten or the process exits)."""
+        for p in paths:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
     def _session(self, body):
         token = body.get("token")
@@ -1996,6 +2404,11 @@ class StratumHandler(BaseHTTPRequestHandler):
     def _analyze(self):
         body = _read_json_body(self)
         session = self._session(body)
+        if session.get("kind") == "gcode":
+            # a G-code upload cannot be geometry-analyzed (no mesh) — point
+            # the user at the panel that CAN consume it instead of letting
+            # the engine fail with its own generic parse error
+            raise ValueError("这是 G-code 文件——请用「G-code 工具」面板做对比/评分，不能做几何分析")
         params = body.get("params") or {}
         locks = body.get("locks") or []
         if not isinstance(locks, list) or not all(isinstance(x, str) for x in locks):
@@ -2025,6 +2438,22 @@ class StratumHandler(BaseHTTPRequestHandler):
             heatmap_bins = _validated_int(body.get("heatmap_bins"), 2, 64)
             if heatmap_bins is None:
                 raise ValueError("heatmap_bins 需为 2-64 整数（引擎域）")
+        # v0.25 gcode stress-tune numbers: sent ONLY when the user typed a
+        # value (absent = engine default: 0 / 1.10 / 0.90). Domain gates are
+        # the engine's own --schema ranges (probed 2026-10-03); a bad value
+        # is a 400 here, never a silent engine 502.
+        gcode_nums = {}
+        for key, lo, hi, msg in (
+                ("vm_floor", 0.0, 100000.0, "vm_floor 需为 0-100000 MPa"),
+                ("m_hot", 1.0, 1.3, "m_hot 需为 1.0-1.3"),
+                ("p_hi", 0.0, 1.0, "p_hi 需为 0-1 百分位")):
+            raw = (body.get("gcode_tune") or {}).get(key)
+            if raw is None:
+                continue
+            v = _validated_float(raw, lo, hi)
+            if v is None:
+                raise ValueError(msg)
+            gcode_nums[key] = v
         # external baseline profile (v0.8.1): client sends the JSON TEXT,
         # server validates + writes it to the private temp dir and passes a
         # PATH to the engine (the engine parses/validates the keys itself).
@@ -2060,13 +2489,25 @@ class StratumHandler(BaseHTTPRequestHandler):
             ".compare" if compare else ".analyze"))
         heatmap_path = os.path.join(WORK_DIR, "%s.h%s.json" % (
             session["token"], secrets.token_hex(4)))
+        # v0.25 gcode stress-tune channel: an attached slice gcode rides
+        # EVERY single analyze of this session (the engine samples THIS
+        # run's FEM along it and rewrites E in the hot zone). Batch runs
+        # deliberately do NOT carry it — batch is a fast parameter
+        # comparison and the per-combo tuned artifacts have no consumer.
+        gcode_tune_args = None
+        if session.get("gcode_path"):
+            tuned_out = os.path.join(WORK_DIR, "%s.tune%s.gcode" % (
+                session["token"], secrets.token_hex(4)))
+            gcode_tune_args = {"in": session["gcode_path"], "out": tuned_out}
+            gcode_tune_args.update(gcode_nums)
         args = build_analyze_args(session["path"], params, locks, compare,
                                   report_path, env=env, orient=orient,
                                   heatmap_path=heatmap_path,
                                   appearance=appearance, rheology=rheology,
                                   est_error=est_error, res_check=res_check,
                                   grid=grid, heatmap_bins=heatmap_bins,
-                                  base_profile_path=base_profile_path)
+                                  base_profile_path=base_profile_path,
+                                  gcode_tune=gcode_tune_args)
         self._log("run: %s ..." % os.path.basename(BINARY))
         rc, out, err = run_analyze_with_fallback(
             args, run=lambda a: run_analyze_cancelable(a, session["token"]))
@@ -2076,6 +2517,21 @@ class StratumHandler(BaseHTTPRequestHandler):
                 os.remove(base_profile_path)
             except OSError:
                 pass
+        if gcode_tune_args:
+            # pointers track THIS run's outcome only: a failed/cancelled run
+            # (or an old engine whose fallback retry stripped the flags → no
+            # sidecar) leaves no fresh artifact, and a previous run's tuned
+            # gcode must not masquerade as this run's product.
+            with _session_lock:
+                session.pop("gcode_tune", None)
+                old_tuned = session.pop("gcode_tuned_path", None)
+            if old_tuned:
+                # best-effort: an in-flight handle on Windows can block the
+                # delete — the evict glob is the backstop
+                try:
+                    os.remove(old_tuned)
+                except OSError:
+                    pass
         if rc == CANCELLED_RC:
             _send_json(self, 502, {"ok": False, "error": "已取消"})
             return
@@ -2164,9 +2620,35 @@ class StratumHandler(BaseHTTPRequestHandler):
         # reference and GET /api/report dumps it verbatim; injecting here
         # would fabricate an engine-authored field inside the downloaded
         # artifact. Builder is degrade-never-raise (bonus channel).
+        # gcode_tune (v0.25): same sibling-key discipline. Read the audit
+        # sidecar of THIS run; keep the rewritten gcode for the download
+        # endpoint, delete the sidecar right after reading (read-after-consume
+        # like heatmap — scheduleAuto reruns every slider edit and must not
+        # accumulate MB-sized artifacts). Missing sidecar = old engine that
+        # dropped the flags via fallback → channel simply absent.
+        gcode_tune = None
+        if gcode_tune_args and os.path.isfile(gcode_tune_args["out"] + ".tune.json"):
+            try:
+                with open(gcode_tune_args["out"] + ".tune.json", "r",
+                          encoding="utf-8") as fh:
+                    gt = json.load(fh)
+                if isinstance(gt, dict) and isinstance(gt.get("gcode_tune"), dict):
+                    gcode_tune = gt
+                    with _session_lock:
+                        session["gcode_tune"] = gt
+                        session["gcode_tuned_path"] = gcode_tune_args["out"]
+            except (OSError, ValueError):
+                gcode_tune = None
+            finally:
+                try:
+                    os.remove(gcode_tune_args["out"] + ".tune.json")
+                except OSError:
+                    pass
         _send_json(self, 200, {"ok": True, "report": report,
                                "console": out.decode("utf-8", "replace"),
                                "heatmap": heatmap,
+                               "gcode_tune": gcode_tune,
+                               "gcode_attached": bool(session.get("gcode_path")),
                                "applyable": applyable_suggestions(report)})
 
     def _export(self):
@@ -2395,6 +2877,8 @@ class StratumHandler(BaseHTTPRequestHandler):
         200 with cancelled=true and the partial results)."""
         body = _read_json_body(self)
         session = self._session(body)
+        if session.get("kind") == "gcode":
+            raise ValueError("这是 G-code 文件——批量候选是模型参数对比流程，G-code 请用「G-code 工具」面板")
         combos = body.get("combos")
         if not isinstance(combos, list) or not (1 <= len(combos) <= 8):
             raise ValueError("combos 必须是 1-8 个组合的列表")
@@ -2551,6 +3035,69 @@ class StratumHandler(BaseHTTPRequestHandler):
         _send_json(self, 200, {"ok": True, "cancelled": cancelled,
                                "results": results})
 
+    def _gcode_attach(self):
+        """v0.25: attach a SLICE gcode to an existing model session for
+        coordinate-level stress tuning (--gcode-in/--gcode-out ride every
+        subsequent analyze). Raw-body upload like /api/upload, but keyed to
+        an existing MODEL session via ?token= (a gcode-tool session token is
+        rejected — the tuning channel belongs to the model pipeline)."""
+        query = parse_qs(urlparse(self.path).query)
+        tk = (query.get("token") or [""])[0]
+        with _session_lock:
+            session = _sessions.get(tk)
+        if session is None:
+            raise ValueError("unknown token")
+        if session.get("kind") == "gcode":
+            raise ValueError("这是 G-code 工具会话——应力调优附件请附加在模型会话上"
+                             "（先上传模型，再附加该模型的切片 G-code）")
+        filename = (query.get("name") or ["slice.gcode"])[0]
+        basename = os.path.basename(filename)
+        # same control-character gate as /api/upload (browser pickers cannot
+        # produce these; reject rather than mangle — display name only, the
+        # on-disk path is token-keyed)
+        if any(ord(c) < 0x20 or ord(c) == 0x7f for c in basename):
+            raise ValueError("文件名含非法控制字符")
+        ext = basename.lower().rsplit(".", 1)[-1] if "." in basename else ""
+        if ext not in ("gcode", "gco"):
+            raise ValueError("切片 G-code 附件需为 .gcode / .gco 文件")
+        raw = _read_body(self)  # rejects empty bodies (length<=0) with a 400
+        path = os.path.join(WORK_DIR, "%s.g%s.%s" % (
+            session["token"], secrets.token_hex(4), ext))
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        with _session_lock:
+            old = session.get("gcode_path")
+            session["gcode_path"] = path
+            session["gcode_name"] = basename
+        if old:
+            # best-effort: an in-flight analyze may hold it open on Windows
+            # (the engine already has the path in its argv) — the evict glob
+            # is the backstop, never a 500 over a bonus channel
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        _send_json(self, 200, {"ok": True, "name": basename,
+                               "size": len(raw)})
+
+    def _gcode_detach(self):
+        """v0.25: remove the stress-tune attachment (the channel turns off;
+        the next analyze runs without the gcode flags)."""
+        body = _read_json_body(self)
+        session = self._session(body)
+        with _session_lock:
+            old = session.pop("gcode_path", None)
+            session.pop("gcode_name", None)
+            session.pop("gcode_tune", None)
+            old_tuned = session.pop("gcode_tuned_path", None)
+        for f in (old, old_tuned):
+            if f:
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        _send_json(self, 200, {"ok": True})
+
     def _set_binary(self):
         """First-run wizard target (ROADMAP v0.4a). Validates the path REALLY
         is the engine (usage probe), then rebinds the module globals the
@@ -2574,8 +3121,8 @@ class StratumHandler(BaseHTTPRequestHandler):
         (PATTERNS, MATERIALS, LOAD_TYPES, PATTERNS_SOURCE, MATERIALS_SOURCE,
          LOADS_SOURCE, SURFACE_FILTERED, EXTRA_LOCKS, EXTRA_LOCKS_SOURCE) = \
             _probe_surface()
-        (AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES) = \
-            _refresh_select_surfaces()
+        (AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES,
+         HOTEND_VALUES) = _refresh_select_surfaces()
         _apply_schema_domains()  # re-overlay numeric domains from the new probe
         try:
             tmp = CONFIG_PATH + ".tmp"

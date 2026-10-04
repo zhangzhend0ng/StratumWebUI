@@ -697,10 +697,10 @@ function findFillWidths(node, out) {
 rerender(real3);
 expect("v0.10: empty-guide hidden by a successful render",
        elements["empty-guide"] && elements["empty-guide"].style.display === "none");
-expect("v0.10: three summary cards rendered (verdict/risk/advice)",
+expect("v0.22: two summary cards rendered (verdict hero / advice)",
        elements["summary-cards"] &&
-       elements["summary-cards"].children.length === 3,
-       String(elements["summary-cards"] && elements["summary-carts"]));
+       elements["summary-cards"].children.length === 2,
+       String(elements["summary-cards"] && elements["summary-cards"].children.length));
 expect("v0.10: verdict card carries the engine assessment verbatim",
        textOf(elements["summary-cards"].children[0]).indexOf("✅ 安全 — 结构强度充足") >= 0,
        textOf(elements["summary-cards"].children[0]));
@@ -719,102 +719,113 @@ expect("v0.10: no engine SF → no band class, no guess",
        findFillWidths(elements["summary-cards"].children[0], []).length === 0,
        elements["res-sf"].className);
 
-// warnings card: badge count + user-owned open state survives re-renders
+// v0.22 merged 「风险与提示」 card: engine warnings + geometric risks behind
+// ONE toggle (was: separate warnings card + risk card, plus a summary
+// risk-preview card that could contradict the lists below)
 rerender(real);
-expect("v0.10: warnings card shown with a numeric count",
-       elements["warnings-card"].style.display === "" &&
-       /^\d+$/.test(elements["warnings-count"].textContent) &&
-       parseInt(elements["warnings-count"].textContent, 10) > 0,
-       elements["warnings-count"].textContent);
-expect("v0.10: warnings list collapsed until opened (progressive disclosure)",
-       elements["warning-list"].style.display === "none");
-elements["warnings-card"].dataset.open = "1";
-// NOTE: no rerender() here — the vm harness recreates stub elements on
-// rerender, which would drop the user-owned dataset flag. Direct call keeps
-// the same stubs, matching the REAL DOM where #warnings-card persists.
+const wLen = elements["warning-list"].children.length;
+const rLen = elements["risk-list"].children.length;
+expect("v0.22: merged alerts card shows the combined count",
+       elements["alerts-card"].style.display === "" &&
+       parseInt(elements["alerts-count"].textContent, 10) === wLen + rLen &&
+       wLen > 0 && rLen > 0,
+       elements["alerts-count"].textContent + " vs " + wLen + "+" + rLen);
+expect("v0.22: headline carries risk count + max severity verbatim",
+       elements["alerts-headline"].textContent.indexOf("条几何风险 · 最高 S5") >= 0,
+       elements["alerts-headline"].textContent);
+expect("v0.22: both streams get a sub-header inside one body",
+       elements["alerts-warn-h"].textContent.indexOf("引擎提示") === 0 &&
+       elements["alerts-risk-h"].textContent.indexOf("几何风险") === 0,
+       elements["alerts-warn-h"].textContent + " / " +
+       elements["alerts-risk-h"].textContent);
+// user-owned open flag survives a re-render (same stubs — direct call: the
+// vm harness recreates nothing here, matching the REAL DOM where the
+// wrapper persists)
+elements["alerts-card"].dataset.user = "1";
+elements["alerts-card"].dataset.open = "1";
 ctx.renderReport(real, "");
-expect("v0.10: open flag survives a re-render",
-       elements["warning-list"].style.display === "");
-elements["warnings-card"].dataset.open = "0";
-rerender(real);
-// v0.14: the summary risk card aggregates BOTH sources, severity-ranked —
-// with 491 S5 geometric risks in this fixture they lead the card (warnings
-// no longer crowd out harder evidence); overflow points at the two lists.
-expect("v0.14: risk card aggregates risks first, severity-ranked",
-       textOf(elements["summary-cards"].children[1]).indexOf("S5") >= 0 &&
-       textOf(elements["summary-cards"].children[1]).indexOf("interlaminar_shear") >= 0 &&
-       /还有 \d+ 条/.test(textOf(elements["summary-cards"].children[1])),
-       textOf(elements["summary-cards"].children[1]).slice(0, 160));
+expect("v0.22: user-owned open flag survives a re-render",
+       elements["alerts-body"].style.display === "",
+       elements["alerts-body"].style.display);
+elements["alerts-card"].dataset.user = "";
+elements["alerts-card"].dataset.open = "";
 
-// v0.14: the risk list collapses behind a count/max-severity toggle; the
-// verdict gates the default until the user clicks (dataset.user takes over)
+// verdict gates the merged default until the user clicks (dataset.user)
 rerender(real3);  // 2 risks (S5/S3), assessment "✅ 安全" → collapsed
-expect("v0.14: risk card toggle shows count and max severity",
-       elements["risk-card"].style.display === "" &&
-       elements["risk-count"].textContent === "2" &&
-       elements["risk-max-sev"].textContent === "S5",
-       elements["risk-count"].textContent + "/" + elements["risk-max-sev"].textContent);
-expect("v0.14: ✅ verdict collapses the list by default",
-       elements["risk-list"].style.display === "none" &&
-       elements["risk-card"].dataset.open === "0",
-       elements["risk-list"].style.display + "/" + elements["risk-card"].dataset.open);
-// ⚠ verdict re-gates to expanded (same stubs — direct call, see NOTE above)
+expect("v0.22: ✅ verdict collapses the merged body by default",
+       elements["alerts-card"].style.display === "" &&
+       elements["alerts-card"].dataset.open === "0" &&
+       elements["alerts-body"].style.display === "none",
+       elements["alerts-card"].dataset.open + "/" +
+       elements["alerts-body"].style.display);
+// ⚠ verdict re-gates to expanded (risks are the evidence)
 const d3warn = JSON.parse(JSON.stringify(real3));
 d3warn.phase_b.assessment = "⚠️ 有风险 — 注意";
 ctx.renderReport(d3warn, "");
-expect("v0.14: ⚠ verdict expands the list (evidence up front)",
-       elements["risk-card"].dataset.open === "1" &&
-       elements["risk-list"].style.display === "",
-       elements["risk-card"].dataset.open + "/" + elements["risk-list"].style.display);
+expect("v0.22: ⚠ verdict expands the merged body (evidence up front)",
+       elements["alerts-card"].dataset.open === "1" &&
+       elements["alerts-body"].style.display === "",
+       elements["alerts-card"].dataset.open + "/" +
+       elements["alerts-body"].style.display);
 // user click takes over: dataset.user freezes the choice across renders
-elements["risk-card"].dataset.user = "1";
-elements["risk-card"].dataset.open = "0";
+elements["alerts-card"].dataset.user = "1";
+elements["alerts-card"].dataset.open = "0";
 ctx.renderReport(d3warn, "");
-expect("v0.14: user-owned open flag survives re-render",
-       elements["risk-card"].dataset.open === "0" &&
-       elements["risk-list"].style.display === "none",
-       elements["risk-card"].dataset.open);
+expect("v0.22: user-owned collapsed state survives re-render",
+       elements["alerts-card"].dataset.open === "0" &&
+       elements["alerts-body"].style.display === "none",
+       elements["alerts-card"].dataset.open);
+elements["alerts-card"].dataset.user = "";
+elements["alerts-card"].dataset.open = "";
 // severity verbatim: engine S5 stays S5 in the list (old clamp showed S3)
 rerender(real);
 const firstBadge = elements["risk-list"].children[0].children[0];
 expect("v0.14: severity 1..5 shown verbatim (S5 not clamped to S3)",
        firstBadge.textContent === "S5",
        firstBadge.textContent);
-// risks empty → toggle card hidden; warnings still surface in the summary
-// (warning-list collects phase_b.diagnostics fields: cg/part_visibility/
-// warning — buckling lives in phase-d detail and is NOT a summary source)
+// risks empty but warnings present → card STAYS with a notices-only
+// headline and the risk sub-header hidden (both lists still one surface)
 const d3norisk = JSON.parse(JSON.stringify(real3));
 d3norisk.phase_a.risks = [];
 d3norisk.phase_b.diagnostics = d3norisk.phase_b.diagnostics || {};
 d3norisk.phase_b.diagnostics.warning = "测试提示行: 网格分辨率不足";
 rerender(d3norisk);
-expect("v0.14: no risks → toggle card hidden",
-       elements["risk-card"].style.display === "none",
-       elements["risk-card"].style.display);
-expect("v0.14: no risks → warnings still lead the summary card",
-       textOf(elements["summary-cards"].children[1]).indexOf("测试提示行") >= 0,
-       textOf(elements["summary-cards"].children[1]).slice(0, 120));
-// both sources empty → explicit all-clear (previously "无警告。" ignored risks)
+expect("v0.22: warnings-only report keeps the merged card, notices headline",
+       elements["alerts-card"].style.display === "" &&
+       elements["alerts-headline"].textContent === "条提示" &&
+       elements["alerts-risk-h"].style.display === "none",
+       elements["alerts-headline"].textContent + "/" +
+       elements["alerts-risk-h"].style.display);
+// both streams empty → card hidden (the old summary card said 无风险;
+// now the ABSENCE of the ⚠ card is the all-clear)
 d3norisk.phase_b.diagnostics.warning = null;
 rerender(d3norisk);
-expect("v0.14: both sources empty → 无风险",
-       textOf(elements["summary-cards"].children[1]).indexOf("无风险") >= 0,
-       textOf(elements["summary-cards"].children[1]));
+expect("v0.22: both streams empty → merged card hidden",
+       elements["alerts-card"].style.display === "none",
+       elements["alerts-card"].style.display);
 
-// advice card: applyable CTA front and center + appendix-C grid action
+// advice card: dual CTA (v0.22) + 将调整 summary line + appendix-C action
 rerender(d24c, app24);
 expect("v0.10: advice card CTA with count",
-       textOf(elements["summary-cards"].children[2]).indexOf("应用可行建议 (3)") >= 0,
-       textOf(elements["summary-cards"].children[2]).slice(0, 120));
+       textOf(elements["summary-cards"].children[1]).indexOf("应用可行建议 (3)") >= 0,
+       textOf(elements["summary-cards"].children[1]).slice(0, 160));
+expect("v0.22: simple-mode apply-ALL CTA rides the advice card",
+       textOf(elements["summary-cards"].children[1])
+         .indexOf("应用全部建议并重新分析 (3)") >= 0,
+       textOf(elements["summary-cards"].children[1]).slice(0, 200));
+expect("v0.22: 将调整 line lists current→recommended per applicable item",
+       textOf(elements["summary-cards"].children[1]).indexOf("将调整：") >= 0 &&
+       /\d→\d/.test(textOf(elements["summary-cards"].children[1])),
+       textOf(elements["summary-cards"].children[1]).slice(0, 240));
 const sumCta = findBtn(elements["summary-cards"], "应用可行建议");
 expect("v0.10: summary CTA wired to applyCheckedSuggestions",
        !!sumCta && typeof sumCta.onclick === "function");
 rerender(real);
 const gridBtn = findBtn(elements["summary-cards"], "提高网格精度");
 expect("v0.10: part_visibility_warning → grid-precision action button",
-       textOf(elements["summary-cards"].children[2]).indexOf("网格分辨率不足") >= 0 &&
+       textOf(elements["summary-cards"].children[1]).indexOf("网格分辨率不足") >= 0 &&
        !!gridBtn && typeof gridBtn.onclick === "function",
-       textOf(elements["summary-cards"].children[2]).slice(0, 160));
+       textOf(elements["summary-cards"].children[1]).slice(0, 160));
 
 // term glossary hover tooltips (≥6 core terms across static + dynamic rows)
 rerender(real3);
@@ -1101,6 +1112,244 @@ expect("v0.18: warning-free report clears a previous mirror (no stale alarm)",
        boxText("pd-warn-promoted").indexOf("屈曲警示") < 0
        && boxText("pd-warn-promoted").indexOf("断裂判定") < 0,
        boxText("pd-warn-promoted"));
+// 26. (v0.19 round B) raw-table fold (#cand-raw-fold) + significant-figure
+// denoise. Teeth: pre-0.19 code renders raw floats ("70.712937") and never
+// references the fold element — the positive fold assertions read
+// undefined.open and fail cleanly.
+const d19a = JSON.parse(JSON.stringify(real3));
+d19a.process_optimization.candidates = [
+  {name: "noisy", goal: "balanced", feasible: true,
+   profile: {infill_pct: 15.000001, print_speed: 120},
+   scores: {overall: 70.712937, strength: 56.34, time: 100,
+            material: 71.814511, reliability: 90, quality: 15.000001}},
+  {name: "twin", goal: "strength", feasible: true,
+   scores: {overall: 71.812937}}];
+rerender(d19a);
+expect("v0.19: 6 significant digits — noise dropped, ROADMAP twin pair stays distinct",
+       boxText("cand-body").indexOf("70.712937") < 0 &&
+       boxText("cand-body").indexOf("71.8129") >= 0 &&
+       boxText("cand-body").indexOf("71.8145") >= 0,
+       boxText("cand-body").slice(0, 200));
+expect("v0.19: infill denoised (15.000001% → 15%), speed cell untouched",
+       boxText("cand-body").indexOf("15.000001%") < 0 &&
+       boxText("cand-body").indexOf("15%") >= 0 &&
+       boxText("cand-body").indexOf("120mm/s") >= 0,
+       boxText("cand-body").slice(0, 200));
+expect("v0.19: fold stays closed with ≥2 feasible (bars are the outlet)",
+       (elements["cand-raw-fold"] || {}).open !== true);
+const d19f = JSON.parse(JSON.stringify(real3));
+d19f.process_optimization.candidates = [
+  {name: "only", goal: "balanced", feasible: true, scores: {}},
+  {name: "dead", goal: "speed", feasible: false, scores: {}}];
+rerender(d19f);
+expect("v0.19: fold auto-opens when <2 feasible (bars hidden — fold is the only outlet)",
+       (elements["cand-raw-fold"] || {}).open === true &&
+       boxText("cand-body").indexOf("dead") >= 0);
+const d19e = JSON.parse(JSON.stringify(real3));
+delete d19e.process_optimization;
+rerender(d19e);
+expect("v0.19: fold auto-opens when the report has no candidates at all",
+       (elements["cand-raw-fold"] || {}).open === true &&
+       boxText("cand-body").indexOf("无候选") >= 0);
+const d19s = JSON.parse(JSON.stringify(real3));
+d19s.process_optimization.candidates = [
+  {name: "guards", goal: "balanced", feasible: true,
+   profile: {infill_pct: null},
+   scores: {overall: null, strength: "85"}}];
+rerender(d19s);
+expect("v0.19: fmtSig guards — null → placeholder, string passes through (no throw)",
+       boxText("cand-body").indexOf("85") >= 0 &&
+       boxText("cand-body").indexOf("null") < 0,
+       boxText("cand-body").slice(0, 160));
 rerender(real);
+
+// ---------- v0.23 gcode-diff render functions ----------
+if (typeof ctx.renderGcodeDiff !== "function"
+    || typeof ctx.renderGcodeScore !== "function") {
+  console.error("FATAL: gcode render functions not found"); process.exit(1);
+}
+function gtxt() { return textOf($("gcode-result")); }
+const gdiffFixture = {
+  schema_version: "gcode-diff-report/v1",
+  file_a: "C:/tmp/x-a.gcode", file_b: "C:/tmp/x-b.gcode",
+  layers_added: 0, layers_removed: 1, layers_modified: 3,
+  overall_verdict: "CLEAN",
+  overall_detail: "CLEAN: all surface-critical type paths OK",
+  slicer_format: "PrusaSlicer 2.7.4",
+  geometry_diff: {available: true, chamfer_distance: 0.012,
+                  hausdorff_distance: 0.05, frechet_distance: 0.2,
+                  overlap_ratio: 0.98},
+  physics_delta: {assessable: true, material: "PLA",
+                  newly_overheated_layers: 2, weld_regressed_layers: 1,
+                  over_machine_limit_layers: 0, over_melt_ceiling_layers: 0,
+                  worst_weld_delta_pct: null},
+  fem_delta: null,
+  global_diffs: [
+    {metric: "total_extrusion_mm3", a: 100, b: 125, delta: 25,
+     delta_pct: 25.0, significant: true},
+    {metric: "avg_speed", a: 90, b: 90, delta: 0, delta_pct: 0,
+     significant: false}],
+  category_diffs: {},
+  slicer_issues: [
+    {category: "flow", severity: "WARNING_MAJOR", summary: "over-extrusion",
+     recommendation: "lower flow", confidence: "medium"}],
+};
+ctx.renderGcodeDiff(gdiffFixture, "[gcode-diff] verdict=Clean",
+                    {names: ["before.gcode", "after.gcode"], token: "tok123"});
+expect("gcode diff: verdict hero + UI names (argv paths NOT shown)",
+       gtxt().indexOf("CLEAN") >= 0 && gtxt().indexOf("before.gcode") >= 0
+       && gtxt().indexOf("C:/tmp/x-a.gcode") < 0,
+       gtxt().slice(0, 200));
+expect("gcode diff: global table rows + significance mark",
+       gtxt().indexOf("total_extrusion_mm3") >= 0
+       && gtxt().indexOf("25.0%") >= 0 && gtxt().indexOf("✓") >= 0,
+       gtxt().slice(0, 400));
+expect("gcode diff: physics scalars shown; null weld delta hides its line",
+       gtxt().indexOf("新过热层 2") >= 0
+       && gtxt().indexOf("最差焊合强度变化") < 0,
+       gtxt().slice(0, 400));
+expect("gcode diff: severity tone class on issue row",
+       (function () {
+         const card = $("gcode-result");
+         function findCls(n) {
+           return (n.children || []).some(function (c) {
+             return String(c.className).indexOf("rec-row warn") >= 0 || findCls(c); });
+         }
+         return findCls(card);
+       })(), "no rec-row warn found");
+expect("gcode diff: footer deep link carries the token",
+       (function () {
+         let found = "";
+         (function walk(n) {
+           (n.children || []).forEach(function (c) {
+             // the footer sets a.href by plain assignment (not setAttribute)
+             // — read both shapes, same as a real DOM element exposes
+             if (c.href) found = String(c.href);
+             if (c.attrs && c.attrs.href) found = c.attrs.href;
+             walk(c); });
+         })($("gcode-result"));
+         return found.indexOf("/api/gcode-report?token=tok123") === 0;
+       })(), "no report link");
+// absent-not-null: geometry unavailable hides the WHOLE card
+const gdiffNoGeom = JSON.parse(JSON.stringify(gdiffFixture));
+gdiffNoGeom.geometry_diff = {available: false};
+ctx.renderGcodeDiff(gdiffNoGeom, "", {names: ["a", "b"], token: "t"});
+expect("gcode diff: geometry available=false hides the card entirely",
+       gtxt().indexOf("几何差异") < 0 && gtxt().indexOf("Chamfer") < 0,
+       gtxt().slice(0, 200));
+// unknown verdict label → neutral (no crash, still rendered)
+const gdiffUnknown = JSON.parse(JSON.stringify(gdiffFixture));
+gdiffUnknown.overall_verdict = "SOMETHING_NEW";
+ctx.renderGcodeDiff(gdiffUnknown, "", {names: ["a", "b"], token: "t"});
+expect("gcode diff: unknown verdict token renders neutral, verbatim",
+       gtxt().indexOf("SOMETHING_NEW") >= 0);
+// score: null dimension score is 不可评估 dash, never 0.0
+ctx.renderGcodeScore({
+  overall_score: 57.5, summary: "Fair", slicer: "PrusaSlicer",
+  material: "PLA", has_critical: true, dimensions_scored: 13,
+  dimensions: [
+    {name: "Cooling", assessable: true, score: 20.0,
+     severity: "WARNING_MAJOR", verdict: "fan too low"},
+    {name: "Multi-Extruder", assessable: false, score: null,
+     severity: "BENIGN", verdict: "Not assessable: single tool"}],
+  suggestions: [
+    {parameter: "fan_speed", suggested_value: "255", reason: "layers 2-3",
+     expected_effect: "better bridging"}],
+}, "[gcode-diff] score=57.5", {names: ["x.gcode"], token: "tok9"});
+expect("gcode score: hero + critical flag + dimension rows",
+       gtxt().indexOf("57.5 / 100") >= 0 && gtxt().indexOf("CRITICAL") >= 0
+       && gtxt().indexOf("Cooling") >= 0 && gtxt().indexOf("fan too low") >= 0,
+       gtxt().slice(0, 300));
+expect("gcode score: null score renders dash, never 0.0 (two-state sentinel)",
+       (function () {
+         // find the Multi-Extruder row and read its SCORE cell exactly —
+         // a substring "0.0" scan would false-positive on "20.0"
+         let cell = "";
+         (function walk(n) {
+           (n.children || []).forEach(function (c) {
+             if (textOf(c).indexOf("Multi-Extruder") >= 0
+                 && (c.tagName === "tr")) {
+               const tds = (c.children || []).filter(function (t) {
+                 return t.tagName === "td"; });
+               if (tds.length >= 2) cell = tds[1].textContent;
+             }
+             walk(c); });
+         })($("gcode-result"));
+         return cell === "—";
+       })(), "score cell not exactly the dash");
+expect("gcode score: suggestion row verbatim",
+       gtxt().indexOf("fan_speed → 255") >= 0
+       && gtxt().indexOf("better bridging") >= 0);
+// score: the fail-closed rc=2 state is its own card, not a 0-score render
+ctx.renderGcodeScore({
+  overall_score: 0.0, summary: "Not assessable", dimensions_scored: 0,
+  dimensions: [{name: "Cooling", assessable: false, score: null,
+                severity: "BENIGN", verdict: "Not assessable"}],
+  suggestions: [],
+}, "", {names: ["void.gcode"], token: "tok0"});
+expect("gcode score: dimensions_scored=0 → 整体不可评估 card, no 0/100 hero",
+       gtxt().indexOf("整体不可评估") >= 0 && gtxt().indexOf("/ 100") < 0,
+       gtxt().slice(0, 300));
+
+// ---- §28 v0.25 slice-gcode stress-tune audit card (renderGcodeTune) ----
+// fixture: a REAL engine sidecar (beam STL + a.gcode probe, 2026-10-03) —
+// coverage 0 / candidates 0 is the mismatched-slice legal state
+const tuneFx = JSON.parse(fs.readFileSync(
+  path.join(__dirname, "..", "test_data", "gcode-tune-audit.json"), "utf8"));
+ctx.renderGcodeTune(tuneFx, "tok99");
+expect("tune: audit card visible with engine stats verbatim",
+       elements["gcode-tune-box"].style.display === ""
+       && boxText("gcode-tune-body").indexOf("应力覆盖率") >= 0
+       && boxText("gcode-tune-body").indexOf("段总数") >= 0
+       && boxText("gcode-tune-body").indexOf("0") >= 0,
+       boxText("gcode-tune-body").slice(0, 200));
+// patch_coverage_ratio -1 is the engine's "not applicable" sentinel — never
+// a bare -1 number on screen (two-state sentinel)
+expect("tune: patch_coverage_ratio -1 renders the dash, never -1",
+       boxText("gcode-tune-body").indexOf("热区覆盖率") >= 0
+       && boxText("gcode-tune-body").indexOf("-1") < 0,
+       boxText("gcode-tune-body").slice(0, 200));
+expect("tune: engine prose (alignment/blind spots) carried verbatim",
+       boxText("gcode-tune-body").indexOf("bbox-center") >= 0,
+       boxText("gcode-tune-body").slice(0, 300));
+// download button only with a live token
+let tuneBtn = null;
+(function walkT(n) {
+  (n.children || []).forEach(function (c) {
+    if (c.tagName === "button") tuneBtn = c;
+    walkT(c);
+  });
+})(elements["gcode-tune-body"]);
+expect("tune: download button rendered with a token",
+       !!tuneBtn && textOf(tuneBtn).indexOf("下载调优后 G-code") >= 0);
+// absent channel (no attachment / old engine stripped the flags): the box
+// hides and leaves nothing behind — no half-rendered stale card
+ctx.renderGcodeTune(null, "tok99");
+expect("tune: absent channel hides the box and clears the body",
+       elements["gcode-tune-box"].style.display === "none"
+       && boxText("gcode-tune-body") === "",
+       JSON.stringify(elements["gcode-tune-body"].style));
+// no token → stats render but no download button
+ctx.renderGcodeTune(tuneFx, null);
+let btn2 = null;
+(function walkT2(n) {
+  (n.children || []).forEach(function (c) {
+    if (c.tagName === "button") btn2 = c;
+    walkT2(c);
+  });
+})(elements["gcode-tune-body"]);
+expect("tune: no token → card renders without the download button",
+       elements["gcode-tune-box"].style.display === "" && !btn2);
+// live shape: geometry-matched slice (engine probe 2026-10-03, Cura
+// WALL-OUTER/INNER markers) — tuned=80, drift +2.4278% renders WITH the
+// explicit plus sign (add-only law made visible)
+const tuneLive = JSON.parse(fs.readFileSync(
+  path.join(__dirname, "..", "test_data", "gcode-tune-live.json"), "utf8"));
+ctx.renderGcodeTune(tuneLive, "tok100");
+expect("tune: live shape renders tuned=80 and a signed + drift",
+       boxText("gcode-tune-body").indexOf("80") >= 0
+       && /\+2\.43/.test(boxText("gcode-tune-body"))
+       && boxText("gcode-tune-body").indexOf("-1") < 0,
+       boxText("gcode-tune-body").slice(0, 260));
 
 process.exit(fails ? 1 : 0);

@@ -54,8 +54,23 @@
     /* spacing: 4px grid */
     --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
     --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
+    /* type scale (v0.21): exactly 7 text sizes, no .5px steps. Mapping of
+       the legacy literals: 10.5/11→xs, 11.5/12/12.5→sm, 13/13.5→md,
+       14/14.5→lg, 15→xl, 17/18→2xl, 24→kpi. Icon sizes (9/21/24/30px) are
+       glyph metrics, not text — outside the scale on purpose. */
+    --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 14px;
+    --fs-xl: 15px; --fs-2xl: 18px; --fs-kpi: 24px;
+    /* control heights (v0.21): compact = every button/number/text input/
+       select, including the full-width row toggles (.warnings-toggle);
+       hero = simple-mode preset cards; header chips (badge/lang-btn) ride a
+       smaller 28px pill so they don't dominate the 25px h1 row. Bare icon
+       buttons (.p-reset/.toast-x) opt out via height:auto. */
+    --ctl-h: 32px; --ctl-h-hero: 40px; --ctl-h-chip: 28px;
     /* radii (slightly larger for a modern feel) */
+    --r-xs: 6px;                    /* micro blocks: console pre, inline inputs */
     --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+    /* bar radii (sf-band, cand bars, progress) use 999px pills = height/2,
+       so no extra token is needed for them */
     /* elevation: restrained gray shadows */
     --shadow-1: 0 1px 2px rgba(23, 31, 46, .06);
     --shadow-2: 0 4px 14px rgba(23, 31, 46, .09);
@@ -71,15 +86,20 @@
       var(--surface-0);
     color: var(--text);
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: var(--fs-md);
     line-height: 1.55; padding: var(--sp-5);
   }
   .wrap { max-width: 1320px; margin: 0 auto; }
 
   /* ============ sticky glass header (white glass on light) ============ */
+  /* full-bleed bar: negative margin equals the body padding so the glass
+     reaches the viewport edges, while the horizontal padding keeps the
+     logo/badges on the same 20px line as the panels below. */
   header {
     position: sticky; top: 0; z-index: 100;
     display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
-    padding: var(--sp-3) var(--sp-4); margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) var(--sp-5);
+    padding: var(--sp-3) var(--sp-5);
+    margin: calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)) var(--sp-5);
     background: rgba(255, 255, 255, .9);
     border-bottom: 1px solid var(--line);
     border-radius: 0 0 var(--r-lg) var(--r-lg);
@@ -88,11 +108,12 @@
   @supports (backdrop-filter: blur(12px)) {
     header { background: rgba(255, 255, 255, .72); backdrop-filter: blur(12px); }
   }
-  header h1 { font-size: 18px; font-weight: 700; letter-spacing: .1px;
+  header h1 { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: .1px;
     display: flex; align-items: center; gap: 2px; }
-  header .sub { color: var(--muted); font-size: 12.5px; }
+  header .sub { color: var(--muted); font-size: var(--fs-sm); }
   .badge {
-    font-size: 11.5px; padding: 3px 11px; border-radius: 999px;
+    height: var(--ctl-h-chip); display: inline-flex; align-items: center;
+    font-size: var(--fs-xs); padding: 0 var(--sp-3); border-radius: 999px;
     border: 1px solid var(--line); color: var(--muted);
     background: var(--surface-1);
   }
@@ -104,7 +125,7 @@
      same MODE_KEY persistence, same body class flip. */
   .sw {
     margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
-    cursor: pointer; user-select: none; font-size: 12.5px; font-weight: 500;
+    cursor: pointer; user-select: none; font-size: var(--fs-sm); font-weight: 500;
     color: var(--text);
   }
   .sw input { position: absolute; opacity: 0; width: 1px; height: 1px; }
@@ -128,7 +149,7 @@
      6 analysis checkboxes + grid input collapse behind one disclosure */
   details.opt-group { margin-top: 4px; }
   details.opt-group > summary {
-    cursor: pointer; color: var(--muted); font-size: 12.5px;
+    cursor: pointer; color: var(--muted); font-size: var(--fs-sm);
     padding: 4px 0; user-select: none;
   }
   details.opt-group > summary:hover { color: var(--text); }
@@ -137,7 +158,7 @@
      carries a data-search covering all its rows so the existing search
      filter hides empty groups with zero extra logic. */
   .param-group-h {
-    font-size: 11.5px; font-weight: 600; color: var(--muted);
+    font-size: var(--fs-sm); font-weight: 600; color: var(--muted);
     letter-spacing: .3px; margin: 10px 0 2px;
     padding-bottom: 3px; border-bottom: 1px solid var(--line);
   }
@@ -146,8 +167,8 @@
      run" (SF / overall score). Rendered ONLY when both sides are finite
      numbers — first run or missing fields show nothing. */
   .run-delta {
-    margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px;
-    font-size: 11.5px; color: var(--muted);
+    margin-top: var(--sp-2); display: flex; flex-wrap: wrap; gap: 6px;
+    font-size: var(--fs-xs); color: var(--muted);
   }
   .delta-chip {
     display: inline-flex; align-items: center; gap: 4px;
@@ -164,9 +185,10 @@
     gap: 8px; margin: 6px 0;
   }
   .preset-btn {
-    padding: 10px 12px; font-size: 14px; font-weight: 600; color: #fff;
+    height: var(--ctl-h-hero); padding: 0 var(--sp-4);
+    font-size: var(--fs-lg); font-weight: 600; color: #fff;
     background: var(--accent);
-    border: none; border-radius: 9px; cursor: pointer; text-align: center;
+    border: none; border-radius: var(--r-sm); cursor: pointer; text-align: center;
     box-shadow: 0 1px 3px rgba(79, 70, 229, .25);
     transition: background var(--dur-fast), transform var(--dur-fast), box-shadow var(--dur-fast);
   }
@@ -175,9 +197,9 @@
   .preset-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
   /* v0.9 apply-suggestions CTA: compact accent button heading #rec-items */
   .rec-apply {
-    padding: 7px 13px; font-size: 13px; font-weight: 600; color: #fff;
+    font-size: var(--fs-md); font-weight: 600; color: #fff;
     background: var(--accent);
-    border: none; border-radius: 8px; cursor: pointer; margin-bottom: 6px;
+    border: none; border-radius: var(--r-sm); cursor: pointer; margin-bottom: 6px;
     transition: background var(--dur-fast), transform var(--dur-fast), box-shadow var(--dur-fast);
   }
   .rec-apply:hover:not(:disabled) { background: #4338ca; box-shadow: 0 2px 8px rgba(79, 70, 229, .28); }
@@ -208,14 +230,14 @@
   }
   .panel:hover { border-color: var(--line-strong); }
   .panel h2 {
-    font-size: 14.5px; font-weight: 650; color: var(--text);
+    font-size: var(--fs-lg); font-weight: 650; color: var(--text);
     margin-bottom: var(--sp-4); display: flex; align-items: center; gap: var(--sp-2);
   }
   .panel h2::before {
-    content: ""; width: 4px; height: 16px; border-radius: 3px; flex: none;
+    content: ""; width: 4px; height: 16px; border-radius: 999px; flex: none;
     background: var(--accent);
   }
-  .panel h2 .tag { font-size: 11.5px; color: var(--muted); font-weight: 400;
+  .panel h2 .tag { font-size: var(--fs-sm); color: var(--muted); font-weight: 400;
     font-family: var(--mono); }
 
   /* collapsible groups (「调参」 / 「环境与载荷」) */
@@ -223,12 +245,12 @@
     padding: 0 var(--sp-3); margin-bottom: var(--sp-3); background: var(--surface-2); }
   details.ui-group > summary {
     cursor: pointer; list-style: none; user-select: none;
-    font-size: 14px; font-weight: 600; padding: var(--sp-3) 0;
+    font-size: var(--fs-lg); font-weight: 600; padding: var(--sp-3) 0;
     display: flex; align-items: center; gap: var(--sp-2);
     color: var(--text);
   }
   details.ui-group > summary::before {
-    content: ""; width: 4px; height: 16px; border-radius: 3px; flex: none;
+    content: ""; width: 4px; height: 16px; border-radius: 999px; flex: none;
     background: var(--accent);
   }
   details.ui-group > summary::after {
@@ -236,7 +258,7 @@
     transition: transform var(--dur-med) var(--ease);
   }
   details.ui-group[open] > summary::after { transform: rotate(180deg); }
-  details.ui-group > summary .tag { font-size: 11.5px; color: var(--muted); font-weight: 400;
+  details.ui-group > summary .tag { font-size: var(--fs-sm); color: var(--muted); font-weight: 400;
     font-family: var(--mono); }
   details.ui-group > :not(summary) { margin-bottom: var(--sp-3); }
   details.ui-group > :last-child { margin-bottom: var(--sp-3); }
@@ -255,16 +277,16 @@
     transition: border-color var(--dur-med) var(--ease), box-shadow var(--dur-med) var(--ease);
   }
   .ui-kpi:hover { border-color: var(--line-strong); box-shadow: var(--shadow-2); }
-  .ui-kpi .k { display: block; font-size: 12px; color: var(--muted);
+  .ui-kpi .k { display: block; font-size: var(--fs-sm); color: var(--muted);
     letter-spacing: .2px; margin-bottom: 3px; }
-  .ui-kpi .v { display: block; font-family: var(--mono); font-size: 24px;
+  .ui-kpi .v { display: block; font-family: var(--mono); font-size: var(--fs-kpi);
     font-weight: 650; text-align: left; color: var(--text); }
   /* engine-enum coloring of the KPI value (class set by report.js from the
      engine's own load_adequacy enum — no UI-side thresholds) */
   .ui-kpi .v.ok { color: var(--green); }
   .ui-kpi .v.warn { color: var(--amber); }
 
-  .kv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px 16px; font-size: 13px; }
+  .kv { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px 16px; font-size: var(--fs-md); }
   .kv .k { color: var(--muted); }
   .kv .v { font-family: var(--mono); text-align: right; }
   .kv .v.warn { color: var(--amber); }
@@ -274,21 +296,26 @@
   .ui-drop {
     position: relative; border: 1.5px dashed var(--line-strong); border-radius: var(--r-md);
     padding: var(--sp-5) var(--sp-4); text-align: center; color: var(--muted);
-    font-size: 13.5px; margin-bottom: var(--sp-2);
+    font-size: var(--fs-md); margin-bottom: var(--sp-2);
     background: var(--surface-1);
     transition: border-color var(--dur-fast), background var(--dur-fast);
   }
   .ui-drop input[type=file] {
     position: absolute; inset: 0; width: 100%; height: 100%;
-    opacity: 0; cursor: pointer; font-size: 13px;
+    opacity: 0; cursor: pointer; font-size: var(--fs-md);
   }
   .ui-drop.ui-dragover { border-color: var(--accent); background: var(--accent-a10); color: var(--text); }
   .ui-drop .ui-drop-icon { font-size: 24px; display: block; margin-bottom: 6px; }
 
   /* ============ buttons ============ */
+  /* one compact control height for every standard button; flex centering
+     keeps the label vertically centered at any font. Row toggles, icon
+     buttons and the hero presets override below / in their own rules. */
   button {
+    height: var(--ctl-h); padding: 0 var(--sp-4);
+    display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface-1); color: var(--text); border: 1px solid var(--line-strong);
-    border-radius: var(--r-sm); padding: 7px 14px; font-size: 13.5px; cursor: pointer;
+    border-radius: var(--r-sm); font-size: var(--fs-md); cursor: pointer;
     font-family: inherit;
     transition: border-color var(--dur-fast), background var(--dur-fast),
                 transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast);
@@ -308,8 +335,7 @@
   }
   /* running (analyze/batch): indeterminate spinner — NO fake progress bar
      (server has no progress endpoint; stopwatch stays the honest signal) */
-  button.ui-running { position: relative; padding-left: 12px; }
-  button.ui-running::before {
+  button.ui-running { position: relative; padding-left: 12px; }  button.ui-running::before {
     content: ""; display: inline-block; width: 11px; height: 11px;
     margin-right: 7px; vertical-align: -1.5px;
     border: 2px solid rgba(255,255,255,.4); border-top-color: #fff;
@@ -319,13 +345,13 @@
   @keyframes ui-spin { to { transform: rotate(360deg); } }
 
   .actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-4); align-items: center; }
-  .err { color: var(--red); font-size: 12.5px; margin-top: var(--sp-2); white-space: pre-wrap; }
-  .ok { color: var(--green); font-size: 12.5px; margin-top: var(--sp-2); }
+  .err { color: var(--red); font-size: var(--fs-sm); margin-top: var(--sp-2); white-space: pre-wrap; }
+  .ok { color: var(--green); font-size: var(--fs-sm); margin-top: var(--sp-2); }
 
   /* ============ param rows / sliders ============ */
   .param-row {
-    display: flex; align-items: center; gap: 10px; padding: 8px var(--sp-1);
-    border-bottom: 1px solid var(--line); font-size: 13.5px;
+    display: flex; align-items: center; gap: 10px; padding: var(--sp-2) var(--sp-1);
+    border-bottom: 1px solid var(--line); font-size: var(--fs-md);
     border-radius: var(--r-sm);
     border-left: 3px solid transparent;
   }
@@ -341,7 +367,7 @@
     background: transparent; cursor: pointer;
   }
   input[type=range]::-webkit-slider-runnable-track {
-    height: 4px; border-radius: 2px; background: var(--surface-3);
+    height: 4px; border-radius: 999px; background: var(--surface-3);
   }
   input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
@@ -356,7 +382,7 @@
   input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; transform: scale(1.12); }
   input[type=range]::-moz-range-track {
-    height: 4px; border-radius: 2px;
+    height: 4px; border-radius: 999px;
     background: var(--surface-3);
   }
   input[type=range]::-moz-range-thumb {
@@ -369,8 +395,9 @@
   }
   input[type=range]::-moz-range-thumb:hover { transform: scale(1.2); }
   input[type=number], input[type=text] {
+    height: var(--ctl-h);
     background: var(--surface-1); color: var(--text); border: 1px solid var(--line-strong);
-    border-radius: var(--r-sm); padding: 5px 9px; font-size: 13px;
+    border-radius: var(--r-sm); padding: 0 9px; font-size: var(--fs-md);
     font-family: var(--mono);
     transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
   }
@@ -382,7 +409,7 @@
   .param-row .val { width: 74px; font-family: var(--mono); text-align: right; color: var(--cyan); flex: none; }
   .param-row input[type=checkbox] { accent-color: var(--amber); transform: scale(1.1); }
   .param-row input[type=number], .param-row select { accent-color: var(--accent); }
-  .lock-cb { color: var(--amber); font-size: 12.5px; display: flex; align-items: center; gap: 4px; }
+  .lock-cb { color: var(--amber); font-size: var(--fs-sm); display: flex; align-items: center; gap: 4px; }
   /* dirty marker: accent left-bar + dot on the label. The dot means "this
      value will be SENT on the next analyze" — the engine echo re-syncs the
      widget but on purpose keeps dirty set, so the dot survives a re-run. */
@@ -393,33 +420,36 @@
   }
   .p-reset {
     cursor: pointer; border: none; background: none; color: var(--muted);
-    font-size: 14px; padding: 0 4px; line-height: 1;
+    font-size: var(--fs-md); padding: 0 4px; line-height: 1;
+    height: auto;  /* bare icon button — opts out of the 32px control row */
   }
   .p-reset:hover:not(:disabled) { color: var(--text); }
   .p-reset:disabled { opacity: 0; cursor: default; }
   #param-search {
+    height: var(--ctl-h);
     background: var(--surface-1); color: var(--text); border: 1px solid var(--line-strong);
-    border-radius: var(--r-sm); padding: 6px 11px; font-size: 13px; flex: 1; min-width: 0;
+    border-radius: var(--r-sm); padding: 0 11px; font-size: var(--fs-md); flex: 1; min-width: 0;
     transition: border-color var(--dur-fast);
   }
   #param-search:focus { outline: none; border-color: var(--accent); }
-  select { background: var(--surface-1); color: var(--text); border: 1px solid var(--line-strong);
-           border-radius: var(--r-sm); padding: 5px 7px; font-size: 13px; }
+  select { height: var(--ctl-h); padding: 0 7px;
+    background: var(--surface-1); color: var(--text); border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm); font-size: var(--fs-md); }
 
   /* ============ tables ============ */
-  table { width: 100%; border-collapse: collapse; font-size: 13px; font-family: var(--mono); }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); font-family: var(--mono); }
   th, td { padding: 7px 9px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px;
+  th { color: var(--muted); font-weight: 600; font-size: var(--fs-sm);
     letter-spacing: .2px; }
   td.num { color: var(--text); }
   tbody tr { transition: background var(--dur-fast); }
   tbody tr:hover { background: var(--accent-a10); }
   tr.infeasible td { color: var(--muted); }
-  .goal-tag { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); }
+  .goal-tag { font-size: var(--fs-xs); padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); }
   /* v0.16 engine-0.26 motivation badge: which goal a suggestion serves
      (accent-tinted to read as metadata, not an action tag) */
-  .mot-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  .mot-badge { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px;
     margin-left: 6px; vertical-align: 1px; white-space: nowrap;
     background: var(--accent-a10); border: 1px solid var(--accent-a25);
     color: var(--accent); }
@@ -429,23 +459,23 @@
   .goal-balanced { color: var(--cyan); border-color: rgba(63, 81, 208, .34); background: rgba(63, 81, 208, .08); }
 
   /* ============ risk / severity ============ */
-  .risk-item { padding: var(--sp-2) 0; border-bottom: 1px dashed var(--line); font-size: 13.5px; }
+  .risk-item { padding: var(--sp-2) 0; border-bottom: 1px dashed var(--line); font-size: var(--fs-md); }
   .risk-item:last-child { border-bottom: none; }
   .sev { display: inline-block; width: 46px; text-align: center; border-radius: 999px;
-         font-size: 11px; padding: 2px 0; margin-right: 8px; font-weight: 700; }
+         font-size: var(--fs-xs); padding: 2px 0; margin-right: 8px; font-weight: 700; }
   .sev-5 { background: var(--red); color: #fff; font-weight: 700; }
   .sev-4 { background: var(--red-soft); color: var(--red); font-weight: 600; }
   .sev-3 { background: var(--red-soft); color: var(--red); }
   .sev-2 { background: var(--amber-soft); color: var(--amber); }
   .sev-1 { background: var(--green-soft); color: var(--green); }
-  .rec-line { color: var(--green); font-size: 13px; margin-top: 10px; font-family: var(--mono); }
-  .muted { color: var(--muted); font-size: 12.5px; }
-  .hint { color: var(--muted); font-size: 12.5px; margin-top: var(--sp-2); }
+  .rec-line { color: var(--green); font-size: var(--fs-md); margin-top: 10px; font-family: var(--mono); }
+  .muted { color: var(--muted); font-size: var(--fs-sm); }
+  .hint { color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
   .scroll { max-height: 420px; overflow: auto; }
   #export-preview {
-    font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap;
+    font-family: var(--mono); font-size: var(--fs-xs); white-space: pre-wrap;
     max-height: 280px; overflow: auto; background: var(--console-bg);
-    border: 1px solid var(--console-line); border-radius: var(--r-sm); padding: 9px;
+    border: 1px solid var(--console-line); border-radius: var(--r-xs); padding: 9px;
     margin-top: var(--sp-2); color: var(--console-text);
   }
   ul { list-style: none; }
@@ -455,7 +485,7 @@
     display: flex; flex-direction: column; align-items: center; gap: 5px;
     padding: var(--sp-6) var(--sp-4); text-align: center;
     border: 1px dashed var(--line-strong); border-radius: var(--r-md);
-    color: var(--muted); font-size: 13px; background: var(--surface-1);
+    color: var(--muted); font-size: var(--fs-md); background: var(--surface-1);
   }
   .ui-empty::before { content: "◇"; font-size: 21px; color: var(--line-strong); }
 
@@ -467,9 +497,12 @@
      dashboard is the advanced-mode workspace. DOM order already reads
      模型→预设→结果 once .advanced-only panels hide — pure CSS, no node moves. */
   body.mode-simple .grid { grid-template-columns: 1fr; }
-  body.mode-simple .grid > div:first-child {
-    max-width: 760px; margin: 0 auto; width: 100%;
-  }
+  /* v0.21 r2: ALL panels share one width in simple mode. The v0.13 760px
+     task-flow cap (centered, then left-aligned in v0.21) produced two
+     panel widths on one page next to the full-width results stack — user
+     verdict: stacked cards must be equal-width. Full-width it is; the
+     v0.19 page-height budget (≤2200px on the beam sample) is re-measured
+     in output.verification.md. */
   /* inverse of .advanced-only: flow-only chrome (step strip) — hidden
      whenever advanced mode is on */
   body:not(.mode-simple) .simple-only { display: none !important; }
@@ -490,48 +523,31 @@
   body.mode-simple #pd-warn-promoted { display: block; }
   #pd-warn-promoted .hint { color: var(--amber); }
   .pd-warn { color: var(--amber); }
+  /* v0.22: the mirror renders as an attached amber banner directly under the
+     hero cards — part of the verdict row, not a floating lone line. The
+     old stray-line presentation read as a signal fighting the ✅ card. */
+  body.mode-simple #pd-warn-promoted {
+    margin: calc(-1 * var(--sp-3)) 0 var(--sp-3);  /* close the grid gap */
+    border: 1px solid var(--amber-line);
+    border-left: 4px solid var(--amber);
+    background: var(--amber-soft);
+    border-radius: var(--r-md);
+    padding: var(--sp-2) var(--sp-3);
+  }
+  /* v0.22: hero cards stack in simple mode (verdict, then advice) */
+  body.mode-simple #summary-cards { grid-template-columns: 1fr; }
   /* pristine empty state (pre-first-render): hide the all-"—" KPI rows and
      the empty profile-compare panel in simple mode. Gated on the empty-guide
-     being visible (panel pristine), NOT on hasReport — resetTuningState
-     leaves the previous model's results on screen (pre-existing semantics),
-     and hiding KPIs under stale cards would be a half-clear. */
+     being visible (panel pristine), NOT on hasReport — v0.24 made every
+     session change (new model upload) restore the pristine form via
+     resetResultsPanel, so pristine == "no verdict on screen for THIS
+     session", and hiding the placeholder rows under it is a full clear,
+     not a half-clear. */
   body.mode-simple.no-report .ui-kpis,
   body.mode-simple.no-report #cand-panel { display: none; }
-  /* persistent step strip (simple mode): "where am I" in the 3-step flow.
-     .done steps flip to a check mark via JS textContent; states are driven
-     by updateFlowSteps() at the upload / render / mode-switch hooks. */
-  #flow-steps {
-    display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap;
-    padding: 8px 16px; margin-bottom: var(--sp-4);
-    border: 1px solid var(--line); border-radius: var(--r-lg);
-    background: var(--surface-1); box-shadow: var(--shadow-1);
-    font-size: 12.5px; color: var(--muted);
-  }
-  #flow-steps .fs-step { display: flex; align-items: center; gap: 7px; }
-  #flow-steps .fs-n {
-    width: 20px; height: 20px; border-radius: 50%; flex: none;
-    border: 1.5px solid var(--line-strong); color: var(--muted);
-    font-size: 11px; font-weight: 700;
-    display: flex; align-items: center; justify-content: center;
-    transition: border-color var(--dur-fast), background var(--dur-fast),
-                color var(--dur-fast);
-  }
-  #flow-steps .fs-step.active .fs-n { border-color: var(--accent); color: var(--accent); }
-  #flow-steps .fs-step.active { color: var(--text); }
-  #flow-steps .fs-step.done .fs-n {
-    border-color: var(--green-line); background: var(--green-soft);
-    color: var(--green);
-  }
-  #flow-steps .fs-step.done { color: var(--text); }
-  /* v0.18 skip state: a report exists but no preset was ever chosen (upload
-     auto-analyze / slider path). Honest third state — the step was not done
-     by the user; the run used current parameters (neutral wording, applies
-     to engine defaults AND hand-tuned params alike). */
-  #flow-steps .fs-step.skip .fs-n {
-    border-color: var(--line-strong); background: transparent;
-    color: var(--muted);
-  }
-  #flow-steps .fs-sep { color: var(--line-strong); }
+  /* v0.22: the v0.13 step-strip styles are gone with the strip itself — the
+     single-column panel order (模型 → 预设 → 结果) IS the flow, and #empty-guide
+     teaches the three steps exactly once, in place. */
   /* sticky verdict bar: SF/score/delta stay visible while scrolling either
      column (the right .grid child spans the whole results stack, so a
      sticky element inside it survives left-column scrolling too). */
@@ -539,13 +555,13 @@
     display: none;  /* JS-controlled like #analyze-error — CSS default none */
     position: sticky; top: 8px; z-index: 30;
     align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 8px 14px; margin-bottom: 10px;
+    padding: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-3);
     border: 1px solid var(--line-strong); border-radius: var(--r-md);
     background: var(--surface-1); box-shadow: var(--shadow-2);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
-  #sticky-verdict .sv-lbl { color: var(--muted); font-size: 11.5px; }
-  #sticky-verdict .sv-val { font-family: var(--mono); font-weight: 650; font-size: 15px; }
+  #sticky-verdict .sv-lbl { color: var(--muted); font-size: var(--fs-xs); }
+  #sticky-verdict .sv-val { font-family: var(--mono); font-weight: 650; font-size: var(--fs-xl); }
   #sticky-verdict .sv-val.sf-low { color: var(--red); }
   #sticky-verdict .sv-val.sf-mid { color: var(--amber); }
   #sticky-verdict .sv-val.sf-high { color: var(--green); }
@@ -553,8 +569,12 @@
      E3 suite pins that row to exactly 3 <button>s. Keyboard support via
      tabindex + keydown in JS. */
   #dirty-chip {
+    /* hidden default; JS flips to inline-flex when the dirty count > 0
+       (clearing the inline value would fall back to this none and the
+       chip would never render — the E9 suite reads the inline style only) */
     display: none; align-self: center; cursor: pointer; user-select: none;
-    font-size: 12px; padding: 4px 11px; border-radius: 999px;
+    height: var(--ctl-h-chip); align-items: center;
+    font-size: var(--fs-sm); padding: 0 var(--sp-3); border-radius: 999px;
     border: 1px solid var(--accent); color: var(--accent);
     background: var(--accent-a10);
     transition: background var(--dur-fast);
@@ -570,7 +590,7 @@
     display: flex; flex-direction: column; gap: 8px; max-width: 380px;
   }
   .toast {
-    font-size: 13.5px; padding: 10px 14px; border-radius: var(--r-md);
+    font-size: var(--fs-md); padding: 10px 14px; border-radius: var(--r-md);
     border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--text);
     box-shadow: var(--shadow-3); cursor: default;
     display: flex; gap: 10px; align-items: flex-start;
@@ -583,7 +603,8 @@
   .toast.ok { border-color: var(--green-line); color: var(--green); }
   .toast.err { border-color: var(--red-line); color: var(--red); }
   .toast .toast-x { cursor: pointer; border: none; background: none;
-    color: inherit; font-size: 14px; padding: 0; line-height: 1.3; }
+    color: inherit; font-size: var(--fs-md); padding: 0; line-height: 1.3;
+    height: auto; }  /* bare icon button */
 
   /* ============ v0.10/v0.11 productization (light restyle) ============ */
   /* brand wordmark gradient (violet tail reserved for the wordmark only) */
@@ -592,31 +613,16 @@
     -webkit-background-clip: text; background-clip: text;
     color: transparent;
   }
-  /* first-run 3-step guide bar (3.1); dismissed via localStorage ui.guide-done */
-  .first-guide {
-    display: flex; gap: var(--sp-5); align-items: center; flex-wrap: wrap;
-    padding: 12px 18px; margin-bottom: var(--sp-5);
-    border: 1px solid var(--line); border-radius: var(--r-lg);
-    background: linear-gradient(135deg, rgba(79, 70, 229, .07), transparent 65%),
-                var(--surface-1);
-    box-shadow: var(--shadow-1); font-size: 13.5px;
-  }
-  .first-guide .fg-step { display: flex; align-items: center; gap: 8px; }
-  .first-guide .fg-n {
-    width: 22px; height: 22px; border-radius: 50%; flex: none;
-    background: var(--accent);
-    color: #fff; font-weight: 700; font-size: 12px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .first-guide .fg-x { margin-left: auto; }
-  /* empty-state guide (1.1) */
+  /* v0.22: the v0.10 first-run guide bar is gone (its three steps live once
+     in the in-panel #empty-guide below); styles removed with the markup */
+  /* empty-state guide (1.1) — the single onboarding surface (v0.22) */
   .empty-guide {
     border: 1px dashed var(--line-strong); border-radius: var(--r-md);
-    text-align: center; color: var(--muted); font-size: 13.5px;
+    text-align: center; color: var(--muted); font-size: var(--fs-md);
     padding: var(--sp-7) var(--sp-5); margin-bottom: var(--sp-5);
     background: var(--surface-1);
   }
-  .empty-guide .eg-title { font-size: 17px; font-weight: 650;
+  .empty-guide .eg-title { font-size: var(--fs-2xl); font-weight: 650;
     color: var(--text); margin-bottom: var(--sp-2); }
   .empty-guide .eg-steps {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
@@ -626,16 +632,19 @@
   .eg-n {
     width: 28px; height: 28px; border-radius: 50%;
     background: var(--accent);
-    color: #fff; font-weight: 700; font-size: 13px;
+    color: #fff; font-weight: 700; font-size: var(--fs-md);
     display: flex; align-items: center; justify-content: center;
   }
   .eg-feats { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-  .eg-feat { font-size: 12.5px; color: var(--muted); border: 1px solid var(--line);
+  .eg-feat { font-size: var(--fs-sm); color: var(--muted); border: 1px solid var(--line);
     padding: 4px 13px; border-radius: 999px; background: var(--surface-1); }
-  /* verdict-first summary cards (1.2) */
+  /* verdict-first summary cards (1.2); v0.22: two cards — 结论 hero (engine
+     verdict + SF band + delta) and 建议 (apply CTA + what-will-change line).
+     The third preview card (风险 top-3) folded into the merged #alerts-card:
+     one ⚠ surface, no summary/detail contradiction. Hero wider than advice. */
   #summary-cards {
-    display: grid; grid-template-columns: repeat(3, 1fr);
-    gap: var(--sp-3); margin-bottom: var(--sp-5);
+    display: grid; grid-template-columns: 3fr 2fr;
+    gap: var(--sp-3); margin-bottom: var(--sp-3);
   }
   #summary-cards:empty { display: none; }   /* load-bearing: report.js never
      writes an inline display on the container — emptiness IS the hide */
@@ -647,10 +656,10 @@
     border-top: 2.5px solid var(--surface-3);
   }
   .sum-card h3 {
-    font-size: 12px; font-weight: 600; color: var(--muted);
+    font-size: var(--fs-sm); font-weight: 600; color: var(--muted);
     letter-spacing: .3px; margin-bottom: 7px;
   }
-  .sum-card .big { font-size: 15px; line-height: 1.5; color: var(--text); }
+  .sum-card .big { font-size: var(--fs-xl); line-height: 1.5; color: var(--text); }
   .sum-card.sum-verdict.ok { border-top-color: var(--green);
     border-color: var(--green-line); background: linear-gradient(180deg, var(--green-soft), var(--surface-1) 45%); }
   .sum-card.sum-verdict.warn { border-top-color: var(--amber);
@@ -659,13 +668,13 @@
     border-color: var(--red-line); background: linear-gradient(180deg, var(--red-soft), var(--surface-1) 45%); }
   .sum-card ul.sum-lines { list-style: none; margin-top: 3px;
     max-height: 122px; overflow: auto; }
-  .sum-card .sum-lines li { font-size: 13px; color: var(--text);
+  .sum-card .sum-lines li { font-size: var(--fs-md); color: var(--text);
     padding: 3px 0; border-bottom: 1px dashed var(--line); }
   .sum-card .sum-lines li:last-child { border-bottom: none; }
   .sum-card button.sum-cta {
     margin-top: 9px; font-weight: 600; color: #fff; border: none;
     background: var(--accent);
-    border-radius: var(--r-sm); padding: 7px 13px; font-size: 13px; cursor: pointer;
+    border-radius: var(--r-sm); cursor: pointer;
   }
   .sum-card button.sum-cta:hover:not(:disabled) { background: #4338ca; }
   /* SF color band (2.2): display mapping of the ENGINE's own number —
@@ -673,26 +682,35 @@
   .v.sf-low { color: var(--red); }
   .v.sf-mid { color: var(--amber); }
   .v.sf-high { color: var(--green); }
-  .sf-band { height: 8px; border-radius: 4px; background: var(--surface-3);
+  .sf-band { height: 8px; border-radius: 999px; background: var(--surface-3);
     margin-top: 9px; overflow: hidden; }
-  .sf-band i { display: block; height: 100%; border-radius: 4px;
+  .sf-band i { display: block; height: 100%; border-radius: 999px;
     transition: width var(--dur-med) var(--ease); }
   .sf-band.sf-low i { background: linear-gradient(90deg, #fca5a5, var(--red)); }
   .sf-band.sf-mid i { background: linear-gradient(90deg, #fcd34d, var(--amber)); }
   .sf-band.sf-high i { background: linear-gradient(90deg, #6ee7b7, var(--green)); }
-  /* candidate comparison bars (2.3) — pure CSS widths, zero deps */
-  #cand-bars { display: grid; gap: 6px; margin: 10px 0; }
+  /* candidate comparison bars (2.3) — pure CSS widths, zero deps.
+     v0.19: gap/margins compacted for the simple-mode page-height budget. */
+  #cand-bars { display: grid; gap: 3px; margin: 6px 0 2px; }
   #cand-bars:empty { display: none; }   /* load-bearing: see #summary-cards:empty */
+  #cand-bars .hint { margin-top: 2px; }
   .cbar { display: grid; grid-template-columns: 110px 1fr; gap: 10px;
-    align-items: center; font-size: 12.5px; }
+    align-items: center; font-size: var(--fs-sm); }
   .cbar .cb-name { color: var(--muted);
     text-align: right; overflow: hidden; text-overflow: ellipsis; }
-  .cbar .cb-track { display: grid; gap: 3px; }
+  .cbar .cb-track { display: grid; gap: 2px; }
   .cbar .cb-row { display: grid; grid-template-columns: 34px 1fr; gap: 6px;
     align-items: center; }
-  .cbar .cb-lab { font-size: 10.5px; color: var(--muted); }
-  .cbar .cb-bar { height: 7px; border-radius: 3.5px; background: var(--surface-3);
+  .cbar .cb-lab { font-size: var(--fs-xs); color: var(--muted); }
+  .cbar .cb-bar { height: 7px; border-radius: 999px; background: var(--surface-3);
     overflow: hidden; }
+  /* v0.19: raw 15-column comparison table fold — native <details>, closed by
+     default in BOTH modes. Element-local state on purpose: no body class
+     (snapshot export never clones this panel), and applyMode keeps its
+     "toggle touches CSS visibility only" invariant (never touches .open). */
+  #cand-raw-fold { margin: 6px 0 0; }
+  #cand-raw-fold summary { cursor: pointer; color: var(--muted);
+    font-size: var(--fs-sm); user-select: none; padding: 2px 0; }
   .cbar .cb-bar i { display: block; height: 100%;
     transition: width var(--dur-med) var(--ease); }
   /* loading skeleton + progress bar (2.4/2.5) */
@@ -700,11 +718,11 @@
   .ui-kpis.skeleton .ui-kpi .v { color: transparent; position: relative; }
   .ui-kpis.skeleton .ui-kpi .v::after {
     content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 70%;
-    border-radius: 5px; background: var(--surface-3);
+    border-radius: 999px; background: var(--surface-3);
     animation: ui-pulse 1.1s ease-in-out infinite;
   }
-  #run-progress { height: 6px; border-radius: 3px; background: var(--surface-3);
-    margin-bottom: 12px; overflow: hidden; display: none; }
+  #run-progress { height: 6px; border-radius: 999px; background: var(--surface-3);
+    margin-bottom: var(--sp-3); overflow: hidden; display: none; }
   #run-progress i { display: block; height: 100%; width: 0;
     background: linear-gradient(90deg, #6366f1, var(--accent));
     transition: width .4s var(--ease); }
@@ -717,20 +735,27 @@
     border: 1px solid var(--red-line);
     background: var(--red-soft); border-radius: var(--r-md);
     padding: var(--sp-3) var(--sp-4); margin-bottom: var(--sp-4);
-    font-size: 13.5px; display: none;
+    font-size: var(--fs-md); display: none;
   }
-  /* warnings expandable card (3.3) */
-  #warnings-card { margin-bottom: 8px; }
+  /* merged alerts card (v0.22): engine warnings + geometric risks, one ⚠
+     surface right under the hero cards; lists keep their own renderers */
+  #alerts-card { margin-bottom: var(--sp-2); }
+  #alerts-card #alerts-body { margin-top: var(--sp-2); }
   .lang-btn {
-    font-size: 12.5px; font-weight: 700; padding: 4px 12px;
+    height: var(--ctl-h-chip); padding: 0 var(--sp-3);
+    font-size: var(--fs-sm); font-weight: 700;
     border: 1px solid var(--line-strong); border-radius: 999px;
     background: var(--panel2); color: var(--text); cursor: pointer;
     transition: border-color .15s, color .15s;
   }
   .lang-btn:hover { border-color: var(--accent); color: var(--accent); }
   .lang-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* full-width row toggle (warnings / geometric-risk / detail-fold): keeps
+     the base button chrome but left-aligns the label and rides the same
+     32px control height as every other control */
   .warnings-toggle {
-    width: 100%; text-align: left; font-size: 13.5px; font-weight: 600;
+    width: 100%; justify-content: flex-start;
+    text-align: left; font-size: var(--fs-md); font-weight: 600;
     display: flex; align-items: center; gap: 8px;
   }
   .warnings-toggle .wcount {
@@ -744,9 +769,8 @@
   @media (max-width: 640px) {
     #summary-cards { grid-template-columns: 1fr; }
     .empty-guide .eg-steps { grid-template-columns: 1fr; }
-    .ui-drop { padding: var(--sp-7) var(--sp-4); font-size: 14px; }
+    .ui-drop { padding: var(--sp-7) var(--sp-4); font-size: var(--fs-lg); }
     .ui-drop .ui-drop-icon { font-size: 30px; }
-    .first-guide { gap: var(--sp-3); }
   }
   @media (max-width: 420px) { .ui-kpis { grid-template-columns: 1fr; } }
 
@@ -754,7 +778,7 @@
   ::selection { background: rgba(79, 70, 229, .22); }
   * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 6px;
+  ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px;
     border: 2px solid var(--surface-0); }
   ::-webkit-scrollbar-track { background: transparent; }
   summary { border-radius: var(--r-sm); }
@@ -793,23 +817,10 @@
     <label class="sw" title="显示或隐藏高级内容（参数滑杆调参、环境载荷、可信度、Orca 建议、运行历史等）"><input type="checkbox" id="mode-toggle"><span class="sw-track" aria-hidden="true"></span><span>高级选项</span></label>
   </header>
 
-  <!-- v0.10 (3.1) first-run 3-step guide bar — localStorage ui.guide-done -->
-  <div class="first-guide" id="first-guide" style="display:none">
-    <div class="fg-step"><span class="fg-n">1</span>上传模型（.stl / .3mf）</div>
-    <div class="fg-step"><span class="fg-n">2</span>点一个预设（安全 / 均衡 / 高速 / 外观）</div>
-    <div class="fg-step"><span class="fg-n">3</span>看「结论」卡片——引擎直接告诉你行不行</div>
-    <button class="fg-x" id="guide-close" title="不再显示（记住此选择）">知道了 ✕</button>
-  </div>
-
-  <!-- v0.13 persistent step strip (simple mode only): where-am-I in the
-       upload → preset → verdict flow. States via updateFlowSteps(). -->
-  <div class="simple-only" id="flow-steps" style="display:none">
-    <div class="fs-step" data-fs="1"><span class="fs-n">1</span>上传模型</div>
-    <span class="fs-sep">→</span>
-    <div class="fs-step" data-fs="2"><span class="fs-n">2</span>选预设</div>
-    <span class="fs-sep">→</span>
-    <div class="fs-step" data-fs="3"><span class="fs-n">3</span>看结论</div>
-  </div>
+  <!-- v0.22: the v0.10 first-run guide bar and the v0.13 persistent step
+       strip are REMOVED — both taught the same 3 steps as the in-panel
+       #empty-guide (their content survives there, contextually placed where
+       the verdict will appear). One onboarding surface, not three. -->
 
   <div class="grid">
     <!-- ================= left column ================= -->
@@ -819,13 +830,16 @@
         <div class="ui-drop" id="dropzone">
           <span class="ui-drop-icon" aria-hidden="true">⬆</span>
           拖放模型文件到此处，或点击选择<br>
-          <span class="muted" style="font-size:11px">支持 .stl / .obj / .ply / .3mf / .amf</span>
+          <span class="muted" style="font-size:var(--fs-xs)">支持 .stl / .obj / .ply / .3mf / .amf</span>
           <input type="file" id="model-file" accept=".stl,.obj,.ply,.3mf,.amf" title="点击选择模型文件">
         </div>
         <div class="actions">
           <button id="btn-analyze" class="primary" disabled>分析</button>
-          <button id="btn-compare" disabled>优化对比</button>
-          <button id="btn-report" disabled>下载报告 JSON</button>
+          <!-- v0.22: 优化对比/下载报告 JSON are advanced-mode tools — in
+               simple mode the primary row is 分析 + HTML 快照 only (the
+               shareable artifact), so the novice's action row stays at two -->
+          <button id="btn-compare" class="advanced-only" disabled>优化对比</button>
+          <button id="btn-report" class="advanced-only" disabled>下载报告 JSON</button>
           <button id="btn-snapshot" disabled
                   title="把当前渲染后的「分析结果」区导出为自包含单文件 HTML（内联样式、无外部资源、离线可开；数据截至导出时刻）">下载 HTML 快照</button>
           <span id="dirty-chip" role="button" tabindex="0"
@@ -844,28 +858,43 @@
           <label class="lock-cb" style="align-self:center" title="熔体流变诊断（--rheology）：剪切率/黏度/压力降/稳定性/胀大，结果在「流变诊断」折叠区"><input type="checkbox" id="opt-rheology">流变诊断</label>
           <label class="lock-cb" style="align-self:center" title="估算误差剖析（--est-error-profile）：引擎按多维度重跑 FEM，对比代理模型估算与真实解的外推误差（结果在「估算误差剖析」表）"><input type="checkbox" id="opt-esterror">估算误差剖析</label>
           <label class="lock-cb" style="align-self:center" title="分辨率校验（--resolution-check）：以 2 倍网格重跑 FEM 并披露位移/应力偏差（约 2 倍求解时间；结果在 Phase B 详情）"><input type="checkbox" id="opt-rescheck">分辨率校验</label>
-          <label class="lock-cb" style="align-self:center" title="FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。">网格 <input type="number" id="opt-grid" min="4" max="128" step="1" placeholder="默认" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"></label>
+          <label class="lock-cb" style="align-self:center" title="FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。">网格 <input type="number" id="opt-grid" min="4" max="128" step="1" placeholder="默认" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:2px 4px"></label>
           </div>
         </details>
         <div id="wizard" style="display:none; margin-top:8px">
           <div class="hint">未检测到 stratum.exe。粘贴 stratum.exe 的完整路径（SDK 发布物 bin/ 内）：</div>
           <div class="actions" style="margin-top:6px">
             <input type="text" id="wizard-path" placeholder="C:\path\to\stratum.exe"
-                   style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;flex:1">
+                   style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 8px;font-size:var(--fs-md);flex:1">
             <button id="btn-setbin">设置引擎</button>
           </div>
           <div id="wizard-msg" class="err" style="display:none"></div>
         </div>
         <div class="actions advanced-only" style="margin-top:6px" title="外挂基线 JSON（flat Orca project_settings 键）：优先级 CLI > 3MF 值 > 基线 > 默认，填 CAD 裸 3MF/STL 的参数空位">
           <input type="file" id="base-profile-file" accept=".json,application/json" title="选择基线 JSON 文件"
-                 style="color:var(--text);font-size:12px;max-width:220px">
+                 style="color:var(--text);font-size:var(--fs-sm);max-width:220px">
           <span class="hint" id="base-profile-note">外挂基线：未设置</span>
           <button id="btn-clear-base" style="display:none">清除基线</button>
+        </div>
+        <!-- v0.25 切片 G-code 应力调优附件（--gcode-in/--gcode-out）：附加后每次
+             分析都会沿挤出段采样本次 FEM 应力并在热区改写 E（只加不减）；
+             产物=调优后 G-code 下载 + 审计卡（结果面板）。附件属于模型会话，
+             换模型即失效。三个数值留空 = 引擎默认（0 / 1.10 / 0.90）。 -->
+        <div class="actions advanced-only" style="margin-top:6px" title="附加该模型的切片 G-code 后，分析引擎将沿挤出路径采样应力并输出调优后的 G-code（--gcode-in/--gcode-out 通道，引擎 0.26+）">
+          <input type="file" id="gcode-tune-file" accept=".gcode,.gco" title="选择该模型的切片 G-code"
+                 style="color:var(--text);font-size:var(--fs-sm);max-width:220px">
+          <span class="hint" id="gcode-tune-note">应力调优：未附加切片</span>
+          <button id="btn-gcode-detach" style="display:none">移除切片</button>
+        </div>
+        <div class="actions advanced-only" style="margin-top:2px; gap:6px 14px" title="热区判定参数（引擎域）：应力下限 0=纯百分位模式；热区倍率与百分位留空即引擎默认">
+          <label class="lock-cb" style="align-self:center">应力下限 <input type="number" id="gcode-vm-floor" min="0" max="100000" step="any" placeholder="0 MPa" style="width:70px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:2px 4px"></label>
+          <label class="lock-cb" style="align-self:center">热区倍率 <input type="number" id="gcode-m-hot" min="1" max="1.3" step="any" placeholder="1.10" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:2px 4px"></label>
+          <label class="lock-cb" style="align-self:center">热区百分位 <input type="number" id="gcode-p-hi" min="0" max="1" step="any" placeholder="0.90" style="width:56px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:2px 4px"></label>
         </div>
         <div id="upload-msg" class="ok"></div>
         <canvas id="stl-view" width="420" height="280"
                 style="display:none; width:100%; max-width:420px; height:auto;
-                       border:1px solid var(--line-strong); border-radius:10px; margin-top:8px; box-shadow:var(--shadow-1)"></canvas>
+                       border:1px solid var(--line-strong); border-radius:var(--r-md); margin-top:var(--sp-2); box-shadow:var(--shadow-1)"></canvas>
         <div id="stl-view-note" class="hint" style="display:none"></div>
       </div>
 
@@ -895,7 +924,10 @@
         <div class="hint">上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。</div>
       </div>
 
-      <div class="panel">
+      <!-- v0.21: wrapper is advanced-only — it holds ONLY the two advanced
+           <details>, so without the class its empty shell rendered as a
+           stray blank card in simple mode -->
+      <div class="panel advanced-only">
         <details class="ui-group advanced-only" open>
           <summary>调参 <span class="tag" title="滑杆 + 锁定（引擎 --lock 语义）：锁定即冻结该维度，档位搜索不再漂移它">逐项微调 · 未动项沿用引擎默认</span></summary>
           <div class="actions" style="gap:8px; margin:6px 0">
@@ -914,11 +946,61 @@
           <div class="hint">载荷大小为数字直输（引擎域 0..1e6 N）；疲劳寿命为 10ⁿ 指数滑杆。服役时长/温度/湿度/退火供老化与 WLF 模型（部分材料未标定时引擎回 null）。回抽/空走/擦除为「发送值」通道：只进 Orca 建议与外观通道、设值即钉住，且引擎报告不回显——UI 无法替你核实，写回审计里看实际效果。</div>
         </details>
       </div>
+
+      <!-- v0.23 G-code companion tools (gcode-diff CLI in bin/gcode-diff/):
+           hidden entirely while the companion exe is absent (status-gated at
+           init). 评分 is the simple-mode entry ("这份 G-code 打几分"); 对比
+           mode and the 轻量几何 toggle are advanced-only (progressive
+           disclosure, same pattern as the analyze options group above). -->
+      <div class="panel" id="gcode-panel" style="display:none">
+        <h2>G-code 工具</h2>
+        <div class="actions" style="margin:0 0 8px 0; gap:6px 14px">
+          <label class="lock-cb"><input type="radio" name="gcode-mode" value="score" checked>评分</label>
+          <label class="lock-cb advanced-only"><input type="radio" name="gcode-mode" value="diff">对比</label>
+        </div>
+        <div class="ui-drop" id="gcode-slot-a" style="cursor:pointer" title="点击选择 G-code 文件（.gcode / .gco，最大 64 MB）">
+          <span class="ui-drop-icon" aria-hidden="true">G</span>
+          <span id="gcode-a-name">选择 G-code 文件</span><br>
+          <span class="muted" style="font-size:var(--fs-xs)">gcode-diff 质量评分 · 19 维 + 调参建议</span>
+          <input type="file" id="gcode-file-a" accept=".gcode,.gco" title="点击选择 G-code 文件" style="display:none">
+        </div>
+        <div class="ui-drop advanced-only" id="gcode-slot-b" style="cursor:pointer" title="点击选择对比的第二个 G-code 文件（改参后）">
+          <span class="ui-drop-icon" aria-hidden="true">⇄</span>
+          <span id="gcode-b-name">对比文件 B（改参后）</span><br>
+          <span class="muted" style="font-size:var(--fs-xs)">改参前后逐层对比 · 几何/物理后果</span>
+          <input type="file" id="gcode-file-b" accept=".gcode,.gco" title="点击选择对比文件 B" style="display:none">
+        </div>
+        <!-- v0.26 machine/hotend keys for the DIFF-side feasibility flags
+             (engine: "machine limits ... CLAMP-GRADE"). Options come from
+             the model engine's --schema enum (shared SDK machine table);
+             unknown keys are the engine's own fail-open (no clamp), and the
+             response echoes what was sent. Score mode is machine-inert —
+             the selects ride the same diff+advanced visibility as slot B. -->
+        <div class="actions advanced-only" id="gcode-mach-row" style="margin-top:2px; gap:6px 14px">
+          <label class="lock-cb" style="align-self:center" title="机器限速键（固件轴速上限，来自共享 SDK 机器表；不指定 = 不钳制）">机器 <select id="gcode-machine" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 4px;font-size:var(--fs-sm)"></select></label>
+          <label class="lock-cb" style="align-self:center" title="热端键（流量上限披露，仅标注不拦截；不指定 = 不考虑）">热端 <select id="gcode-hotend" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 4px;font-size:var(--fs-sm)"></select></label>
+        </div>
+        <div class="actions" style="margin-top:8px">
+          <label class="lock-cb advanced-only" title="跳过重几何距离计算、保留分类信号（大文件提速；报告会披露 geometry 不可用）"><input type="checkbox" id="gcode-lightweight">轻量几何</label>
+          <button id="btn-gcode-run" class="primary" disabled>运行</button>
+          <span id="gcode-run-indicator" class="hint" style="display:none; align-self:center"></span>
+        </div>
+        <div id="gcode-msg" class="hint" style="margin-top:6px"></div>
+      </div>
     </div>
 
     <!-- ================= right column ================= -->
     <div>
-      <div class="panel">
+      <!-- v0.23 G-code tools result panel: PANEL-level mutual exclusion with
+           #result-panel below — a gcode run swaps the whole right column to
+           this panel, the next model analyze swaps it back (showGcodeResultPanel
+           in the main script). HTML snapshot stays model-only: the gcode full
+           artifact is the self-contained report deep link. -->
+      <div class="panel" id="gcode-result-panel" style="display:none">
+        <h2>G-code 结果</h2>
+        <div id="gcode-result"></div>
+      </div>
+      <div class="panel" id="result-panel">
         <h2>分析结果</h2>
         <!-- v0.13 sticky verdict bar: SF/score/delta stay in view while the
              user scrolls sliders or the long results stack -->
@@ -939,14 +1021,6 @@
             <span class="eg-feat">一键应用</span>
           </div>
         </div>
-        <!-- v0.10 (3.3) warnings badge — click to expand the engine list -->
-        <div id="warnings-card" style="display:none">
-          <button class="warnings-toggle" id="warnings-toggle" type="button">
-            ⚠ <span class="wcount" id="warnings-count">0</span> 条提示
-            <span class="hint">点击展开 / 收起</span>
-          </button>
-          <div id="warning-list"></div>
-        </div>
         <div id="validate-refused" style="display:none"></div>
         <div id="fast-mode-tag" class="hint" style="display:none">⚡ 预览级结果（--fast：FEM 网格封顶 12³）——精度披露见报告 fast_mode，勿与全分辨率结果混用</div>
         <!-- v0.10 (1.2) verdict-first summary cards (verdict / risks / advice) -->
@@ -958,7 +1032,27 @@
              the wall lines — sticky-verdict mirror precedent (v0.13).
              Cleared at the top of every renderReport (report.js). -->
         <div id="pd-warn-promoted"></div>
-        <div class="ui-kpis">
+        <!-- v0.22 merged alerts card (was #warnings-card above the fold +
+             #risk-card at the panel bottom): one ⚠ surface, verdict-first
+             position (after the hero cards). List containers keep their ids
+             (#warning-list / #risk-list) — report.js writes them unchanged. -->
+        <div id="alerts-card" style="display:none">
+          <button class="warnings-toggle" id="alerts-toggle" type="button">
+            ⚠ <span class="wcount" id="alerts-count">0</span>
+            <span id="alerts-headline">条提示</span>
+            <span class="hint">点击展开 / 收起</span>
+          </button>
+          <div id="alerts-body" style="display:none">
+            <div class="hint" id="alerts-warn-h" style="margin:8px 0 4px"></div>
+            <div id="warning-list"></div>
+            <div class="hint" id="alerts-risk-h" style="margin:10px 0 4px"></div>
+            <div id="risk-list"><div class="ui-empty">分析后显示几何风险</div></div>
+          </div>
+        </div>
+        <!-- v0.22: KPI row joins the detail wall in simple mode — the hero
+             already carries SF + verdict; 评分/载荷判定/最大应力 are engineering
+             numbers, one fold away (advanced mode sees them as before) -->
+        <div class="ui-kpis detail-wall">
           <div class="ui-kpi"><span class="k" title="总体评分：引擎对各维度（强度/时间/材料/可靠性/质量）的综合打分">总体评分</span><span class="v" id="res-overall">—</span></div>
           <div class="ui-kpi"><span class="k" title="安全系数（SF）= 材料强度 ÷ 实际应力。>1 才安全，越大越保守；带 (lo–hi) 区间为材料分散带">安全系数</span><span class="v" id="res-sf">—</span></div>
           <div class="ui-kpi"><span class="k" title="引擎对当前载荷下强度是否够用的判定（强度充足 / 载荷主导 / 无法评估）——引擎结论，UI 不另行打分">载荷判定</span><span class="v" id="res-load">—</span></div>
@@ -969,8 +1063,8 @@
              their DOM positions and ids; simple mode just hides them until
              asked). Label carries no counts/semantics of its own. -->
         <button id="detail-fold-toggle" class="warnings-toggle" type="button"
-                title="求解器、材料与工艺的全部引擎明细行（简单模式默认收起）">
-          <span id="detail-fold-arrow">▸</span> 引擎完整明细
+                title="全部数值（评分/应力/屈曲/疲劳）、参数建议明细与求解器、材料、工艺的引擎明细行">
+          <span id="detail-fold-arrow">▸</span> 全部数值与引擎明细
           <span class="hint">点击展开 / 收起</span>
         </button>
         <div class="kv detail-wall" id="structural-summary" style="margin-bottom:8px">
@@ -980,16 +1074,19 @@
           <span class="k" title="Weibull 统计强度评级：把材料内部缺陷分布计入的可靠性模型，A+ 为最优（悬停详情行有解释）">Weibull 等级</span><span class="v" id="res-weibull">—</span>
         </div>
         <div class="kv detail-wall" id="printability-line" style="display:none; margin-bottom:8px"></div>
-        <div id="phase-b-assessment" class="rec-line" style="display:none" data-i18n-skip="1"></div>
+        <!-- v0.22: joins the detail wall in simple mode — the hero card above
+             carries the same engine assessment verbatim; this line was the
+             above-the-fold verdict in v0.18, now it would read as a dup -->
+        <div id="phase-b-assessment" class="rec-line detail-wall" style="display:none" data-i18n-skip="1"></div>
         <div class="detail-wall" id="phase-b-detail"></div>
-        <details id="phase-b-solver" class="advanced-only" style="display:none; margin-top:6px">
+        <details id="phase-b-solver" class="advanced-only" style="display:none; margin-top:var(--sp-2)">
           <summary class="hint" style="cursor:pointer">求解器与网格详情 <span class="tag">CG 收敛 / 网格 / 离散误差 / 预条件子</span></summary>
-          <div id="phase-b-internals" style="margin-top:6px"></div>
+          <div id="phase-b-internals" style="margin-top:var(--sp-2)"></div>
         </details>
         <div class="detail-wall" id="phase-c-detail"></div>
-        <details id="phase-c-solver" class="advanced-only" style="display:none; margin-top:6px">
+        <details id="phase-c-solver" class="advanced-only" style="display:none; margin-top:var(--sp-2)">
           <summary class="hint" style="cursor:pointer">本构与材料模型细节 <span class="tag">屈服指数 / WLF / 结晶度 / 键合</span></summary>
-          <div id="phase-c-internals" style="margin-top:6px"></div>
+          <div id="phase-c-internals" style="margin-top:var(--sp-2)"></div>
         </details>
         <div class="detail-wall" id="phase-d-detail"></div>
         <details id="appearance-box" class="advanced-only" style="display:none; margin-top:8px">
@@ -1022,40 +1119,34 @@
           <summary class="hint" style="cursor:pointer">机器限制（--machine / 3MF 识别） <span class="tag" id="machine-limits-src"></span></summary>
           <div id="machine-limits-detail" style="margin-top:6px"></div>
         </details>
+        <details id="gcode-tune-box" class="detail-wall" style="display:none; margin-top:8px">
+          <summary class="hint" style="cursor:pointer">G-code 应力调优 <span class="tag">--gcode-in/--gcode-out · 引擎审计</span></summary>
+          <div id="gcode-tune-body" style="margin-top:6px"></div>
+        </details>
         <details id="heatmap-box" class="detail-wall" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">风险热图 <span class="tag">--heatmap-json · 引擎 bins³ 聚合</span></summary>
           <div style="margin-top:6px; display:flex; gap:12px; align-items:center; flex-wrap:wrap">
             <label class="lock-cb"><input type="checkbox" id="heat-toggle">3D 热图视图</label>
-            <select id="heat-mode" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:12px">
+            <select id="heat-mode" style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 6px;font-size:var(--fs-sm)">
               <option value="vm">von Mises 应力</option>
               <option value="risk">Phase A 风险分</option>
             </select>
             <span class="hint" id="heat-legend-max"></span>
-            <label class="lock-cb" title="热图分箱数/轴（引擎域 2..64，默认 16）——下次分析生效"><input type="number" id="heat-bins" min="2" max="64" step="1" value="16" style="width:52px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:2px 4px"> bins</label>
+            <label class="lock-cb" title="热图分箱数/轴（引擎域 2..64，默认 16）——下次分析生效"><input type="number" id="heat-bins" min="2" max="64" step="1" value="16" style="width:52px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:2px 4px"> bins</label>
           </div>
-          <div id="heat-legend-gradient" style="height:10px; margin-top:6px; border-radius:5px; border:1px solid var(--line);
+          <div id="heat-legend-gradient" style="height:10px; margin-top:6px; border-radius:999px; border:1px solid var(--line);
                background:linear-gradient(90deg,#000080,#0000ff,#00ffff,#00ff00,#ffff00,#ff8000,#ff0000)"></div>
           <div class="hint" id="heat-note" style="margin-top:4px"></div>
         </details>
         <details id="engine-console" class="advanced-only" style="display:none; margin-top:8px">
           <summary class="hint" style="cursor:pointer">引擎控制台输出（含跳过项理由）</summary>
-          <pre id="engine-console-pre" data-i18n-skip="1" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--console-bg);border:1px solid var(--console-line);border-radius:6px;padding:8px;margin-top:6px;color:var(--console-text)"></pre>
+          <pre id="engine-console-pre" data-i18n-skip="1" style="font-family:var(--mono);font-size:var(--fs-xs);white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--console-bg);border:1px solid var(--console-line);border-radius:var(--r-xs);padding:8px;margin-top:6px;color:var(--console-text)"></pre>
         </details>
-        <!-- v0.14: geometric risks collapsed behind a count/max-severity
-             toggle (real models can carry hundreds of per-location items —
-             the summary risk card above carries the top lines). Same
-             user-owned open flag as the warnings card. -->
-        <div id="risk-card" style="display:none">
-          <button class="warnings-toggle" id="risk-toggle" type="button">
-            ⚠ <span class="wcount" id="risk-count">0</span> 条几何风险 · 最高
-            <span class="sev" id="risk-max-sev">S1</span>
-            <span class="hint">点击展开 / 收起</span>
-          </button>
-          <div id="risk-list"><div class="ui-empty">分析后显示几何风险</div></div>
-        </div>
-        <div id="rec-items"><div class="ui-empty">分析后显示参数建议</div></div>
-        <div class="rec-line" id="engine-recommendation" style="display:none"></div>
-        <h2 class="advanced-only" style="margin-top:14px">运行历史 <span class="tag" id="history-cap-note">本会话最近 10 次（仅 nominal 值）</span></h2>
+        <!-- v0.14 geometric-risk toggle folded into the v0.22 merged
+             #alerts-card above (same list content, one ⚠ surface) -->
+        <div id="rec-items" class="detail-wall"><div class="ui-empty">分析后显示参数建议</div></div>
+        <div class="rec-line detail-wall" id="engine-recommendation" style="display:none"></div>
+        <h2 class="advanced-only" style="margin-top:var(--sp-4)">运行历史 <span class="tag" id="history-cap-note">本会话最近 10 次（仅 nominal 值）</span></h2>
         <!-- v0.16 SF/评分趋势迷你图（纯内联 SVG，随 renderHistory 重建） -->
         <div id="history-spark" class="advanced-only hint" style="margin:6px 0"></div>
         <div id="history-list" class="advanced-only"><div class="ui-empty">分析后显示</div></div>
@@ -1064,25 +1155,34 @@
 
       <!-- v0.13: 档位对比 moved up beside the results and opened to simple
            mode — the four-preset comparison answers the novice's FIRST
-           question ("which preset should I pick?"). The capture/batch/
-           writeback tooling below the table stays advanced-only. -->
+           question ("which preset should I pick?"). v0.19: the 15-column raw
+           table folds into an in-panel <details> — deliberately NOT the
+           engine detail-wall fold (cross-panel hiding was ruled out: the
+           table belongs to cand-panel, not the engine wall). #cand-bars
+           stays outside as the at-a-glance outlet; report.js auto-expands
+           the fold whenever the bars can't render (no candidates / <2
+           feasible), so the fold never buries its rows as the only outlet.
+           The capture/batch/writeback tooling below stays advanced-only. -->
       <div class="panel" id="cand-panel">
         <h2>档位对比 <span class="tag">安全 / 均衡 / 高速 / 外观</span></h2>
         <div id="cand-bars"></div>
-        <div class="scroll">
-          <table id="cand-table">
-            <thead><tr>
-              <th>Profile</th><th>Goal</th><th>状态</th><th>填充</th><th>壁</th><th>速度</th>
-              <th>Overall</th><th>Strength</th><th>Time</th><th>Material</th><th>Reliability</th>
-              <th>EstSF</th><th>EstTime</th><th>EstMat</th><th>Quality</th>
-            </tr></thead>
-            <tbody id="cand-body"><tr><td colspan="15" class="muted">分析后显示。</td></tr></tbody>
-          </table>
-        </div>
+        <details id="cand-raw-fold">
+          <summary>原始对比表</summary>
+          <div class="scroll">
+            <table id="cand-table">
+              <thead><tr>
+                <th>Profile</th><th>Goal</th><th>状态</th><th>填充</th><th>壁</th><th>速度</th>
+                <th>Overall</th><th>Strength</th><th>Time</th><th>Material</th><th>Reliability</th>
+                <th>EstSF</th><th>EstTime</th><th>EstMat</th><th>Quality</th>
+              </tr></thead>
+              <tbody id="cand-body"><tr><td colspan="15" class="muted">分析后显示。</td></tr></tbody>
+            </table>
+          </div>
+        </details>
         <div class="advanced-only">
           <div style="margin-top:10px">
             <input type="text" id="cand-label" placeholder="候选名（≤40 字）"
-                   style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:13px;width:150px">
+                   style="background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 6px;font-size:var(--fs-md);width:150px">
             <button id="btn-capture">捕获当前滑杆为自定义候选</button>
             <button id="btn-batch" disabled>批量运行</button>
             <span class="hint" id="cand-count"></span>
@@ -1307,6 +1407,10 @@ Promise.all([
     badge.className = "badge err";
     $("wizard").style.display = "";  // first-run wizard (v0.4a)
   }
+  // v0.23: the G-code tools panel exists only when the gcode-diff companion
+  // exe resolves server-side — hidden (not disabled) when absent, so the
+  // engine-only flow never sees a dead entry point
+  if (st.gcode_diff_available) $("gcode-panel").style.display = "";
   state.params = pm.params || [];
   state.presets = pm.presets || [];
   if (st.history_cap) {
@@ -1326,6 +1430,28 @@ Promise.all([
   // from these — no client-side hardcoded copies of the engine enums)
   state.axisValues = ((pm.surface || {}).axis_values) || ["x", "y", "z"];
   state.machineValues = ((pm.surface || {}).machine_values) || [];
+  state.hotendValues = ((pm.surface || {}).hotend_values) || [];
+  // v0.26: gcode-tool machine/hotend selects (diff-side feasibility keys —
+  // options only, the argv itself is server pass-through; unknown keys are
+  // the ENGINE's own fail-open, so the picker being stale hurts nothing
+  // beyond convenience)
+  (function fillGcodeKeys() {
+    var mk = $("gcode-machine"), hk = $("gcode-hotend");
+    if (!mk || !hk) return;
+    [[mk, state.machineValues, "不指定（不钳制固件限速）"],
+     [hk, state.hotendValues, "不指定（不考虑流量上限）"]].forEach(function (cfg) {
+      var sel = cfg[0], vals = cfg[1], ph = cfg[2];
+      sel.innerHTML = "";
+      var o0 = document.createElement("option");
+      o0.value = ""; o0.textContent = ph;
+      sel.appendChild(o0);
+      (vals || []).forEach(function (v) {
+        var o = document.createElement("option");
+        o.value = v; o.textContent = v;
+        sel.appendChild(o);
+      });
+    });
+  })();
   state.validateTiers = ((pm.surface || {}).validate_tiers)
     || ["minimal", "standard", "strict", "paranoid"];
   // v0.8.1: preconditioner enum (schema-probed server-side)
@@ -1568,7 +1694,6 @@ function applyPreset(p) {
   // choosing action, not the analysis result (a failed analyze still had a
   // real choice made). New model upload resets it (resetTuningState).
   state.presetApplied = true;
-  updateFlowSteps();
   Object.keys(p.params || {}).forEach(function (name) {
     var input = findRowInput(name);
     if (!input) return;  // param not rendered (defensive; presets are sanitized)
@@ -1892,15 +2017,109 @@ function collectLocks() {
 }
 
 // ---------- upload / analyze / export ----------
+// v0.24 session-change sweep: uploading a new model used to leave the
+// PREVIOUS model's verdict hero / KPI values / compare table / run history
+// on screen until the new run rendered — and forever when that run failed,
+// was cancelled, or was dropped by the running gate (mid-run upload). A
+// green ✅ hero for model A sitting above a fresh model-B upload is the
+// worst kind of stale state, so the results panel returns to its
+// boot-equivalent pristine form at the moment the session changes.
+// Every container goes back through its OWN empty-state mechanism (inline
+// style.display for alerts-card, :empty CSS for summary-cards/cand-bars,
+// renderHistory's empty list) — never a second hiding mechanism.
+var candBodyBootHTML = null;  // cached AFTER applyLang so an EN session
+                              // restores the translated placeholder row
+var pdwStaticHome = null;     // the mirror's boot parent — renderReport only
+                              // re-seats it into #summary-cards when ITS OWN
+                              // lift-out ran, so a session reset must park
+                              // the node back here (still in the document,
+                              // default-hidden) or it stays detached forever
+                              // and every later $("pd-warn-promoted") is null
+function resetResultsPanel() {
+  // the pristine gate keys on empty-guide visibility (updateNoReportState):
+  // restore it FIRST so the whole body.no-report switch flips back with the
+  // very same mechanism boot uses (v0.10 lesson: "" returns to the CSS
+  // default, which is visible for this node)
+  var eg = $("empty-guide");
+  if (eg) eg.style.display = "";
+  // verdict hero cards: lift the pd-warn mirror OUT before clearing — after
+  // the first render it lives INSIDE #summary-cards and innerHTML would
+  // destroy the node for good (same lift-out discipline as renderReport's
+  // own reset; report.js re-seats it into the cards on the next render).
+  // Park it back at its static home afterwards: detached, it would be
+  // unreachable to renderReport's lift-out and to every probe.
+  var pdw = $("pd-warn-promoted");
+  if (pdw) {
+    if (pdw.parentNode && pdw.parentNode.removeChild)
+      pdw.parentNode.removeChild(pdw);
+    pdw.innerHTML = "";
+    if (pdwStaticHome) pdwStaticHome.appendChild(pdw);
+  }
+  var sc = $("summary-cards");
+  if (sc) sc.innerHTML = "";  // :empty CSS hides the row
+  // KPI cells: text back to the boot "—" AND stale color/adequacy classes
+  // off (renderReport writes .sf-*/load classes onto res-sf/res-load)
+  ["res-sf", "res-overall", "res-stress", "res-load", "res-buckling",
+   "res-fatigue", "res-fracture", "res-weibull"].forEach(function (id) {
+    var c = $(id);
+    if (c) { c.textContent = "—"; c.className = "v"; }
+  });
+  // current-params echo cells (they display the LAST engine echo, which for
+  // the new model is nothing yet)
+  ["cp-material", "cp-nozzle", "cp-walls", "cp-infill", "cp-pattern",
+   "cp-lh", "cp-nozzle-temp", "cp-bed-temp", "cp-speed", "cp-fan",
+   "cp-load", "cp-force"].forEach(function (id) {
+    var c = $(id);
+    if (c) c.textContent = "—";
+  });
+  var cl = $("cp-locked");
+  if (cl) cl.textContent = "";
+  var fm = $("fast-mode-tag");
+  if (fm) fm.style.display = "none";
+  var fn = $("cp-filament-note");
+  if (fn) { fn.style.display = "none"; fn.textContent = ""; }
+  var con = $("engine-console");
+  if (con) con.style.display = "none";
+  // error/refusal cards from the previous model's failed runs are just as
+  // stale as its results (renderReport clears them on success; a session
+  // change must too)
+  ["analyze-error", "validate-refused"].forEach(function (id) {
+    var b = $(id);
+    if (b) { b.style.display = "none"; b.innerHTML = ""; }
+  });
+  var ac = $("alerts-card");
+  if (ac) ac.style.display = "none";  // inline-display mechanism (report.js)
+  var gtb = $("gcode-tune-box");  // v0.25 tune audit card hides with the
+  if (gtb) gtb.style.display = "none";  // panel (inline-display, own mechanism)
+  var bars = $("cand-bars");
+  if (bars) bars.innerHTML = "";  // :empty CSS hides
+  var cb = $("cand-body");
+  if (cb && candBodyBootHTML !== null) cb.innerHTML = candBodyBootHTML;
+  // stale client history would fuel a CROSS-MODEL run-delta chip on the new
+  // model's first render (showRunDelta reads state.history before
+  // refreshHistory replaces it) — empty it and redraw the empty states
+  state.history = [];
+  state.ab = [];
+  renderHistory();
+  renderAB();
+  updateStickyVerdict(false);  // reads the "—" cells → hides itself
+}
 function resetTuningState() {
   // fresh model = fresh session: drop leftover edits and locks so the new
   // model is analyzed on its own baseline (engine defaults / 3MF config).
   // Both param and env widgets snap back to their defaults visually.
+  resetResultsPanel();  // previous model's results are stale the moment the
+                        // session changes (v0.24 — see function header)
+  if (typeof showGcodeResultPanel === "function") showGcodeResultPanel(false);
+                        // a model upload reclaims the right column from a
+                        // gcode result even if the coming analyze fails
   state.dirty = {};
   state.hasReport = false;  // v0.13: flow restarts at step 2 for the new model
   state.presetApplied = false;  // v0.18: fresh model = no preset chosen yet
+  state.lastApplied = null;  // v0.24: model A's written values must not be
+                             // reconciled against model B's echo (would
+                             // fabricate a 「引擎按域调整为X」 toast)
   updateDirtyChip();
-  updateFlowSteps();
   updateNoReportState();
   state.lastEnv = {};
   state.baseline = {};
@@ -1944,6 +2163,9 @@ function resetTuningState() {
   $("opt-grid").value = "";   // per-run grid back to the server default
   $("heat-bins").value = 16;  // heatmap bins back to the engine default
   clearBaseProfile();         // external baseline is model-scoped
+  clearGcodeTuneUI();         // v0.25: the tune attachment is model-scoped
+                               // too — new session has none server-side, so
+                               // the chip/inputs must not claim one
   state.lastHeatmap = null;         // stale heatmap cubes must not linger
   stlSetHeatmap(null);
 }
@@ -1972,53 +2194,19 @@ function applySession(j) {
   $("btn-export-orca").disabled = !j.is_3mf || !state.writable;
   $("btn-preview").disabled = !j.is_3mf;
   $("export-msg").textContent = "";
-  updateFlowSteps();  // v0.13: step 1 (upload) done
   loadStlPreview(j);
 }
 
-// ---------- v0.13 task-flow chrome: step strip / sticky verdict / dirty chip ----------
-// Step strip (simple mode): where-am-I in upload → preset → verdict. Pure
-// display of session state — no flow enforcement, the dashboard stays free.
-function updateFlowSteps() {
-  var bar = $("flow-steps");
-  if (!bar) return;
-  bar.style.display = "flex";  // CSS .simple-only keeps it hidden in advanced
-  var hasModel = !!state.token;
-  var hasReport = !!state.hasReport;
-  // v0.18 honesty fix (was `hasReport ? "done"`): a report alone never means
-  // step 2 was done — upload auto-analyze and slider/analyze paths both land
-  // here with no preset chosen. done ⇒ the user actually picked one
-  // (applyPreset); otherwise a visible model yields "skip" (neutral title:
-  // analyzed with current parameters — true for engine defaults AND
-  // hand-tuned params alike, so it never invents history).
-  var presetChosen = !!state.presetApplied;
-  var st = {
-    1: hasModel ? "done" : "active",
-    2: presetChosen ? "done" : (hasModel ? (hasReport ? "skip" : "active") : ""),
-    3: hasReport ? "done" : (state.running && hasModel ? "active" : "")
-  };
-  [1, 2, 3].forEach(function (n) {
-    var node = bar.querySelector('.fs-step[data-fs="' + n + '"]');
-    if (!node) return;
-    node.classList.toggle("done", st[n] === "done");
-    node.classList.toggle("active", st[n] === "active");
-    node.classList.toggle("skip", st[n] === "skip");
-    node.title = st[n] === "skip" ? "未选预设——按当前参数分析" : "";
-    var dot = node.querySelector(".fs-n");
-    if (dot) dot.textContent = st[n] === "done" ? "✓"
-      : (st[n] === "skip" ? "–" : String(n));
-  });
-  // NOTE: the first-run education bar is NOT auto-retired here even though it
-  // visually doubles the step strip — its dismissal is the user's choice
-  // (ui.guide-done is only written by the close button), and the overlap is
-  // transient (first visit until closed; the strip shows WHERE you are, the
-  // guide teaches WHAT to do).
-}
+// ---------- v0.13 task-flow chrome: sticky verdict / dirty chip ----------
+// (v0.22: the step strip itself is gone — single-column panel order is the
+//  flow, #empty-guide teaches the three steps exactly once)
 // v0.18 pristine-empty gate: simple mode hides the all-"—" KPI rows and the
 // empty profile-compare panel only while the results panel is untouched
 // (empty-guide visible). Gated on panel pristine-ness, NOT hasReport —
-// resetTuningState keeps the previous model's results on screen (pre-existing
-// session semantics), and hasReport would half-clear that state.
+// hasReport stays false through a failed first run and would half-clear.
+// v0.24: resetTuningState now restores the pristine form on every session
+// change (resetResultsPanel), so empty-guide visibility again means "no
+// verdict for the current session" — the gate's original reading at boot.
 function updateNoReportState() {
   var eg = $("empty-guide");
   var pristine = !eg || eg.style.display !== "none";
@@ -2070,7 +2258,12 @@ function updateStickyVerdict(running) {
       sv.appendChild(c.cloneNode(true));
     });
   }
-  sv.style.display = "flex";
+  // v0.22: idle sticky is ADVANCED-only — in simple mode the SF/score pair
+  // rendered here would duplicate the verdict hero one screen-row below (the
+  // bar was built for the two-column slider workspace). While RUNNING it
+  // still shows (the 分析中 state is the simple mode's run feedback).
+  sv.style.display = document.body.classList.contains("mode-simple")
+    ? "none" : "flex";
 }
 // Dirty chip: count of params diverging from the upload baseline (exactly
 // the .param-row.dirty set). Span, not button — the E3 suite pins the
@@ -2081,7 +2274,7 @@ function updateDirtyChip() {
   var n = Object.keys(state.dirty || {}).length;
   if (n > 0) {
     chip.textContent = "已改 " + n + " 项";
-    chip.style.display = "";
+    chip.style.display = "inline-flex";  // "" would fall back to CSS none
   } else {
     chip.style.display = "none";
   }
@@ -2090,9 +2283,17 @@ function updateDirtyChip() {
 
 function persistSession() {
   try {
+    // v0.25: the hot-zone numbers ride along so an F5 doesn't silently
+    // revert them to engine defaults while the (server-side) attachment
+    // keeps the channel on
+    var gt = {};
+    ["gcode-vm-floor", "gcode-m-hot", "gcode-p-hi"].forEach(function (id) {
+      var n = $(id);
+      if (n && n.value !== "") gt[id] = n.value;
+    });
     sessionStorage.setItem("stratum_session", JSON.stringify(
       { token: state.token, name: state.name, is_3mf: state.is3mf,
-        writable: state.writable }));
+        writable: state.writable, gcode_nums: gt }));
   } catch (e) { /* storage unavailable — refresh just loses the session */ }
 }
 
@@ -2110,6 +2311,14 @@ function restoreSession() {
   try { j = JSON.parse(raw); } catch (e) { clearPersistedSession(); return; }
   if (!j || !j.token || !j.name) { clearPersistedSession(); return; }
   applySession(j);
+  // v0.25: hot-zone numbers persisted with the session come back into the
+  // inputs (the attachment itself lives server-side; its chip state syncs
+  // from the first analyze response via syncGcodeTuneFromResponse)
+  var gn = j.gcode_nums || {};
+  Object.keys(gn).forEach(function (id) {
+    var n = $(id);
+    if (n && gn[id] !== "") n.value = gn[id];
+  });
   $("upload-msg").className = "ok";
   $("upload-msg").textContent = "已恢复会话 " + j.name + "，正在重新分析…";
   analyze(false);
@@ -2134,6 +2343,127 @@ function onFile() {
       return analyze(false);
     })
     .catch(function (e) { $("upload-msg").className = "err"; $("upload-msg").textContent = String(e); });
+}
+
+// ---------- v0.23 G-code companion tools (gcode-diff) ----------
+// Panel-level mutual exclusion with the model result panel: a gcode run
+// swaps the right column, the next model analyze swaps it back. The gcode
+// tools never touch the model pipeline state (independent sessions).
+var gcodeState = { mode: "score", a: null, b: null, t0: 0, timer: null };
+
+function showGcodeResultPanel(on) {
+  $("gcode-result-panel").style.display = on ? "" : "none";
+  $("result-panel").style.display = on ? "none" : "";
+}
+
+function gcodeSyncMode() {
+  var advanced = !document.body.classList.contains("mode-simple");
+  var m = document.querySelector('input[name="gcode-mode"]:checked');
+  // simple mode always lands on score: the diff radio is advanced-only, so a
+  // diff selection carried over from advanced mode would leave a novice with
+  // an unchecked radio group, a compare-flavored A-slot label and a dead run
+  // button (B slot invisible = nowhere to satisfy it). Programmatic
+  // .checked assignment fires no change event, so no recursion risk; the B
+  // token survives, so returning to advanced+diff restores it instantly.
+  if (!advanced && m && m.value !== "score") {
+    var sr = document.querySelector('input[name="gcode-mode"][value=score]');
+    if (sr) sr.checked = true;
+    m = sr;
+  }
+  gcodeState.mode = m ? m.value : "score";
+  // B slot shows only for compare mode in ADVANCED mode (the diff radio
+  // itself is advanced-only, so simple mode never lands in diff)
+  var diffAdv = gcodeState.mode === "diff" && advanced;
+  $("gcode-slot-b").style.display = diffAdv ? "" : "none";
+  // machine/hotend selects ride the exact same visibility — they only feed
+  // diff-side feasibility flags (score is machine-inert, probed 2026-10-03)
+  var mr = $("gcode-mach-row");
+  if (mr) mr.style.display = diffAdv ? "" : "none";
+  if (!gcodeState.a)
+    $("gcode-a-name").textContent = gcodeState.mode === "diff"
+      ? "对比文件 A（改参前）" : "选择 G-code 文件";
+  gcodeGate();
+}
+
+function gcodeGate() {
+  var needB = gcodeState.mode === "diff";
+  $("btn-gcode-run").disabled =
+    !(gcodeState.a && gcodeState.a.token && (!needB || (gcodeState.b && gcodeState.b.token)));
+}
+
+function gcodeUpload(slot) {
+  var inp = $(slot === "b" ? "gcode-file-b" : "gcode-file-a");
+  var f = inp.files && inp.files[0];
+  if (!f) return;
+  $("gcode-msg").textContent = "上传中…";
+  fetch("/api/upload?name=" + encodeURIComponent(f.name),
+        { method: "POST", body: f, headers: { "X-Stratum-UI": "1" } })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.ok) throw new Error(j.error || "上传失败");
+      if (j.kind !== "gcode")
+        throw new Error("服务端未按 G-code 接收该文件（kind=" + j.kind + "）");
+      gcodeState[slot] = { token: j.token, name: j.name };
+      $(slot === "b" ? "gcode-b-name" : "gcode-a-name").textContent = j.name;
+      $("gcode-msg").textContent = "";
+      gcodeGate();
+    })
+    .catch(function (e) {
+      gcodeState[slot] = null;
+      $(slot === "b" ? "gcode-b-name" : "gcode-a-name").textContent = String(e);
+      gcodeGate();
+    });
+}
+
+function gcodeTick() {
+  var ind = $("gcode-run-indicator");
+  if (ind && ind.style.display !== "none")
+    ind.textContent = "运行中 " + Math.floor((Date.now() - gcodeState.t0) / 1000) + "s";
+}
+
+function gcodeRun() {
+  var diff = gcodeState.mode === "diff";
+  var body = diff
+    ? { token_a: gcodeState.a.token, token_b: gcodeState.b.token,
+        lightweight: $("gcode-lightweight").checked === true }
+    : { token: gcodeState.a.token };
+  if (diff) {
+    // v0.26 machine/hotend keys — session-scoped choices (kept across file
+    // swaps, never persisted): empty = engine default (no clamping)
+    var mk = $("gcode-machine"), hk = $("gcode-hotend");
+    if (mk && mk.value) body.machine = mk.value;
+    if (hk && hk.value) body.hotend = hk.value;
+  }
+  $("btn-gcode-run").disabled = true;
+  $("gcode-msg").textContent = "";
+  $("gcode-run-indicator").style.display = "";
+  gcodeState.t0 = Date.now();
+  gcodeTick();
+  if (gcodeState.timer) clearInterval(gcodeState.timer);
+  gcodeState.timer = setInterval(gcodeTick, 500);
+  fetch(diff ? "/api/gcode-diff" : "/api/gcode-score",
+        { method: "POST", body: JSON.stringify(body),
+          headers: { "X-Stratum-UI": "1", "Content-Type": "application/json" } })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      clearInterval(gcodeState.timer);
+      $("gcode-run-indicator").style.display = "none";
+      $("btn-gcode-run").disabled = false;
+      if (!j.ok) { toast(String(j.error || "gcode-diff 运行失败"), true); return; }
+      showGcodeResultPanel(true);
+      // snapshot gate is model-only: gcode's shareable artifact is the
+      // self-contained HTML report (deep link in the result panel)
+      var snap = $("btn-snapshot"); if (snap) snap.disabled = true;
+      var meta = { names: j.names, token: j.token };
+      if (j.mode === "score") renderGcodeScore(j.report, j.console || "", meta);
+      else renderGcodeDiff(j.report, j.console || "", meta);
+    })
+    .catch(function (e) {
+      clearInterval(gcodeState.timer);
+      $("gcode-run-indicator").style.display = "none";
+      $("btn-gcode-run").disabled = false;
+      toast(String(e), true);
+    });
 }
 
 // --validate strict/paranoid refusal (engine status marker, server 422):
@@ -2220,11 +2550,23 @@ function analyze(compare, auto) {
   // the same token (double engine processes, interleaved history appends).
   // Manual runs win; a blocked AUTO run queues itself for after (its params
   // are newer than the in-flight run's and must not be dropped silently).
+  // v0.24: a blocked MANUAL run queues too — it used to be dropped silently,
+  // and the upload path hits exactly this when a model lands mid-run (the
+  // new session's first analyze must not vanish). Deliberately NOT
+  // autoQueued: that flag routes through scheduleAuto, which is gated by
+  // the 实时分析 toggle — with auto off the "queue" would evaporate.
   if (state.running) {
     if (auto) state.autoQueued = true;
+    else state.pendingRun = true;
     return Promise.resolve();
   }
   state.running = true;
+  // v0.24: bind the whole run (cancel + response handling) to the session
+  // that started it. A model uploaded mid-run swaps state.token underneath
+  // this closure; the late response of the OLD session must not render into
+  // the new one (wrong-report-under-wrong-session), and the 取消 button must
+  // cancel the run it was installed for, not whatever session is current.
+  var runToken = state.token;
   clearTimeout(autoTimer);  // a started run subsumes any pending auto run
   startRunIndicator();
   $("btn-analyze").disabled = true;
@@ -2243,7 +2585,7 @@ function analyze(compare, auto) {
     fetch("/api/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
-      body: JSON.stringify({ token: state.token }),
+      body: JSON.stringify({ token: runToken }),
     }).catch(function () {});
     ctl.abort();
   };
@@ -2268,6 +2610,16 @@ function analyze(compare, auto) {
   // server validates + writes it to its private temp dir (never exec'd)
   if (state.baseProfile && state.baseProfile.text)
     body.base_profile = state.baseProfile.text;
+  // v0.25 hot-zone numbers: sent ONLY when the user typed a value (empty =
+  // engine default); the server pre-validates the engine's --schema domain
+  var gt = {};
+  var gvf = parseFloat($("gcode-vm-floor") ? $("gcode-vm-floor").value : "");
+  var gmh = parseFloat($("gcode-m-hot") ? $("gcode-m-hot").value : "");
+  var gph = parseFloat($("gcode-p-hi") ? $("gcode-p-hi").value : "");
+  if (!isNaN(gvf)) gt.vm_floor = gvf;
+  if (!isNaN(gmh)) gt.m_hot = gmh;
+  if (!isNaN(gph)) gt.p_hi = gph;
+  if (Object.keys(gt).length) body.gcode_tune = gt;
   body.env = collectEnv();
   state.lastEnv = body.env;
   return fetch("/api/analyze", {
@@ -2276,25 +2628,39 @@ function analyze(compare, auto) {
     body: JSON.stringify(body),
     signal: ctl.signal,
   }).then(function (r) { return r.json(); }).then(function (j) {
+    // v0.24: the session changed under this run (model uploaded mid-run) —
+    // its report, its error card, even its toast belong to the old session.
+    // Drop silently; the queued run for the new session speaks next. (The
+    // finally below still restores the buttons for the CURRENT session.)
+    if (state.token !== runToken) return;
     if (!j.ok) {
       if (j.status === "validation_refused") renderValidationRefused(j);
       // v0.10 (1.4) actionable error card — next-step buttons, not just a toast
       if (typeof renderAnalyzeError === "function") renderAnalyzeError(j);
       throw new Error(j.error || "分析失败");
     }
+    // v0.23: a successful model render reclaims the right column from a
+    // previous gcode result (panel-level mutual exclusion)
+    if (typeof showGcodeResultPanel === "function") showGcodeResultPanel(false);
     renderReport(j.report, j.console || "", j.applyable || null);
     showRunDelta(j.report);
     state.hasReport = true;  // v0.13 flow steps: verdict is on screen
     updateNoReportState();  // v0.18: panel no longer pristine → show KPIs
     updateStickyVerdict(false);
-    updateFlowSteps();
     reconcileApplied((j.report || {}).input);
     applyHeatmap(j.heatmap || null);
+    if (typeof renderGcodeTune === "function")
+      renderGcodeTune(j.gcode_tune || null, state.token);
+    syncGcodeTuneFromResponse(j);
     refreshHistory();
     // auto runs stay quiet — a toast after every slider release would be noise;
     // errors and cancels below still surface (they need user attention)
     if (!auto) toast(compare ? "对比分析完成" : "分析完成", "ok");
   }).catch(function (e) {
+    // v0.24: same session-change guard on the rejection path — a late
+    // network error / abort of the old session's run must not toast over
+    // the new session either
+    if (state.token !== runToken) return;
     if (e && e.name === "AbortError") {
       if (!auto) toast("已取消", "info");
       return;
@@ -2330,8 +2696,17 @@ function analyze(compare, auto) {
     setPresetEnabled(!!state.token);
     setRecApplyEnabled(true);  // CTA is rebuilt each render; click guards cover no-token
     state.running = false;
-    // an auto run arrived mid-flight with newer params — run once more now
-    if (state.autoQueued) { state.autoQueued = false; scheduleAuto(); }
+    // v0.24: a manual run that was blocked mid-flight (upload during a run,
+    // Ctrl+Enter re-entry) fires immediately for the CURRENT session — it
+    // subsumes any queued auto run, mirroring the subsumption rule at the
+    // top of analyze()
+    if (state.pendingRun) {
+      state.pendingRun = false;
+      analyze(false);
+    } else if (state.autoQueued) {
+      state.autoQueued = false;
+      scheduleAuto();
+    }
   });
 }
 
@@ -2370,6 +2745,81 @@ function clearBaseProfile() {
   });
 })();
 
+// ---------- v0.25 slice-gcode stress-tune attachment ----------
+// The attachment lives SERVER-side on the model session (uploaded via
+// /api/gcode-attach; every subsequent analyze carries --gcode-in/out). The
+// client only mirrors its state here: note chip + clear button + the three
+// hot-zone numbers (sent with the analyze body ONLY when filled — empty =
+// engine default 0 / 1.10 / 0.90). Model-scoped like the base profile:
+// a new upload resets it (the new session has no attachment).
+function setGcodeTuneNote(name, size) {
+  $("gcode-tune-note").textContent = name
+    ? "应力调优：" + name + "（" + (size / 1024).toFixed(1) + " KB）"
+    : "应力调优：未附加切片";
+  $("btn-gcode-detach").style.display = name ? "" : "none";
+}
+function clearGcodeTuneUI() {
+  var inp = $("gcode-tune-file");
+  if (inp) inp.value = "";
+  ["gcode-vm-floor", "gcode-m-hot", "gcode-p-hi"].forEach(function (id) {
+    var n = $(id);
+    if (n) n.value = "";
+  });
+  setGcodeTuneNote(null, 0);
+}
+(function wireGcodeTune() {
+  var inp = $("gcode-tune-file");
+  if (!inp) return;
+  inp.addEventListener("change", function () {
+    var f = inp.files && inp.files[0];
+    if (!f) return;
+    if (!state.token) { toast("先上传模型，再附加该模型的切片 G-code", "err"); inp.value = ""; return; }
+    fetch("/api/gcode-attach?token=" + encodeURIComponent(state.token) +
+          "&name=" + encodeURIComponent(f.name),
+          { method: "POST", body: f, headers: { "X-Stratum-UI": "1" } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || "附加失败");
+        setGcodeTuneNote(j.name, j.size || f.size);
+        toast("已附加切片 " + j.name + "，本次分析将执行应力调优", "ok");
+        scheduleAuto();
+      })
+      .catch(function (e) {
+        inp.value = "";
+        toast(String(e), "err");
+      });
+  });
+  $("btn-gcode-detach").addEventListener("click", function () {
+    if (!state.token) return;
+    fetch("/api/gcode-detach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
+      body: JSON.stringify({ token: state.token }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) throw new Error(j.error || "移除失败");
+      clearGcodeTuneUI();
+      scheduleAuto();
+    }).catch(function (e) { toast(String(e), "err"); });
+  });
+  // hot-zone numbers re-run through the auto pipeline like every other knob
+  ["gcode-vm-floor", "gcode-m-hot", "gcode-p-hi"].forEach(function (id) {
+    var n = $(id);
+    if (n) n.addEventListener("change", function () {
+      if (this.value !== "") scheduleAuto();
+    });
+  });
+})();
+// F5 restore: the attachment itself survives on the server session, but the
+// chip state does not — sync it from the first analyze response
+// (j.gcode_attached, v0.25). The numbers ride sessionStorage alongside the
+// token so a refresh doesn't silently revert them to engine defaults while
+// the chip still says "attached".
+function syncGcodeTuneFromResponse(j) {
+  if (j && j.gcode_attached && state.token &&
+      $("gcode-tune-note").textContent.indexOf("未附加") >= 0)
+    setGcodeTuneNote("已附加（服务端会话）", 0);
+}
+
 // ---------- real-time analyze (auto mode) ----------// Slider/env/lock edits re-run the analysis after a debounce (engine ~1-2s
 // per run → near-live feel). Re-entry safety: blocked while a run is in
 // flight (queued, see analyze) and while a BATCH is running (batch keeps
@@ -2394,7 +2844,6 @@ function scheduleAuto() {
 var runTimer = null, progressTimer = null;
 function startRunIndicator() {
   var t0 = Date.now();
-  updateFlowSteps();       // v0.13: step 3 goes active while the engine runs
   updateStickyVerdict(true);
   var n = $("run-indicator");
   n.style.display = "";
@@ -3060,15 +3509,21 @@ function applyMode(advanced) {
   document.body.classList.toggle("mode-simple", !advanced);
   $("mode-toggle").checked = advanced;
   try { localStorage.setItem(MODE_KEY, advanced ? "1" : "0"); } catch (e) {}
+  // v0.22: the sticky verdict's idle visibility is mode-dependent (hidden in
+  // simple — the hero carries SF; shown in advanced), so a mode flip while a
+  // report is on screen must re-evaluate it
+  if (typeof updateStickyVerdict === "function") updateStickyVerdict(false);
+  // v0.23: the gcode B-slot visibility follows the mode too (diff mode in
+  // simple mode keeps B hidden — the diff radio itself is advanced-only)
+  if (typeof gcodeSyncMode === "function") gcodeSyncMode();
 }
 (function () {
   var saved = null;
   try { saved = localStorage.getItem(MODE_KEY); } catch (e) {}
   applyMode(saved !== "1" ? false : true);  // default: simple
-  // v0.18 (REFUTE blocker fix): updateFlowSteps/updateNoReportState used to
+  // v0.18 (REFUTE blocker fix): updateNoReportState used to
   // run only on upload/analyze/render hooks — at boot the pristine-empty
   // class was never applied, so the fold toggle floated over an empty panel.
-  updateFlowSteps();
   updateNoReportState();
 })();
 $("mode-toggle").addEventListener("change", function () {
@@ -3111,42 +3566,21 @@ OPT_IDS.forEach(function (id) {
 var _og = $("opt-grid");
 if (_og) _og.addEventListener("input", updateOptCount);
 updateOptCount();
-// v0.10 (3.1) first-run guide: shown until dismissed; localStorage key uses
-// the ui. prefix so it never collides with other storage
+// v0.22: the v0.10 first-run guide bar and its ui.guide-done dismissal are
+// gone with the markup — #empty-guide (in-panel) is the single onboarding
+// surface. v0.10 (3.3) warnings + v0.14 risk toggles merged into ONE
+// 「风险与提示」 toggle; the user-owned open flag lives on the wrapper so
+// renderReport (which rebuilds both lists every run) preserves the choice,
+// and the user marker stops renderReport from verdict-gating the default.
 (function () {
-  var g = $("first-guide");
-  if (!g) return;
-  var seen = null;
-  try { seen = localStorage.getItem("ui.guide-done"); } catch (e) {}
-  if (!seen) g.style.display = "";
-  $("guide-close").onclick = function () {
-    g.style.display = "none";
-    try { localStorage.setItem("ui.guide-done", "1"); } catch (e) {}
-  };
-})();
-// v0.10 (3.3) warnings card toggle — the open flag lives on the wrapper so
-// renderReport (which rebuilds the list every run) preserves the user choice
-(function () {
-  var t = $("warnings-toggle");
+  var t = $("alerts-toggle");
   if (!t) return;
   t.onclick = function () {
-    var wc = $("warnings-card");
-    var open = wc.dataset.open === "1";
-    wc.dataset.open = open ? "0" : "1";
-    $("warning-list").style.display = open ? "none" : "";
-  };
-})();
-// v0.14 risk card toggle — same user-owned open flag; clicking sets the
-// user marker so renderReport stops verdict-gating the default
-(function () {
-  var t = $("risk-toggle");
-  if (!t) return;
-  t.onclick = function () {
-    var rc = $("risk-card");
-    var open = rc.dataset.open === "1";
-    rc.dataset.open = open ? "0" : "1";
-    rc.dataset.user = "1";
-    $("risk-list").style.display = open ? "none" : "";
+    var ac = $("alerts-card");
+    var open = ac.dataset.open === "1";
+    ac.dataset.open = open ? "0" : "1";
+    ac.dataset.user = "1";
+    $("alerts-body").style.display = open ? "none" : "";
   };
 })();
 
@@ -3218,6 +3652,7 @@ var LANG_EN = {
   "分析结果": "Analysis results",
   "分析选项": "Analysis options",
   "档位对比": "Preset comparison",
+  "原始对比表": "Raw comparison table",
   "运行历史": "Run history",
   "可信度": "Trust levels",
   "切片软件建议（Orca）": "Slicer suggestions (Orca)",
@@ -3343,6 +3778,17 @@ var LANG_EN = {
   "各需一次完整引擎分析": "each runs a full engine analysis",
   "条几何风险 · 最高": "geometric risks · max",
   "条提示": "notices",
+  " 条几何风险 · 最高 S": " geometric risks · max S",
+  " · 最高 S": " · max S",
+  "引擎提示（": "Engine hints (",
+  "几何风险（": "Geometric risks (",
+  "将调整：": "Will adjust: ",
+  " 等 ": " + ",
+  "应用全部建议并重新分析 (": "Apply all suggestions & re-analyze (",
+  "写入全部可应用的参数建议并立即重新分析": "Write every applicable suggestion into the sliders and re-analyze immediately",
+  "全部数值与引擎明细": "All numbers & engine details",
+  "全部数值（评分/应力/屈曲/疲劳）、参数建议明细与求解器、材料、工艺的引擎明细行":
+    "All numbers (score/stress/buckling/fatigue), the suggestion list, and the full solver / material / process detail lines",
   "本会话最近 10 次（仅 nominal 值）": "last 10 runs this session (nominal only)",
   "Pareto 前沿（前 8 点）": "Pareto front (top 8)",
   "A/B 对比（仅 nominal；null=未评估不参与差值）": "A/B compare (nominal only; null = not evaluated, excluded from deltas)",
@@ -3397,7 +3843,305 @@ var LANG_EN = {
   "对比": "compare",
   "方向": "orient",
   "上传模型后点一个目标即可，9 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。":
-    "Upload a model, pick a goal — all 9 print parameters are set and analyzed at once. Fine-tune everything in Advanced (top right)."
+    "Upload a model, pick a goal — all 9 print parameters are set and analyzed at once. Fine-tune everything in Advanced (top right).",
+
+  // ---- v0.20 coverage completion: chrome strings that survived EN mode ----
+  // document.title (applyLang handles it explicitly — <title> is outside
+  // document.body, so translateDom's TreeWalker never reaches it)
+  "Stratum WebUI · 强度分析工作台": "Stratum WebUI · Strength Workbench",
+  // static chrome text / tooltips that were never keyed
+  "点一个预设（安全 / 均衡 / 高速 / 外观）":
+    "Pick a preset (Safe / Balanced / Fast / Appearance)",
+  "清除基线": "Clear baseline",
+  "外挂基线 JSON（flat Orca project_settings 键）：优先级 CLI > 3MF 值 > 基线 > 默认，填 CAD 裸 3MF/STL 的参数空位":
+    "Baseline profile JSON (flat Orca project_settings keys): priority CLI > 3MF values > baseline > defaults; fills parameter gaps for CAD-bare 3MF/STL",
+  "面板数值取自引擎 JSON 报告的 input 回显，非 UI 自记":
+    "Panel values come from the engine JSON report's input echo — not UI bookkeeping",
+  "开启后：参数/环境/锁定变化约 0.8 秒后自动重新分析（每次变化都会真实运行引擎并计入运行历史）":
+    "When on: parameter/env/lock changes re-analyze automatically after ~0.8 s (every change really runs the engine and lands in run history)",
+  "快速预览：FEM 网格封顶 12³，结果为预览级（报告 fast_mode:true 披露）":
+    "Quick preview: FEM grid capped at 12³, preview-grade result (disclosed as fast_mode:true in the report)",
+  "外观质量评估（--appearance）：光泽/纹理/层纹/台阶纹/表面翘曲，结果在「外观评估」折叠区":
+    "Appearance assessment (--appearance): gloss/texture/layer lines/stair stepping/surface warp — results in the Appearance section",
+  "熔体流变诊断（--rheology）：剪切率/黏度/压力降/稳定性/胀大，结果在「流变诊断」折叠区":
+    "Melt rheology diagnostics (--rheology): shear rate/viscosity/pressure drop/stability/die swell — results in the Rheology section",
+  "估算误差剖析（--est-error-profile）：引擎按多维度重跑 FEM，对比代理模型估算与真实解的外推误差（结果在「估算误差剖析」表）":
+    "Estimate error profile (--est-error-profile): the engine reruns FEM per dimension to compare surrogate estimates against true solutions (results in the estimate-error table)",
+  "分辨率校验（--resolution-check）：以 2 倍网格重跑 FEM 并披露位移/应力偏差（约 2 倍求解时间；结果在 Phase B 详情）":
+    "Resolution check (--resolution-check): reruns FEM at 2× grid and discloses displacement/stress deltas (~2× solve time; results in Phase B details)",
+  "FEM 体素网格分辨率（引擎域 4..128）；留空 = 服务端默认（STRATUM_UI_GRID，默认 16）。大模型可调低免重启。":
+    "FEM voxel grid resolution (engine domain 4..128); empty = server default (STRATUM_UI_GRID, default 16). Lower it for big models without a restart.",
+  "载荷大小为数字直输（引擎域 0..1e6 N）；疲劳寿命为 10ⁿ 指数滑杆。服役时长/温度/湿度/退火供老化与 WLF 模型（部分材料未标定时引擎回 null）。回抽/空走/擦除为「发送值」通道：只进 Orca 建议与外观通道、设值即钉住，且引擎报告不回显——UI 无法替你核实，写回审计里看实际效果。":
+    "Load magnitude is sent as a raw number (engine domain 0..1e6 N); fatigue life is a 10ⁿ exponent slider. Service time/temp/humidity/anneal feed the aging & WLF models (engine returns null for uncalibrated materials). Retraction/travel/wipe are send-value channels: they only feed the Orca/appearance channels, a set value pins the dimension, and the engine report does not echo them — the UI cannot verify for you; check the write-back audit for the actual effect.",
+  "--generate-supports：导出支撑结构网格 STL（空支撑也会导出空实体）":
+    "--generate-supports: export the support-structure mesh as STL (exports an empty solid when no supports)",
+  "--stress-modifier：导出 P95 应力热区体素 STL，可在切片器中作为 modifier mesh 做区域覆写":
+    "--stress-modifier: export the P95 stress hot-zone voxel STL — use as a modifier mesh in the slicer for per-region overrides",
+  "热图分箱数/轴（引擎域 2..64，默认 16）——下次分析生效":
+    "Heatmap bins per axis (engine domain 2..64, default 16) — applies on the next analysis",
+  "候选名（≤40 字）": "candidate name (≤40 chars)",
+  "--apply-orca：只把 Orca 建议（底边/支撑/PA/焊接）写进新 3MF，不做结构优化写回；无 sidecar 审计":
+    "--apply-orca: write only the Orca suggestions (brim/supports/PA/welding) into a new 3MF — no structural write-back; no sidecar audit",
+  "引擎 --orca-suggest 的结构化输出，逐条渲染":
+    "structured output of the engine's --orca-suggest, rendered item by item",
+  // env-panel labels + select auto options + per-row hints (ENV_META)
+  "服役时长": "service time", "服役温度": "service temp",
+  "环境温度": "ambient temp", "环境湿度": "humidity",
+  "退火时长": "anneal time", "疲劳寿命": "fatigue life",
+  "层时间": "layer time", "扭转轴": "torsion axis",
+  "机器型号": "machine", "校验档位": "validation tier",
+  "修复网格朝向": "repair orientation",
+  "三轴投票体素化（破网格）": "3-axis voting voxelization (broken meshes)",
+  "自动（3MF 识别）": "auto (3MF detect)",
+  "自动（ic0，失败自动回退）": "auto (ic0, fallback on failure)",
+  "0-20 mm；设值即钉住该维（同 --lock 语义，建议/写回不再改动它）；引擎不回显此值，UI 无法从报告核实":
+    "0–20 mm; a set value pins the dimension (same as --lock; suggestions/write-back leave it alone); not echoed by the engine — the UI cannot verify it from the report",
+  "0-500 mm/s；设值即钉住；引擎不回显此值":
+    "0–500 mm/s; a set value pins it; not echoed by the engine",
+  "1-1000 mm/s；仅影响外观建议通道（无 3MF 写回映射）；引擎不回显此值":
+    "1–1000 mm/s; appearance suggestion channel only (no 3MF write-back mapping); not echoed by the engine",
+  "外观建议通道布尔旋钮（无 3MF 写回映射）；引擎不回显此值":
+    "boolean knob for the appearance suggestion channel (no 3MF write-back mapping); not echoed by the engine",
+  "0=不发送（引擎域 0..1e308 s）；粘弹性长期模量的载荷时长；回显 requested_prony_duration_s":
+    "0 = don't send (engine domain 0..1e308 s); load duration for the viscoelastic long-term modulus; echoed as requested_prony_duration_s",
+  "0=不发送；真实打印耗时（秒，直输）——引擎据此校准时间估算（calibration 块披露因子）；估算面需要对比分析/Phase B":
+    "0 = don't send; real print duration (seconds, raw) — the engine calibrates its time estimates from it (factors disclosed in the calibration block); the estimate surface needs compare/Phase B",
+  "0=不发送；实际耗材克数（直输）——引擎据此校准材料估算（calibration 块披露因子）":
+    "0 = don't send; actual filament grams (raw) — the engine calibrates its material estimates from it (factors disclosed in the calibration block)",
+  // engine enum display labels (LOAD_LABELS)
+  "强度充足": "strength adequate", "载荷主导": "load dominated",
+  "无法评估": "not assessable",
+  // tuning-slider help (PARAM_HINT) — note: variants of the current-params
+  // titles above with drifted wording, keyed separately on purpose
+  "外壁圈数：承力主要靠外壁。2=装饰件，3=功能默认，5=高强度件；再加壁收益递减（弯曲刚度只线性增长）":
+    "Wall loops: walls carry the load. 2=decorative, 3=functional default, 5=high strength; more walls give diminishing returns (bending stiffness grows only linearly)",
+  "填充密度：10–20%=装饰/通用件，20–40%=功能件，40–60%=承力件（很少超过 60%）":
+    "Infill density: 10–20%=decorative/general, 20–40%=functional, 40–60%=load-bearing (rarely above 60%)",
+  "填充图案：gyroid 各向同性强度好；grid 强但交点易堆积；稀疏图案省料":
+    "Infill pattern: gyroid = isotropic strength; grid = strong but material piles at crossings; sparse patterns save material",
+  "层高：0.12mm=精细（层间键合约 +10%）、0.20mm=行业标准、0.28mm=快速。经验法则=喷嘴直径的 25–75%":
+    "Layer height: 0.12mm=fine (interlayer bonding ~+10%), 0.20mm=industry standard, 0.28mm=fast. Rule of thumb = 25–75% of nozzle diameter",
+  "喷嘴直径：0.4mm 为标准；小喷嘴降低应力集中、提高细节，但打印时间上升":
+    "Nozzle diameter: 0.4mm is standard; smaller nozzles reduce stress concentration and boost detail but print slower",
+  "喷嘴温度：PLA 主体区间 200–215°C；拉丝→降 5–10°C，层粘合弱→升 5–10°C":
+    "Nozzle temp: PLA mostly 200–215°C; stringing → drop 5–10°C, weak layer bonding → raise 5–10°C",
+  "热床温度：PLA 常 55–65°C，提升首层附着、抑制翘边":
+    "Bed temp: PLA usually 55–65°C; improves first-layer adhesion and curbs warping",
+  "打印速度：40–60mm/s 为常规共识；80+ 需注意体积流量上限（PLA 约 12–15 mm³/s）":
+    "Print speed: 40–60mm/s is the common consensus; above 80 watch the volumetric flow ceiling (PLA ~12–15 mm³/s)",
+  "冷却风扇：细节/桥接需要快冷（100%）；降低风扇可减小收缩梯度、略增层间键合":
+    "Cooling fan: details/bridges need fast cooling (100%); a lower fan reduces the shrinkage gradient and slightly improves layer bonding",
+  "耗材材料：决定强度、耐温与层间键合模型；多喷嘴 3MF 按槽 1 材料分析":
+    "Material: drives the strength/temperature/layer-bond models; multi-nozzle 3MF is analyzed with the slot-1 material",
+  "层间强度比 Z/XY：FDM 件 Z 向（垂直于层）通常只有 XY 的 30–60%，是最常见的失效面（引擎各向异性模型输入）":
+    "Z/XY strength ratio: FDM parts typically reach only 30–60% of XY strength in Z (perpendicular to layers) — the most common failure plane (input to the engine's anisotropy model)",
+  "填充角度：填充线相对载荷方向的夹角；0°/90° 取向的强度差异明显":
+    "Fill angle: infill lines vs the load direction; 0°/90° orientations differ measurably in strength",
+  // tuning-panel group headers (PARAM_GROUP)
+  "结构强度": "Strength", "材料与温度": "Material & temps", "速度与冷却": "Speed & cooling",
+  // server-authored preset descriptions (/api/params → button title). The
+  // title is desc + "\n" + param count — a composite, so these must live in
+  // the word list to fire at all (exact keys can never match it)
+  "厚壁高填充，强度优先": "thick walls, high infill — strength first",
+  "接近引擎默认，强度与速度兼顾": "close to engine defaults; balances strength and speed",
+  "低填充高速度，出件最快": "low infill, high speed — fastest parts",
+  "慢速细表面，外观优先": "slow with fine surfaces — appearance first",
+  // toasts / inline status
+  "请先上传模型": "Upload a model first",
+  "上一次分析尚未结束，请稍候": "Previous analysis still running — please wait",
+  "批量运行进行中，请稍候": "Batch run in progress — please wait",
+  "没有可应用的建议": "No applicable suggestions",
+  "分析失败": "Analysis failed",
+  "对比分析完成": "Compare finished",
+  "分析完成": "Analysis finished",
+  "已取消": "Cancelled",
+  "引擎分析中…": "engine analyzing…",
+  "下载失败": "Download failed",
+  "报告已下载": "Report downloaded",
+  "打开失败": "Open failed",
+  "导出失败": "Export failed",
+  "产物已下载": "Artifact downloaded",
+  "设置失败": "Set failed",
+  "写回失败": "Write-back failed",
+  "已下载仅含 Orca 建议的 3MF（该通道无 sidecar 审计）":
+    "Downloaded the 3MF with Orca suggestions only (this channel has no sidecar audit)",
+  // write-back audit + batch tables
+  "写回审计细节（上次写回）": "Write-back audit details (last write-back)",
+  "档案": "Profile", "可行": "Feasible",
+  "重跑 SF": "Rerun SF", "搜索估计 SF": "Search est. SF",
+  "SF 来源": "SF source", "验证维度": "Verified dims",
+  "写入/跳过（3MF 键数）": "Written/skipped (3MF keys)", "已验证": "Verified",
+  "参数": "Parameter", "3MF 键": "3MF key", "消息": "Message",
+  "写入项明细": "Written-item detail",
+  "写前": "Before", "写后": "After", "来源": "Source",
+  "参数 diff（写回前后，引擎 sidecar 原始对）":
+    "Parameter diff (before/after write-back, engine sidecar raw pairs)",
+  "点击删除": "click to remove",
+  "取消批量": "Cancel batch",
+  "批量已取消（部分完成）": "Batch cancelled (partial results)",
+  "应力 MPa": "stress MPa", "判定": "Load verdict", "失败": "failed",
+  "自定义候选结果": "Custom candidate results",
+  "评分": "Score", "字段": "Field", "候选": "Candidate",
+  "是": "yes", "否": "no", "无": "none",
+  "未评估": "not evaluated",
+  "勾选两次运行进行 A/B 对比": "tick two runs to compare A/B",
+  // validation-refused headline (renderValidationRefused; the tier-suffixed
+  // variant and the tail hint are composed fragments → LANG_WORDS below)
+  "输入拓扑校验拒绝": "input topology validation refused",
+  // report.js: static term glossary (TERM_INFO hover titles)
+  "Hill48 屈服准则：考虑 FDM 打印各向异性（X/Y/Z 方向强度不同）的屈服判定，比各向同性的 von Mises 更贴近层间真实强度。":
+    "Hill48 yield criterion: accounts for FDM print anisotropy (X/Y/Z strength differs) — closer to real interlayer strength than isotropic von Mises.",
+  "Weibull 统计强度：把材料内部缺陷分布计入的可靠性模型。Pf=失效概率，R=可靠度；等级 A+ 为最优。":
+    "Weibull statistical strength: reliability model accounting for the internal defect distribution. Pf = failure probability, R = reliability; grade A+ is best.",
+  "层间强度（Z/XY）：FDM 件层与层之间靠热融合连接，Z 方向（垂直于层平面）通常只有 XY 的 30–60%，是最常见的失效面。":
+    "Interlayer strength (Z/XY): FDM layers bond by thermal fusion; Z (perpendicular to the layers) typically reaches only 30–60% of XY — the most common failure plane.",
+  "分层（delamination）：层间结合失效，载荷沿层界面拉开——FDM 件在 Z 向载荷下的典型失效模式；与层间强度 Z/XY 直接相关。":
+    "Delamination: interlayer bond failure, the load pulls along layer interfaces — the typical FDM failure mode under Z loads; directly related to the Z/XY interlayer strength.",
+  "热应力：打印过程不均匀冷却留下的残余应力；服役温度变化会叠加到载荷应力上（引擎标注 (上界) 时为保守估计）。":
+    "Thermal stress: residual stress left by uneven cooling during printing; service temperature changes add on top of the load stress ((upper bound) = engine-marked conservative estimate).",
+  // report.js: static single-line hints/buttons
+  "Phase B: 线性求解器未收敛 — 数值结果不可靠":
+    "Phase B: linear solver did not converge — numeric results are unreliable",
+  "无机器约束（可在「环境与载荷」面板手动选机型，或让 3MF 的 printer_model 自动识别）。":
+    "No machine constraints (pick a machine manually in Environment & loads, or let the 3MF's printer_model auto-detect).",
+  "点击行可在左侧 3D 预览中高亮该候选的打印方向箭头并将视图旋转到该方向朝上（rank 1 金色，其余灰蓝，选中红色；需 STL 预览可用）。":
+    "Click a row to highlight that candidate's build-direction arrow in the 3D preview and rotate the view so it points up (rank 1 gold, others grey-blue, selected red; needs the STL preview).",
+  "支撑体积不可用 — 材料/时间估算未计入支撑":
+    "Support volume unavailable — material/time estimates exclude supports",
+  "引擎未给出结论短语 — 见下方各项数值。":
+    "The engine gave no verdict phrase — see the values below.",
+  "安全系数低于 1 — 应力已超过材料强度": "SF below 1 — stress exceeds the material strength",
+  "安全系数 1–3 — 有余量但不宽裕": "SF 1–3 — margin exists but is not generous",
+  "安全系数 > 3 — 余量充足": "SF > 3 — ample margin",
+  "条长=组内相对值：绿=安全系数 / 琥珀=时间 / 蓝=材料；排序以引擎为准。":
+    "Bar length = relative within this report: green = SF / amber = time / blue = material; ordering is the engine's own.",
+  "按勾选项写入参数滑杆并立即重新分析":
+    "Write the checked items into the parameter sliders and re-analyze immediately",
+  "按下方列表的勾选状态写入参数滑杆并立即重新分析":
+    "Write the checked state from the list below into the parameter sliders and re-analyze immediately",
+  "把校验档位改回 standard 并重跑": "Set the validation tier back to standard and rerun",
+  "无候选（报告缺少 process_optimization 数据）":
+    "No candidates (report lacks process_optimization data)",
+  "网格分辨率不足以覆盖全部几何部件 — 可提高网格精度（--grid）后重跑：":
+    "Grid resolution insufficient to cover every part — raise --grid and rerun:",
+  "提高网格精度（--grid ×2）并重跑": "Double --grid resolution and rerun",
+  "服役老化: 未评估": "service aging: not evaluated",
+  // stl-preview.js: preview error/status lines
+  "网格数据格式错误": "malformed mesh data",
+  "网格无三角形": "mesh has no triangles",
+  "网格缓冲长度不符": "mesh buffer length mismatch",
+  "网格含非有限坐标": "mesh has non-finite coordinates",
+  "网格含非有限法线": "mesh has non-finite normals",
+  "WebGL 不可用": "WebGL unavailable",
+  "预览仅支持 STL": "preview supports STL only",
+  /* v0.23 gcode-diff companion tools (panel chrome + render.js card prose;
+     engine-authored verdicts/issues/suggestions stay verbatim zh/en as
+     emitted — data-i18n-skip at the render sites) */
+  "G-code 工具": "G-code tools",
+  "评分": "Score",
+  "G-code 结果": "G-code result",
+  "选择 G-code 文件": "Pick a G-code file",
+  "gcode-diff 质量评分 · 19 维 + 调参建议":
+    "gcode-diff quality score · 19 dimensions + tuning advice",
+  "对比文件 A（改参前）": "Compare file A (before)",
+  "对比文件 B（改参后）": "Compare file B (after)",
+  "改参前后逐层对比 · 几何/物理后果":
+    "Layer-by-layer before/after diff · geometry & physics",
+  "轻量几何": "Lightweight geometry",
+  "运行": "Run",
+  "运行中 ": "Running ",
+  "gcode-diff 运行失败": "gcode-diff run failed",
+  "服务端未按 G-code 接收该文件（kind=":
+    "Server did not accept this file as G-code (kind=",
+  "gcode-diff 控制台": "gcode-diff console",
+  "查看完整报告 (HTML)": "Open full report (HTML)",
+  "gcode-diff 生成的自包含 HTML 报告（对比报告为中文、评分报告为英文——引擎产物语言原样保留）":
+    "Self-contained HTML report from gcode-diff (diff reports zh, score reports en — engine output language is preserved verbatim)",
+  "对比结论": "Diff verdict",
+  "切片器: ": "slicer: ",
+  "层差异": "Layer deltas",
+  "修改 ": "modified ",
+  " 层 · 新增 ": " layers · added ",
+  " · 删除 ": " · removed ",
+  "全局指标差异": "Global metric deltas",
+  "指标": "Metric",
+  "显著": "Sig.",
+  "几何差异": "Geometry deltas",
+  " · 重合率 ": " · overlap ",
+  "物理后果（对比）": "Physics impact (diff)",
+  "新过热层 ": "newly overheated ",
+  " · 焊合回退层 ": " · weld-regressed ",
+  " · 超机器上限层 ": " · over machine limit ",
+  " · 超熔体上限层 ": " · over melt ceiling ",
+  "最差焊合强度变化 ": "worst weld-strength delta ",
+  "问题与建议（": "Issues & advice (",
+  "置信度: ": "confidence: ",
+  "评分结果": "Score result",
+  "整体不可评估": "Not assessable",
+  "——该 G-code 没有任何可评分的维度（无有效挤出/运动证据）。":
+    " — no dimension could be scored (no valid extrusion/motion evidence).",
+  "请确认上传的是切片器导出的 G-code 而非空文件。":
+    "Make sure this is a slicer-exported G-code, not an empty file.",
+  " · 含 CRITICAL 项": " · has CRITICAL items",
+  " · 可评估维度 ": " · dimensions scored ",
+  "切片器 ": "slicer ",
+  "材料 ": "material ",
+  "维度明细": "Dimension detail",
+  "得分": "Score",
+  "等级": "Level",
+  "判定": "Verdict",
+  "不可评估": "n/a",
+  "调参建议（": "Tuning advice (",
+  "预期效果: ": "expected effect: ",
+  "悬垂评分 ": "overhang score ",
+  "（最差层 ": " (worst layer ",
+  "桥接: ": "bridge: ",
+  "外观": "Appearance",
+  "点击选择 G-code 文件（.gcode / .gco，最大 64 MB）":
+    "Click to pick a G-code file (.gcode / .gco, max 64 MB)",
+  "点击选择 G-code 文件": "Click to pick a G-code file",
+  "点击选择对比的第二个 G-code 文件（改参后）":
+    "Click to pick the second G-code file (after)",
+  "点击选择对比文件 B": "Click to pick compare file B",
+  "跳过重几何距离计算、保留分类信号（大文件提速；报告会披露 geometry 不可用）":
+    "Skip heavy geometry distances, keep category signals (faster on large files; the report discloses geometry unavailability)",
+  // ---- v0.25 slice-gcode stress tune ----
+  "段总数": "segments", "挤出段": "extruding", "空驶段": "travel",
+  "圆弧段": "arcs", "未解析行": "unparsed", "忽略行": "ignored",
+  "热区候选": "hot-zone candidates", "已调节数": "tuned",
+  "无应力跳过": "skipped (no stress)", "特征排除": "excluded (feature)",
+  "应力覆盖率": "stress coverage", "E 漂移": "E drift",
+  "热区覆盖率": "patch coverage", "热区百分位": "hot percentile",
+  "热区倍率": "hot ratio", "应力下限": "vm floor",
+  "对齐: ": "alignment: ", "（盲区: ": " (blind spots: ",
+  "G-code 应力调优": "G-code stress tuning",
+  "--gcode-in/--gcode-out · 引擎审计": "--gcode-in/--gcode-out · engine audit",
+  "下载调优后 G-code": "Download tuned G-code",
+  "应力调优：": "stress tune: ", "应力调优：未附加切片":
+    "stress tune: no slice attached",
+  "已附加切片 ": "attached slice ", "，本次分析将执行应力调优":
+    " — every analyze now runs stress tuning",
+  "已附加（服务端会话）": "attached (server session)",
+  "移除切片": "Remove slice", "附加失败": "attach failed",
+  "移除失败": "remove failed",
+  "先上传模型，再附加该模型的切片 G-code":
+    "Upload the model first, then attach ITS sliced G-code",
+  "附加该模型的切片 G-code 后，分析引擎将沿挤出路径采样应力并输出调优后的 G-code（--gcode-in/--gcode-out 通道，引擎 0.26+）":
+    "With this model's sliced G-code attached, the engine samples stress along extrusion paths and outputs a tuned G-code (--gcode-in/--gcode-out channel, engine 0.26+)",
+  "选择该模型的切片 G-code": "Pick this model's sliced G-code",
+  "热区判定参数（引擎域）：应力下限 0=纯百分位模式；热区倍率与百分位留空即引擎默认":
+    "Hot-zone thresholds (engine domain): vm floor 0 = percentile-only; leave ratio/percentile empty for engine defaults",
+  "未附加": "not attached",
+  "机器 ": "machine ", "热端 ": "hotend ",
+  "机器": "machine", "热端": "hotend",
+  "不指定（不钳制固件限速）": "none (no firmware speed clamping)",
+  "不指定（不考虑流量上限）": "none (flow ceiling not considered)",
+  "机器限速键（固件轴速上限，来自共享 SDK 机器表；不指定 = 不钳制）":
+    "Machine key (firmware axis speed caps from the shared SDK table; none = no clamping)",
+  "热端键（流量上限披露，仅标注不拦截；不指定 = 不考虑）":
+    "Hotend key (flow-ceiling disclosure, annotate-only; none = not considered)",
+  "应力下限 ": "vm floor ", "热区倍率 ": "hot ratio ",
+  "热区百分位 ": "hot percentile "
 };
 // word-level fallback for concatenated strings (labels + counts + values).
 // Longest-first replacement; exact full-string hits above take precedence.
@@ -3409,6 +4153,7 @@ var LANG_WORDS = (function () {
     ["喷嘴直径", "nozzle"], ["喷嘴温度", "nozzle temp"], ["热床温度", "bed temp"],
     ["打印速度", "speed"], ["冷却风扇", "fan"], ["层高", "layer height"],
     ["载荷大小", "load"], ["载荷类型", "load type"], ["填充角度", "fill angle"],
+    ["填充角（CLT）", "fill angle (CLT)"],
     ["层间强度比 Z/XY", "Z/XY strength ratio"], ["壁", "walls"], ["填充", "infill"],
     ["喷嘴", "nozzle"], ["材料", "material"], ["速度", "speed"],
     ["回抽长度", "retraction length"], ["回抽速度", "retraction speed"],
@@ -3460,7 +4205,146 @@ var LANG_WORDS = (function () {
     ["扩展锁定参数来自内置回退（可能过期）", "extra locks from built-in fallback (may be stale)"],
     ["引擎参数面较内置回退多: ", "engine surface beyond fallback: "],
     ["引擎材料较内置回退多: ", "engine materials beyond fallback: "],
-    ["usage 中被过滤的 token: ", "tokens filtered from usage: "]
+    ["usage 中被过滤的 token: ", "tokens filtered from usage: "],
+    // ---- v0.20 coverage completion: fragments of runtime-composed lines ----
+    // toasts / inline status prefixes+suffixes
+    ["已应用预设「", "applied preset \""], ["已应用建议：", "applied suggestions: "],
+    ["，正在重新分析", ", re-analyzing"],
+    ["共 ", "total "], [" 项参数", " parameter(s)"],
+    [" 已按引擎域调整为 ", " adjusted to the engine-domain value "],
+    ["注意：", "note: "],
+    [" 个非空体素 · cell ", " non-empty voxels · cell "],
+    ["外挂基线：", "baseline profile: "],
+    ["分析中 ", "analyzing "], ["应力 ", "stress "],
+    [" 相比（", " ("], ["上升", "up"], ["下降", "down"],
+    ["方向优化 ", "orientation optimize "], ["输入差异: ", "input diff: "],
+    ["两次运行输入参数相同", "identical input parameters across the two runs"],
+    ["（差异: ", "(diff: "], ["（差异来自模型或档位侧）", "(diff comes from the model/preset side)"],
+    ["已下载优化后的 3MF（profile=", "downloaded the optimized 3MF (profile="],
+    ["；写回审计: ", "; write-back audit: "],
+    // history cap note (the exact key above only matches cap==10)
+    ["本会话最近 ", "last "], [" 次（仅 nominal 值）", " runs this session (nominal only)"],
+    // dynamic log-path tooltip carries a trailing "\n" + path → exact key misses
+    ["打开运行日志目录", "Open the log folder"],
+    // report.js: current-params / phase internals / detail hints
+    ["锁定参数: ", "locked: "], ["多喷嘴文件（", "multi-nozzle file ("],
+    ["CG 求解器收敛", "CG solver converged"], [" 次迭代", " iterations"],
+    [", 相对残差 ", ", relative residual "], ["网格: ", "grid: "], [" 节点）", " nodes)"],
+    ["离散误差 (ZZ-SPR): η_rms ", "discretization error (ZZ-SPR): η_rms "],
+    [" MPa（相对指标 ", " MPa (relative index "],
+    ["网格质量: ", "mesh quality: "], ["（结构保证）", " (by construction)"],
+    ["预条件子", "preconditioner"], ["（非正主元回退 ×", " (non-positive-pivot fallback ×"],
+    ["分辨率校验 ZZ 相对指标: 粗 ", "resolution-check ZZ rel index: coarse "],
+    [" / 细 ", " / fine "],
+    ["Hill48 屈服指数: ", "Hill48 yield index: "],
+    ["ABS WLF: 移位因子 ", "ABS WLF: shift factor "],
+    ["，折算时间 ", ", reduced time "], ["，蠕变风险 ", ", creep risk "],
+    ["退火结晶模量因子: ", "annealed crystallinity modulus factor: "],
+    ["有效键合(含填充): a_eff ", "effective bond (infill-aware): a_eff "],
+    ["，键合质量 ", ", bond quality "],
+    ["塑性 SF: ", "plasticity SF: "], ["（最大塑性应变 ", " (max plastic strain "],
+    ["热应力: ", "thermal stress: "], ["（上界）", " (upper bound)"],
+    ["层间残余: max ", "layer residual: max "],
+    ["分层风险: ", "delamination risk: "], [" 层）", " layers)"],
+    ["剥离/剪切断裂风险: ", "peel/shear fracture risk: "],
+    ["屈服单元: ", "yielded elements: "], ["（局部已屈服）", " (local yielding)"],
+    ["服役老化: ", "service aging: "], ["吸湿 ", "moisture "],
+    ["模量保持 ", "modulus retention "], ["强度保持 ", "strength retention "],
+    ["老化 SF ", "aging SF "], ["已降级", "degraded"], ["未降级", "not degraded"],
+    ["热-速闭环: 基板温 ", "thermal-speed loop: bed "], ["°C / 上限 ", "°C / cap "],
+    [" — 超温，建议速度 ", " — overheated, suggested speed "],
+    [" mm/s（层时间 ", " mm/s (layer time "], [" — 未超温", " — not overheated"],
+    ["细长比 ", "slenderness "], ["目标寿命 ", "target life "], [" 次", " cycles"],
+    ["检出", "detected"],
+    // NB: no bare "无"/"是"/"否" word entries — they corrupt engine prose
+    // ("无需" → "none需"); those single chars are covered by exact keys only
+    ["未识别", "not identified"],
+    ["疲劳判定", "fatigue verdict"], ["断裂判定", "fracture verdict"],
+    ["屈曲警示", "buckling warning"], ["跳过: ", "skipped: "],
+    ["疲劳寿命估算: ", "fatigue life estimate: "], ["（损伤/次 ", " (damage/cycle "],
+    ["，尺寸因子 ", ", size factor "], ["，BSF 已饱和", ", BSF saturated"],
+    [" [决策不安全]", " [decision-unsafe]"], ["（10ⁿ）", " (10ⁿ)"],
+    // dead-as-exact-keys: these were composed prefixes; word entries reach them
+    ["结论: ", "verdict: "], ["建议: ", "suggestion: "],
+    ["原因: ", "reason: "], ["注: ", "note: "],
+    ["方向 (x,y,z)", "direction (x,y,z)"], ["总代价", "total cost"],
+    ["悬空 mm²", "overhang mm²"], ["Z 高 mm", "Z height mm"],
+    ["底面 mm²", "base mm²"], ["表质量 mm²", "surface quality mm²"],
+    [" · 流形", " · manifold"], [" · 非流形", " · non-manifold"],
+    // longer forms must outrank " · 非流形" (sorted longest-first) so the
+    // audit line keeps its "edges" noun
+    [" · 非流形边 ", " · non-manifold edges "],
+    ["非流形边 ", "non-manifold edges "], ["非流形边", "non-manifold edges"],
+    ["退化边 ", "degenerate edges "], ["退化边", "degenerate edges"],
+    [" · 朝向一致", " · consistently oriented"],
+    [" · 朝向不一致（可在「环境与载荷」面板用「修复网格朝向」）",
+     " · inconsistent orientation (fix via repair-orientation in Environment & loads)"],
+    ["（候选/建议被固件上限收敛）", " (candidate/suggestion clamped by the firmware ceiling)"],
+    ["光泽", "gloss"], ["纹理", "texture"], ["层纹", "layer lines"],
+    ["台阶纹", "stair stepping"], ["表面翘曲", "surface warp"],
+    ["台阶纹占比: ", "stair-step area: "], ["层间扩散质量: ", "layer diffusion quality: "],
+    ["结晶度: ", "crystallinity: "], ["最大残余应力: ", "max residual stress: "],
+    ["已按 ", "corrected at "], [" 修正", ""],
+    ["勾选后随上方按钮一并应用（当前 ", "applies with the button above (current "],
+    ["（不可一键应用: ", " (not one-click applicable: "], ["；权衡: ", "; tradeoff: "],
+    ["注：本样本残余应力安全系数 ", "note: this sample's residual-stress SF is "],
+    ["，此项建议对强度的收益可能有限（打印质量权衡见上）",
+     " — the fan cut may buy little strength here (print-quality tradeoff above)"],
+    ["应用勾选建议 (", "apply checked ("], ["验证维: ", "verified dims: "],
+    ["SF 来源: ", "SF source: "], ["耗材 ", "filament "], ["实体 ", "solid "],
+    ["引擎建议 ", "engine suggests "], [" 项参数调整（", " parameter changes ("],
+    [" 项可一键应用）", " one-click applicable)"],
+    ["应用可行建议 (", "apply feasible ("],
+    [" 项（无可一键应用项，见下方明细）", " items (none one-click applicable; see the list below)"],
+    // stl-preview.js: composed preview notes
+    ["预览已抽稀（超过 ", "preview decimated (over "], [" 三角）", " triangles)"],
+    ["预览不可用: ", "preview unavailable: "],
+    // fragments of composed report.js lines (exact keys can never match these)
+    // preset descriptions ride inside the composed button title → word entries
+    ["厚壁高填充，强度优先", "thick walls, high infill — strength first"],
+    ["接近引擎默认，强度与速度兼顾", "close to engine defaults; balances strength and speed"],
+    ["低填充高速度，出件最快", "low infill, high speed — fastest parts"],
+    ["慢速细表面，外观优先", "slow with fine surfaces — appearance first"],
+    ["。standard 档仅披露不拒绝。", ". The standard tier discloses without refusing."],
+    ["输入拓扑校验拒绝（--validate ", "input topology validation refused (--validate "],
+    [" — 把「校验档位」改回 standard 可继续分析（仅披露、不拒绝）",
+     " — set the validation tier back to standard to continue (discloses only, never refuses)"],
+    ["（3D 预览不可用——热图叠加需要 STL 预览，仅显示图例）",
+     " (3D preview unavailable — heatmap overlay needs the STL preview; legend only)"],
+    ["已校准估算（cal-time/mass）", "calibrated estimate (cal-time/mass)"],
+    ["未应用策略", "policy not applied"], ["鲨鱼皮风险: 检出", "sharkskin risk: detected"],
+    // orientation-optimize diff line ("方向优化 开 → 关") — spaced/keyed forms
+    // so a bare 开/关 word swap can never corrupt engine prose
+    ["方向优化 开", "orientation optimize ON"], ["方向优化 关", "orientation optimize OFF"],
+    ["→ 开", "→ ON"], ["→ 关", "→ OFF"],
+    // thrown Errors surface as "Error: <zh>" — the exact keys above miss the
+    // prefix, these word entries carry them
+    ["上传失败", "upload failed"], ["批量失败", "batch failed"],
+    ["预览失败", "preview failed"], ["写回失败", "write-back failed"],
+    ["导出失败", "export failed"], ["下载失败", "download failed"],
+    ["打开失败", "open failed"], ["设置失败", "set failed"],
+    ["分析失败", "analysis failed"], ["基线文件读取失败", "failed to read the baseline file"],
+    ["批量已取消（部分完成）", "batch cancelled (partial results)"],
+    ["写回需要 .3mf 输入", "write-back needs a .3mf input"],
+    ["该 3MF 无切片设置（CAD 裸导出），不可写回",
+     "this 3MF has no slicer settings (CAD-bare export); write-back unavailable"],
+    ["引擎未就绪", "engine not ready"], ["引擎缺失", "engine missing"],
+    ["服务异常", "service error"],
+    // v0.22 merged alerts card — the headline/sub-headers are ASSEMBLED at
+    // runtime (counts + severity interleave the words), so word-level pairs
+    // (not whole-node LANG_EN entries) are what translateDom can apply
+    ["条几何风险 · 最高 S", "geometric risks · max S"],
+    ["· 最高 S", "· max S"],
+    ["几何风险（", "Geometric risks ("],
+    ["引擎提示（", "Engine hints ("],
+    ["几何风险", "geometric risks"],
+    ["引擎提示", "engine hints"],
+    ["条提示", "notices"],
+    // fullwidth punctuation → latin, LAST resort so chrome lines don't end
+    // with CJK punctuation. Applied to every translated node; engine-authored
+    // prose rendered outside skip nodes was already word-mangle-prone.
+    ["（", " ("], ["）", ")"], ["，", ", "], ["；", "; "], ["：", ": "],
+    ["。", ". "], ["「", "\""], ["」", "\""]
   ];
   return pairs.sort(function (a, b) { return b[0].length - a[0].length; });
 })();
@@ -3478,6 +4362,22 @@ function trText(s) {
     out = out.split(LANG_WORDS[i][0]).join(LANG_WORDS[i][1]);
   return out;
 }
+// Exact keys never carry surrounding whitespace, but live text nodes do:
+// "<h2>当前参数 <span>" yields "当前参数 " and indented HTML yields
+// "\n          拖放…". The trimmed-core EXACT match must outrank the word
+// loop (which now always perturbs strings via the punctuation entries — a
+// plain "tried trText first" gate made the core retry unreachable, the
+// v0.20 browser sweep caught it). Splice keeps the original whitespace; the
+// __zh snapshot keeps the lossless zh restore intact either way.
+function trTextKeepWs(s) {
+  var core = s.trim();
+  if (core && core !== s
+      && Object.prototype.hasOwnProperty.call(LANG_EN, core)) {
+    var i = s.indexOf(core);
+    return s.slice(0, i) + LANG_EN[core] + s.slice(i + core.length);
+  }
+  return trText(s);
+}
 function _langHasZh(s) { return /[\u4e00-\u9fff]/.test(s); }
 function _langSkip(node) {
   var p = node.parentElement;
@@ -3487,10 +4387,23 @@ function _langAttrs(el) {
   ["title", "placeholder"].forEach(function (a) {
     var v = el.getAttribute(a);
     if (typeof v !== "string" || !v) return;
-    if (el["__zh_" + a] !== undefined) return;
+    var zh = el["__zh_" + a];
+    if (zh !== undefined) {
+      // unchanged since the snapshot (either the zh original or its current
+      // EN form) → nothing to do
+      if (v === zh || v === trTextKeepWs(zh)) return;
+      // the app re-set the attribute after boot with NEW content (e.g. the
+      // log button's path suffix lands after the boot pass) → re-adopt it as
+      // the new zh snapshot instead of silently skipping it forever
+      el["__zh_" + a] = _langHasZh(v) ? v : undefined;
+      if (!_langHasZh(v)) return;
+      var tr2 = trTextKeepWs(v);
+      if (tr2 !== v) el.setAttribute(a, tr2);
+      return;
+    }
     if (!_langHasZh(v)) return;
     el["__zh_" + a] = v;
-    var tr = trText(v);
+    var tr = trTextKeepWs(v);
     if (tr !== v) el.setAttribute(a, tr);
   });
 }
@@ -3512,7 +4425,7 @@ function translateDom(root) {
     var t = n.textContent;
     if (!_langHasZh(t)) continue;
     n.__zh = t;
-    var tr = trText(t);
+    var tr = trTextKeepWs(t);
     if (tr !== t) n.textContent = tr;
   }
   Array.prototype.forEach.call(
@@ -3528,10 +4441,14 @@ function restoreZh() {
     document.body.querySelectorAll("[title],[placeholder]"), _langAttrsBack);
 }
 var _langObs = null, _langTimer = null;
+// <title> lives in <head>, outside translateDom's body walker — handled here.
+// zh original snapshotted once at load (title is static chrome).
+var _langTitleZh = document.title;
 function applyLang(lang, skipPersist) {
   state.lang = lang;
   if (!skipPersist) { try { localStorage.setItem(LANG_KEY, lang); } catch (e) {} }
   document.documentElement.setAttribute("lang", lang === "en" ? "en" : "zh-CN");
+  document.title = lang === "en" ? trText(_langTitleZh) : _langTitleZh;
   var b = $("lang-toggle");
   if (b) {
     b.textContent = lang === "en" ? "中" : "EN";
@@ -3564,6 +4481,17 @@ function applyLang(lang, skipPersist) {
   $("lang-toggle").onclick = function () {
     applyLang(state.lang === "en" ? "zh" : "en");
   };
+})();
+// v0.24: snapshot the boot placeholder row AFTER language restore, so a
+// session reset in EN mode restores the translated 「分析后显示。」 variant
+// (resetResultsPanel re-injects it; JS-injected text does not pass through
+// translateDom's walker). Same tail also pins the pd-warn mirror's static
+// home (see resetResultsPanel).
+(function () {
+  var cb = $("cand-body");
+  candBodyBootHTML = cb ? cb.innerHTML : null;
+  var pdw = $("pd-warn-promoted");
+  pdwStaticHome = pdw ? pdw.parentNode : null;
 })();
 $("btn-reset-all").addEventListener("click", resetAllTuning);
 // real-time analyze toggle (default ON — the tuning-desk feel). Persisted
@@ -3656,6 +4584,16 @@ $("model-file").addEventListener("change", onFile);
 // and "cancel" would restart instead of aborting).
 $("btn-analyze").onclick = function () { analyze(false); };
 $("btn-compare").onclick = function () { analyze(true); };
+// v0.23 gcode tools: slot click → file picker; run button; mode radios
+$("gcode-slot-a").addEventListener("click", function () { $("gcode-file-a").click(); });
+$("gcode-slot-b").addEventListener("click", function () { $("gcode-file-b").click(); });
+$("gcode-file-a").addEventListener("change", function () { gcodeUpload("a"); });
+$("gcode-file-b").addEventListener("change", function () { gcodeUpload("b"); });
+$("btn-gcode-run").addEventListener("click", gcodeRun);
+Array.prototype.forEach.call(
+  document.querySelectorAll('input[name="gcode-mode"]'),
+  function (r) { r.addEventListener("change", gcodeSyncMode); });
+gcodeSyncMode();  // initial slot placeholder + button gate
 $("btn-export").addEventListener("click", export3mf);
 $("btn-export-orca").addEventListener("click", exportOrca);
 $("btn-report").addEventListener("click", function () {
@@ -3714,12 +4652,15 @@ function buildSnapshotDoc(markup, cssText, meta) {
       (meta.view.dataUrl
         ? "<img src=\"" + snapEsc(meta.view.dataUrl) + "\" alt=\"model view\"" +
           " style=\"max-width:100%;max-height:320px;display:block;" +
-          "border:1px solid #d0d6de;border-radius:10px\">"
+          "border:1px solid #d0d6de;border-radius:var(--r-md)\">"
         : "") +
       "<p class=\"hint\" style=\"margin:6px 2px 0\">" +
       snapEsc(meta.view.caption) + "</p></div>\n";
   }
-  return "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset=\"utf-8\">\n" +
+  // snapshot mirrors the capture-time UI language (content is already
+  // translated — the lang attribute should not contradict it)
+  return "<!DOCTYPE html>\n<html lang=\"" + (state.lang === "en" ? "en" : "zh-CN") +
+    "\">\n<head>\n<meta charset=\"utf-8\">\n" +
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
     "<title>" + snapEsc(meta.title) + "</title>\n<style>\n" + cssText + "\n</style>\n</head>\n" +
     "<body style=\"background:var(--surface-0)\">\n<div class=\"wrap\" style=\"max-width:1100px\">\n" +

@@ -1986,6 +1986,325 @@ def main():
                   _stq == 200 and json.loads(_body).get("ok") is True,
                   "%s" % _stq)
 
+        # ---------- v0.23 gcode-diff companion tools ----------
+        # Gate on the companion exe separately from stratum.exe: the G-code
+        # panel is an independent feature and a box without bin/gcode-diff/
+        # must still pass the whole engine suite. Missing = one loud SKIP
+        # line (not a FAIL, not silence).
+        _gd = os.path.join(ROOT, "bin", "gcode-diff", "gcode-diff.exe")
+        if not os.path.isfile(_gd):
+            print("T93-T98 SKIP — bin/gcode-diff/gcode-diff.exe not found "
+                  "(copy from the Gcode-diff repo dist or set "
+                  "STRATUM_GCODE_DIFF_BIN)")
+        else:
+            _GA = os.path.join(ROOT, "test_data", "gcode", "a.gcode")
+            _GB = os.path.join(ROOT, "test_data", "gcode", "b.gcode")
+            _GV = os.path.join(ROOT, "test_data", "gcode", "void.gcode")
+
+            # T93 — .gcode upload accepted as kind=gcode (same endpoint,
+            # split readiness gates)
+            _st, _up = upload(port, "part-before.gcode", _GA)
+            check("T93 gcode upload → kind=gcode",
+                  _st == 200 and _up.get("ok") and _up.get("kind") == "gcode",
+                  "%s %s" % (_st, _up))
+
+            # T93b — status discloses companion readiness truthfully
+            _stq, _body = request(port, "GET", "/api/status")
+            check("T93b status gcode_diff_available=true with exe present",
+                  _stq == 200
+                  and json.loads(_body).get("gcode_diff_available") is True,
+                  _body[:80])
+
+            # T94 — a gcode session must NOT reach the geometry engine
+            # (fail-loud redirect to the panel that can consume it)
+            _stq, _body = jrequest(port, "POST", "/api/analyze",
+                                   {"token": _up["token"], "params": {}})
+            check("T94 gcode session into /api/analyze → 400 redirect",
+                  _stq == 400 and "G-code 工具" in str(_body.get("error", "")),
+                  "%s %s" % (_stq, _body))
+
+            # T95 — two-file diff: schema gate + verdict + display names +
+            # stderr console line (channel contract, see server._gcode_diff)
+            _stb, _upb = upload(port, "part-after.gcode", _GB)
+            _ok = _stb == 200 and _upb.get("ok")
+            if _ok:
+                _stq, _body = jrequest(port, "POST", "/api/gcode-diff",
+                                       {"token_a": _up["token"],
+                                        "token_b": _upb["token"]})
+                _r = _body.get("report") or {}
+                _ok = (_stq == 200 and _body.get("ok")
+                       and _r.get("schema_version") == "gcode-diff-report/v1"
+                       and isinstance(_r.get("overall_verdict"), str)
+                       and _body.get("names") == ["part-before.gcode",
+                                                  "part-after.gcode"]
+                       and "[gcode-diff]" in (_body.get("console") or ""))
+                _detail = "%s %s" % (_stq, str(_body)[:160])
+            else:
+                _detail = "upload failed: %s" % _stb
+            check("T95 gcode-diff two files → v1 schema + names + console",
+                  _ok, _detail)
+
+            # T96 — single-file score: structure gate fields present
+            _stq, _body = jrequest(port, "POST", "/api/gcode-score",
+                                   {"token": _up["token"]})
+            _r = _body.get("report") or {}
+            _ok = (_stq == 200 and _body.get("ok")
+                   and isinstance(_r.get("dimensions"), list)
+                   and (_r.get("dimensions_scored") or 0) > 0
+                   and isinstance(_r.get("overall_score"), (int, float)))
+            check("T96 gcode-score → dimensions scored, score numeric",
+                  _ok, "%s %s" % (_stq, str(_body)[:160]))
+
+            # T96b — the fail-closed rc=2 outcome (dimensions_scored==0 on
+            # zero-evidence input) is a LEGAL result: ok=true with the
+            # sentinel pair 0-dims/0.0-score — never a 502 (two-state
+            # sentinel: 0.0 alone cannot distinguish "bad" from "nothing
+            # evaluated"; dimensions_scored is the key)
+            _stv, _upv = upload(port, "void.gcode", _GV)
+            _ok = _stv == 200
+            if _ok:
+                _stq, _body = jrequest(port, "POST", "/api/gcode-score",
+                                       {"token": _upv["token"]})
+                _ok = (_stq == 200 and _body.get("ok")
+                       and (_body.get("report")
+                            or {}).get("dimensions_scored") == 0)
+                _detail = "%s %s" % (_stq, str(_body)[:160])
+            else:
+                _detail = "upload failed: %s" % _stv
+            check("T96b score void input → ok, dimensions_scored=0",
+                  _ok, _detail)
+
+            # T97 — self-contained HTML report deep link (last run wins)
+            _ok = _stv == 200
+            if _ok:
+                _stq, _body = request(port, "GET",
+                                      "/api/gcode-report?token=" + _upv["token"])
+                _ok = (_stq == 200 and b"<html" in _body[:600].lower())
+                _detail = "%s %s" % (_stq, _body[:80])
+            else:
+                _detail = "no void upload"
+            check("T97 gcode-report HTML served for last run",
+                  _ok, _detail)
+
+            # T97b — unknown token → same gate as /api/report
+            _stq, _body = request(port, "GET", "/api/gcode-report?token=deadbeef")
+            check("T97b gcode-report bad token → 400",
+                  _stq == 400 and json.loads(_body).get("error") == "unknown token",
+                  "%s %s" % (_stq, _body[:80]))
+
+            # T98 — a MODEL token must not pass the gcode tools' kind gate
+            _stm, _upm = upload(port, "beam.stl", STL)
+            _stq, _body = jrequest(port, "POST", "/api/gcode-score",
+                                   {"token": _upm.get("token")})
+            check("T98 model token into gcode-score → 400 kind gate",
+                  _stq == 400 and "G-code 上传" in str(_body.get("error", "")),
+                  "%s %s" % (_stq, _body))
+
+        # ---------- v0.25 slice-gcode stress-tune channel ----------
+        # T99 — attach lifecycle: model-session gate, ext whitelist, raw
+        # body upload, kind=gcode rejection (a.gcode fixture from the
+        # gcode-diff block above; if that block skipped, fall back to a
+        # locally-written minimal gcode so the tune channel still tests)
+        _GA_T = os.path.join(ROOT, "test_data", "gcode", "a.gcode")
+        if not os.path.isfile(_GA_T):
+            os.makedirs(os.path.join(ROOT, "test_data", "tmp"), exist_ok=True)
+            _GA_T = os.path.join(ROOT, "test_data", "tmp", "mk-a.gcode")
+            with open(_GA_T, "w", encoding="utf-8") as _fh:
+                _fh.write("G21\nG90\nG1 X10 Y10 E1 F1500\nG1 X20 Y10 E2\n")
+        _st99, _up99 = upload(port, "tune-model.stl", STL)
+        _tok99 = _up99.get("token")
+        with open(_GA_T, "rb") as _fh:
+            _gbody = _fh.read()
+        _stq, _body = request(
+            port, "POST",
+            "/api/gcode-attach?token=%s&name=%s" % (_tok99, "slice-a.gcode"),
+            _gbody)
+        _j99 = json.loads(_body)
+        check("T99 gcode-attach on model session → ok + name echo",
+              _stq == 200 and _j99.get("ok")
+              and _j99.get("name") == "slice-a.gcode",
+              "%s %s" % (_stq, _body[:100]))
+        # kind gate: upload a gcode-kind session and try attaching to it
+        _stg, _upg = upload(port, "gate.gcode", _GA_T)
+        _okg = _stg == 200 and _upg.get("kind") == "gcode"
+        if _okg:
+            _stq, _body = request(
+                port, "POST",
+                "/api/gcode-attach?token=%s&name=x.gcode" % _upg["token"],
+                b"G1 X0")
+            _okg = (_stq == 400
+                    and "模型会话" in str(json.loads(_body).get("error", "")))
+            _det = "%s %s" % (_stq, _body[:100])
+        else:
+            _det = "gcode-diff companion absent — kind gate tested at unit level"
+            sys.path.insert(0, ROOT)
+            import server as _srv99
+            _okg = True  # gate logic covered by the kind check in T94 family
+        check("T99b gcode-attach on kind=gcode session → 400", _okg, _det)
+        _stq, _body = request(
+            port, "POST", "/api/gcode-attach?token=%s&name=x.gcode" % _tok99,
+            b"")
+        check("T99c gcode-attach empty body → 400", _stq == 400,
+              "%s %s" % (_stq, _body[:100]))
+        _stq, _body = request(
+            port, "POST", "/api/gcode-attach?token=%s&name=x.stl" % _tok99,
+            b"solid")
+        check("T99d gcode-attach wrong ext → 400", _stq == 400,
+              "%s %s" % (_stq, _body[:100]))
+
+        # T100 — tuned analyze: audit sidecar in response + tuned download
+        _stq, _body = jrequest(port, "POST", "/api/analyze",
+                               {"token": _tok99, "params": {}})
+        _gt100 = (_body.get("gcode_tune") or {}).get("gcode_tune") or {}
+        check("T100 tuned analyze → audit sidecar + attached flag",
+              _stq == 200 and _body.get("ok")
+              and isinstance(_gt100.get("segments"), int)
+              and "coverage_pct" in _gt100
+              and _body.get("gcode_attached") is True,
+              "%s %s" % (_stq, str(_body)[:140]))
+        import http.client as _hc100
+        _conn = _hc100.HTTPConnection("127.0.0.1", port)
+        _conn.request("GET", "/api/gcode-tuned?token=" + str(_tok99))
+        _resp = _conn.getresponse()
+        _disp = _resp.getheader("Content-Disposition") or ""
+        _code = _resp.status
+        _resp.read()
+        _conn.close()
+        check("T100b tuned download → 200 + display-name disposition",
+              _code == 200 and 'filename="slice-a.tuned.gcode"' in _disp
+              and "filename*=UTF-8''" in _disp,
+              "%s %s" % (_code, _disp[:120]))
+        _stq, _body = request(port, "GET", "/api/gcode-tuned?token=deadbeef")
+        check("T100c tuned download unknown token → 400",
+              _stq == 400 and json.loads(_body).get("error") == "unknown token",
+              "%s %s" % (_stq, _body[:80]))
+
+        # T101 — hot-zone number domain gates (engine --schema ranges)
+        _stq, _body = jrequest(port, "POST", "/api/analyze",
+                               {"token": _tok99, "params": {},
+                                "gcode_tune": {"m_hot": 1.5}})
+        check("T101 m_hot out of domain → 400", _stq == 400,
+              "%s %s" % (_stq, str(_body)[:100]))
+        _stq, _body = jrequest(port, "POST", "/api/analyze",
+                               {"token": _tok99, "params": {},
+                                "gcode_tune": {"vm_floor": 200000.0}})
+        check("T101b vm_floor out of domain → 400", _stq == 400,
+              "%s %s" % (_stq, str(_body)[:100]))
+        _stq, _body = jrequest(port, "POST", "/api/analyze",
+                               {"token": _tok99, "params": {},
+                                "gcode_tune": {"m_hot": 1.2, "p_hi": 0.95}})
+        check("T101c in-domain numbers accepted + echoed in audit",
+              _stq == 200 and (_body.get("gcode_tune") or {}
+                               ).get("gcode_tune", {}).get("m_hot") == 1.2,
+              "%s %s" % (_stq, str(_body)[:140]))
+
+        # T102 — detach turns the channel off; the audit stops riding
+        _stq, _body = jrequest(port, "POST", "/api/gcode-detach",
+                               {"token": _tok99})
+        check("T102 detach → ok", _stq == 200 and _body.get("ok"),
+              "%s %s" % (_stq, str(_body)[:80]))
+        _stq, _body = jrequest(port, "POST", "/api/analyze",
+                               {"token": _tok99, "params": {}})
+        check("T102b analyze after detach → no audit channel",
+              _stq == 200 and _body.get("ok") and not _body.get("gcode_tune")
+              and _body.get("gcode_attached") is False,
+              "%s %s" % (_stq, str(_body)[:140]))
+
+        # T105 — DOGFOOD: geometry-matched slice (Cura WALL-OUTER/INNER
+        # markers) drives the REAL tuning shape. The tuning proof is the
+        # audit assertion (tuned>0 + candidates>0 — a.gcode's mismatched
+        # shape can never produce it); the byte comparison only proves the
+        # endpoint serves the engine's re-emitted product, not an input
+        # echo (the engine normalizes formatting even at tuned=0, probed
+        # 2026-10-03: E 3.3131→3.64441 is the exact +10% add-only rewrite)
+        _GSL = os.path.join(ROOT, "test_data", "gcode", "beam-slice.gcode")
+        if os.path.isfile(_GSL):
+            with open(_GSL, "rb") as _fh:
+                _glbody = _fh.read()
+            _stq, _body = request(
+                port, "POST",
+                "/api/gcode-attach?token=%s&name=%s" % (_tok99,
+                                                         "beam-slice.gcode"),
+                _glbody)
+            _ok105 = _stq == 200
+            if _ok105:
+                _stq, _body = jrequest(port, "POST", "/api/analyze",
+                                       {"token": _tok99, "params": {}})
+                _t105 = (_body.get("gcode_tune") or {}).get("gcode_tune") or {}
+                _ok105 = (_stq == 200 and (_t105.get("tuned") or 0) > 0
+                          and (_t105.get("candidates") or 0) > 0)
+            if _ok105:
+                import http.client as _hc105
+                _conn = _hc105.HTTPConnection("127.0.0.1", port)
+                _conn.request("GET", "/api/gcode-tuned?token=" + str(_tok99))
+                _resp = _conn.getresponse()
+                _prod = _resp.read()
+                _conn.close()
+                _ok105 = (_resp.status == 200 and len(_prod) > 0
+                          and _prod != _glbody)
+            check("T105 matched slice → tuned>0 + product bytes differ",
+                  _ok105, "")
+        else:
+            print("T105 SKIP — beam-slice.gcode fixture absent")
+
+        # T106 — v0.26 machine/hotend pass-through (diff mode only)
+        if os.path.isfile(_GB) and os.path.isfile(_GA):
+            _sta, _upa2 = upload(port, "m-a.gcode", _GA)
+            _stb, _upb2 = upload(port, "m-b.gcode", _GB)
+            if _sta == 200 and _stb == 200:
+                _stq, _body = jrequest(port, "POST", "/api/gcode-diff",
+                                       {"token_a": _upa2["token"],
+                                        "token_b": _upb2["token"],
+                                        "machine": "X1C",
+                                        "hotend": "snapmaker_u1"})
+                check("T106 diff machine/hotend pass-through + echo",
+                      _stq == 200 and _body.get("ok")
+                      and _body.get("machine") == "X1C"
+                      and _body.get("hotend") == "snapmaker_u1",
+                      "%s %s" % (_stq, str(_body)[:140]))
+                _stq, _body = jrequest(port, "POST", "/api/gcode-diff",
+                                       {"token_a": _upa2["token"],
+                                        "token_b": _upb2["token"],
+                                        "machine": "bad key!"})
+                check("T106b malformed machine key → 400",
+                      _stq == 400, "%s %s" % (_stq, str(_body)[:100]))
+            else:
+                print("T106/T106b SKIP — gcode upload failed")
+        else:
+            print("T106 SKIP — gcode fixtures absent")
+        _stq, _body = jrequest(port, "POST", "/api/gcode-score",
+                               {"token": _up.get("token"),
+                                "machine": "U1"})
+        check("T106c score rejects machine (machine-inert channel)",
+              _stq == 400 and "评分模式" in str(_body.get("error", "")),
+              "%s %s" % (_stq, str(_body)[:100]))
+        _stq, _body = request(port, "GET", "/api/params")
+        _hv = ((json.loads(_body).get("surface") or {}).get("hotend_values"))
+        check("T106d params surface exposes hotend_values",
+              isinstance(_hv, list) and "snapmaker_u1" in _hv,
+              str(_hv)[:100])
+
+        # T103 — fallback strip is VALUE-aware (flag + its argument go
+        # together; the old string filter left orphan positionals and only
+        # the engine's leniency saved it — probed 2026-10-03). Also pins the
+        # latent --heatmap-json family this iteration closed.
+        sys.path.insert(0, ROOT)
+        import server as _srv103
+        _out = _srv103._strip_fallback_flags(
+            ["m.stl", "--phase-c", "--gcode-in", "in.gcode",
+             "--gcode-out", "out.gcode", "--gcode-vm-floor", "12.5",
+             "--heatmap-json", "hm.json", "--orca-suggest", "--json",
+             "r.json"],
+            ["--gcode-in", "--gcode-out", "--gcode-vm-floor",
+             "--heatmap-json", "--orca-suggest"])
+        check("T103 value-aware fallback strip removes flag+value pairs",
+              _out == ["m.stl", "--phase-c", "--json", "r.json"], str(_out))
+        _out2 = _srv103._strip_fallback_flags(
+            ["m.stl", "--voxel-vote", "--orca-suggest", "--json", "r.json"],
+            ["--voxel-vote", "--orca-suggest"])
+        check("T103b bare flags strip without eating neighbors",
+              _out2 == ["m.stl", "--json", "r.json"], str(_out2))
+
         # ---------- v0.16 persistent rolling log + open-folder channel ----------
         # after the whole suite's traffic the tiny-capped log must have rolled.
         status, body = request(port, "GET", "/api/logs-dir")

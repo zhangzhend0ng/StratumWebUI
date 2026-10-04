@@ -1,0 +1,4 @@
+{
+  "tool": "stratum",
+  "gcode_tune": {"segments": 4140, "extrude_segments": 2120, "travel_segments": 2020, "arc_segments": 0, "unparsed_lines": 0, "ignored_lines": 2, "candidates": 160, "tuned": 80, "no_stress": 80, "excluded_feature": 1960, "coverage_pct": 50.0000, "e_drift_pct": 2.4278, "p_hi": 0.9000, "m_hot": 1.1000, "vm_floor_mpa": 0.0000, "patch_coverage_ratio": 0.0547, "alignment": "bbox-center(auto)", "alignment_blind_spots": "rotation/mirror undetectable"}
+}

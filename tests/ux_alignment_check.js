@@ -36,7 +36,14 @@ async function main() {
   const srv = spawn("python", ["server.py"], { cwd: ROOT, detached: false,
     stdio: "ignore",
     env: Object.assign({}, process.env, { STRATUM_UI_PORT: String(port),
-                                          STRATUM_UI_NO_BROWSER: "1" }) });
+                                          STRATUM_UI_NO_BROWSER: "1",
+                                          // v0.24 E12: grid 24 makes the
+                                          // cube fixture's engine run ~1.3s
+                                          // (grid 16 → 0.22s), wide enough to
+                                          // land a mid-run upload/cancel
+                                          // deterministically; the thin beam
+                                          // fixture stays ~30ms either way
+                                          STRATUM_UI_GRID: "24" }) });
   const cport = await freePort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "stratum-ux-cdp-"));
   const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu",
@@ -121,19 +128,19 @@ async function main() {
     const boot = JSON.parse(await evalJs("(function(){var k=document.querySelector('.ui-kpis');" +
       "var c=document.getElementById('cand-panel');" +
       "var t=document.getElementById('detail-fold-toggle');" +
-      "var fs=document.getElementById('flow-steps');" +
-      "function st(n){var s=fs.querySelector('.fs-step[data-fs=\"'+n+'\"]');" +
-      "return s.className.indexOf('active')>=0?'active':" +
-      "(s.className.indexOf('done')>=0?'done':'-')}" +
       "return JSON.stringify({noReport:document.body.classList.contains('no-report')," +
       "kpiVis:k.offsetParent!==null,candVis:c.offsetParent!==null," +
-      "togVis:t.offsetParent!==null,s1:st(1),s2:st(2),s3:st(3)})})()"));
+      "togVis:t.offsetParent!==null})})()"));
     expect("E10a boot: pristine panel hides KPIs/compare/fold toggle",
            boot.noReport && !boot.kpiVis && !boot.candVis && !boot.togVis,
            JSON.stringify(boot));
-    expect("E10a boot: step strip honest — step1 active, 2/3 untouched",
-           boot.s1 === "active" && boot.s2 === "-" && boot.s3 === "-",
-           JSON.stringify(boot));
+    // v0.22: onboarding is taught ONCE (#empty-guide). The v0.10 first-run
+    // bar and the v0.13 step strip are gone — three copies of the same
+    // three steps on a first visit was the clutter being fixed.
+    expect("E10a boot: single onboarding surface (no first-guide / flow-steps)",
+           await evalJs("!document.getElementById('first-guide')" +
+                        " && !document.getElementById('flow-steps')" +
+                        " && !!document.getElementById('empty-guide')"));
 
     // ---- E1 mode switch ------------------------------------------------
     const sw = JSON.parse(await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
@@ -320,7 +327,7 @@ async function main() {
     expect("E8 sticky: shows 分析中 while running, restores SF after",
            runningShown && runDone, JSON.stringify({ runningShown, runDone }));
 
-    // ---- E7 simple mode = single-column task flow -------------------------
+    // ---- E7 simple mode = single-column, one-answer stack (v0.22) ---------
     await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "if(!i.checked)i.click();return 1})()");  // ensure advanced for contrast check
     const advCols = await evalJs("getComputedStyle(document.querySelector('.grid')).gridTemplateColumns");
@@ -331,27 +338,63 @@ async function main() {
       "getComputedStyle(document.querySelector('.grid')).gridTemplateColumns;" +
       "var names=[];document.querySelectorAll('.panel h2').forEach(function(h){" +
       "if(h.offsetParent!==null)names.push(h.textContent.trim().split('\\n')[0].split(' ')[0])});" +
-      "var fs=document.getElementById('flow-steps');" +
+      "var sv=document.getElementById('sticky-verdict');" +
+      "var k=document.querySelector('.ui-kpis');" +
+      "var rec=document.getElementById('rec-items');" +
       "var cand=document.getElementById('cand-panel');" +
+      "function bv(id){var b=document.getElementById(id);return b.offsetParent!==null}" +
       "return JSON.stringify({cols:cols,names:names.join(',')," +
-      "fsVis:fs.offsetParent!==null," +
-      "fsDone:(fs.querySelector('.fs-n')||{}).textContent," +
-      "candVis:cand.offsetParent!==null})})()"));
+      "svVis:sv.offsetParent!==null," +
+      "kpiVis:k.offsetParent!==null,recVis:rec.offsetParent!==null," +
+      "candVis:cand.offsetParent!==null," +
+      "anz:bv('btn-analyze'),snap:bv('btn-snapshot')," +
+      "cmp:bv('btn-compare'),rpt:bv('btn-report')})})()"));
     expect("E7 flow: simple mode is single-column (advanced was 2-col)",
            advCols.indexOf(" ") >= 0 && simple.cols.indexOf(" ") < 0,
            JSON.stringify({ advCols, cols: simple.cols }));
-    expect("E7 flow: panel order = 模型→快速预设→分析结果→档位对比, 档位对比 visible",
-           simple.names === "模型,快速预设,分析结果,档位对比" && simple.candVis,
+    // v0.23: G-code 工具面板（评分入口）有意暴露给简单模式，插在快速预设之后
+    expect("E7 flow: panel order = 模型→快速预设→G-code→分析结果→档位对比, 档位对比 visible",
+           simple.names === "模型,快速预设,G-code,分析结果,档位对比" && simple.candVis,
            JSON.stringify(simple));
-    expect("E7 flow: step strip visible, step 1 done (later steps: see E10c)",
-           simple.fsVis && simple.fsDone === "✓", JSON.stringify(simple));
+    expect("E7 v0.22: idle sticky hidden in simple mode (hero carries SF once)",
+           !simple.svVis, JSON.stringify(simple));
+    expect("E7 v0.22: KPI row + rec list live behind the detail fold",
+           !simple.kpiVis && !simple.recVis, JSON.stringify(simple));
+    expect("E7 v0.22: primary row = 分析 + 快照 (compare/report advanced-only)",
+           simple.anz && simple.snap && !simple.cmp && !simple.rpt,
+           JSON.stringify(simple));
+    // v0.22: while RUNNING the sticky bar returns even in simple mode —
+    // it is the run feedback channel; it hides again when the hero re-renders
+    await evalJs("document.getElementById('btn-analyze').click(); 1");
+    let simpleRunning = false;
+    for (let i = 0; i < 12; i++) {
+      const t = await evalJs("(function(){var s=document.getElementById('sticky-verdict');" +
+        "return s.style.display==='flex' && s.textContent.indexOf('分析中')>=0})()");
+      if (t) { simpleRunning = true; break; }
+      await sleep(300);
+    }
+    let simpleDone = false;
+    for (let i = 0; i < 150; i++) {
+      const t = await evalJs(
+        "document.getElementById('sticky-verdict').style.display==='none'");
+      if (t) { simpleDone = true; break; }
+      await sleep(300);
+    }
+    expect("E7 v0.22: sticky shows 分析中 while running in simple, then hides",
+           simpleRunning && simpleDone,
+           JSON.stringify({ simpleRunning, simpleDone }));
     await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "if(!i.checked)i.click();return 1})()");  // back to advanced
     await sleep(200);
-    const fsHidden = await evalJs("document.getElementById('flow-steps').offsetParent === null");
-    expect("E7 flow: step strip hidden in advanced mode", fsHidden === true);
+    const advBack = JSON.parse(await evalJs("(function(){var sv=document.getElementById('sticky-verdict');" +
+      "var k=document.querySelector('.ui-kpis');var r=document.getElementById('rec-items');" +
+      "return JSON.stringify({svVis:sv.offsetParent!==null," +
+      "kpiVis:k.offsetParent!==null,recVis:r.offsetParent!==null})})()"));
+    expect("E7 v0.22: advanced restores sticky bar + KPI row + rec list",
+           advBack.svVis && advBack.kpiVis && advBack.recVis,
+           JSON.stringify(advBack));
 
-    // ---- E10b/c detail-wall fold + honest steps (v0.18) -------------------
+    // ---- E10b detail-wall fold (v0.18; v0.22 wall also owns KPIs + rec) ---
     // Advanced contrast first (E7 left us here): wall visible, toggle hidden
     const adv10 = JSON.parse(await evalJs("(function(){var w=document.getElementById('phase-d-detail');" +
       "var t=document.getElementById('detail-fold-toggle');" +
@@ -361,31 +404,21 @@ async function main() {
     await evalJs("(function(){var i=document.getElementById('mode-toggle');" +
       "if(i.checked)i.click();return 1})()");  // switch to simple
     await sleep(200);
-    // S3 shape (report via walls-rerun, preset never chosen): step2 = skip
-    const steps = JSON.parse(await evalJs("(function(){var fs=document.getElementById('flow-steps');" +
-      "function st(n){var s=fs.querySelector('.fs-step[data-fs=\"'+n+'\"]');" +
-      "return {cls:s.className,dot:(s.querySelector('.fs-n')||{}).textContent,ti:s.title}}" +
-      "return JSON.stringify({s1:st(1),s2:st(2),s3:st(3)})})()"));
-    expect("E10c steps: S3 honest state — step2 skip(–, neutral title), 1/3 done",
-           steps.s1.cls.indexOf("done") >= 0
-           && steps.s2.cls.indexOf("skip") >= 0 && steps.s2.dot === "–"
-           && steps.s2.ti.indexOf("未选预设") >= 0
-           && steps.s3.cls.indexOf("done") >= 0,
-           JSON.stringify(steps));
     const foldClosed = JSON.parse(await evalJs("(function(){var w1=document.getElementById('structural-summary');" +
       "var w2=document.getElementById('phase-d-detail');" +
       "var m=document.getElementById('pd-warn-promoted');" +
       "var t=document.getElementById('detail-fold-toggle');" +
       "var k=document.querySelector('.ui-kpis');" +
+      "var r=document.getElementById('rec-items');" +
       "return JSON.stringify({wall1Vis:w1.offsetParent!==null," +
       "wall2Vis:w2.offsetParent!==null,togVis:t.offsetParent!==null," +
-      "kpiVis:k.offsetParent!==null," +
+      "kpiVis:k.offsetParent!==null,recVis:r.offsetParent!==null," +
       "noReport:document.body.classList.contains('no-report')," +
       "mirrorTxt:m.textContent.slice(0,60)," +
       "warnLine:(document.querySelector('#phase-d-detail .pd-warn')||{}).textContent})})()"));
-    expect("E10b simple+closed: wall hidden, toggle visible, KPIs back",
+    expect("E10b simple+closed: wall + KPIs + rec list hidden, toggle visible",
            !foldClosed.wall1Vis && !foldClosed.wall2Vis && foldClosed.togVis
-           && foldClosed.kpiVis && !foldClosed.noReport,
+           && !foldClosed.kpiVis && !foldClosed.recVis && !foldClosed.noReport,
            JSON.stringify(foldClosed));
     expect("E10b mirror: buckling warning echoed above the fold (engine text)",
            foldClosed.mirrorTxt.indexOf("屈曲警示") >= 0,
@@ -393,21 +426,50 @@ async function main() {
     expect("E10b wall line keeps the engine text under pd-warn class",
            (foldClosed.warnLine || "").indexOf("屈曲警示") >= 0,
            JSON.stringify(foldClosed));
-    // open → wall visible in place; close → hidden again
+    // open → wall + KPIs + rec list visible in place; close → hidden again
     await evalJs("document.getElementById('detail-fold-toggle').click(); 1");
     await sleep(120);
     const foldOpen = JSON.parse(await evalJs("(function(){var w1=document.getElementById('structural-summary');" +
       "var w2=document.getElementById('phase-d-detail');" +
+      "var k=document.querySelector('.ui-kpis');var r=document.getElementById('rec-items');" +
       "return JSON.stringify({w1:w1.offsetParent!==null,w2:w2.offsetParent!==null," +
+      "kpi:k.offsetParent!==null,rec:r.offsetParent!==null," +
       "arrow:document.getElementById('detail-fold-arrow').textContent})})()"));
-    expect("E10b simple+open: wall visible, arrow flips off the closed glyph",
-           foldOpen.w1 && foldOpen.w2 && foldOpen.arrow !== "▸",
+    expect("E10b simple+open: wall + KPIs + rec list visible, arrow flips",
+           foldOpen.w1 && foldOpen.w2 && foldOpen.kpi && foldOpen.rec
+           && foldOpen.arrow !== "▸",
            JSON.stringify(foldOpen));
     await evalJs("document.getElementById('detail-fold-toggle').click(); 1");
     await sleep(120);
-    const foldReclosed = await evalJs(
-      "document.getElementById('phase-d-detail').offsetParent === null");
-    expect("E10b simple+reclosed: wall hidden again", foldReclosed === true);
+    const foldReclosed = JSON.parse(await evalJs("(function(){var w=document.getElementById('phase-d-detail');" +
+      "var k=document.querySelector('.ui-kpis');var r=document.getElementById('rec-items');" +
+      "return JSON.stringify({w:w.offsetParent===null,k:k.offsetParent===null," +
+      "r:r.offsetParent===null})})()"));
+    expect("E10b simple+reclosed: wall + KPIs + rec list hidden again",
+           foldReclosed.w && foldReclosed.k && foldReclosed.r,
+           JSON.stringify(foldReclosed));
+
+    // ---- E11 raw-table fold + outlet invariant (v0.19 round B) ------------
+    // Shape-agnostic by design: open state must mirror the cand-bars outlet
+    // (bars render only with ≥2 feasible — fold closed; otherwise auto-open)
+    const e11 = JSON.parse(await evalJs("(function(){var f=document.getElementById('cand-raw-fold');" +
+      "var b=document.getElementById('cand-bars');" +
+      "var t=document.getElementById('cand-table');" +
+      "var p=document.getElementById('cand-panel');" +
+      "return JSON.stringify({hasFold:!!f,hasTable:!!t,inside:!!(f&&t&&f.contains(t))," +
+      "barsOutside:!!(f&&b&&!f.contains(b))," +
+      "barsRendered:!!(b&&b.children.length>0)," +
+      "openState:f?f.open:null," +
+      "summary:((f&&f.querySelector('summary'))||{}).textContent||''," +
+      "panelVis:!!(p&&p.offsetParent!==null)})})()"));
+    expect("E11 fold: in-panel <details> wraps the raw table, bars stay outside",
+           e11.hasFold && e11.hasTable && e11.inside && e11.barsOutside && e11.panelVis,
+           JSON.stringify(e11));
+    expect("E11 fold: open state mirrors the outlet invariant (bars rendered ⇒ closed)",
+           e11.openState === !e11.barsRendered, JSON.stringify(e11));
+    expect("E11 fold: summary labels the raw table",
+           e11.summary.indexOf("原始对比表") >= 0, JSON.stringify(e11));
+
     await shot("v018_simple_folded.png");  // simple: folded wall + mirror + skip strip
 
     // E10b leaves us in simple mode — restore advanced for its labeled shot,
@@ -421,6 +483,113 @@ async function main() {
       "if(i.checked){i.click()}return 1})()");
     await sleep(200);
     await shot("v013_simple_flow.png");  // simple: single-column task flow + step strip
+
+    // ---- E12 (v0.24) session-change sweep: upload a new model ------------
+    // A rendered verdict/KPIs/history must not survive the session change.
+    // Fixture: cube_100.stl on the suite's grid-24 server (~1.3s per run —
+    // the timing margin that makes the cancel/mid-run windows stable; beam
+    // runs ~30ms and cannot hold a race). Setup renders cube with walls=8,
+    // then re-uploads the SAME file (a NEW token — session change, not a
+    // re-run) and cancels the fresh session's auto-analyze, so the pristine
+    // panel is stable to assert against.
+    const cubeB64 = fs.readFileSync(
+      path.join(ROOT, "test_data", "cube_100.stl")).toString("base64");
+    await evalJs("(function(){var i=document.querySelector('[data-param=walls]');" +
+      "if(i){i.value='8';i.dispatchEvent(new Event('input'));i.dispatchEvent(new Event('change'));}" +
+      "document.getElementById('btn-analyze').click();return 1})()");
+    const preRun = await waitDone("walls=8 run before re-upload");
+    expect("E12 setup: walls=8 run rendered before the session change",
+           preRun, "timeout waiting for the pre-upload run");
+    await inject("cube_100.stl", cubeB64);  // new token → resetResultsPanel fires
+    let started = false;
+    for (let i = 0; i < 60; i++) {  // fresh session's run starts (~1.3s long)
+      started = await evalJs("(function(){var b=document.getElementById('btn-analyze');" +
+        "return b.className.indexOf('ui-running')>=0})()");
+      if (started) break;
+      await sleep(50);
+    }
+    await evalJs("document.getElementById('btn-analyze').click(); 1");  // 取消
+    let stopped = false;
+    for (let i = 0; i < 60; i++) {
+      stopped = await evalJs("(function(){var b=document.getElementById('btn-analyze');" +
+        "return b.className.indexOf('ui-running')<0})()");
+      if (stopped) break;
+      await sleep(50);
+    }
+    await sleep(500);  // cancel path (abort/toast) settles
+    const pristine = JSON.parse(await evalJs("(function(){" +
+      "var eg=document.getElementById('empty-guide');" +
+      "var sc=document.getElementById('summary-cards');" +
+      "var pdw=document.getElementById('pd-warn-promoted');" +
+      "var bars=document.getElementById('cand-bars');" +
+      "var ac=document.getElementById('alerts-card');" +
+      "var up=document.getElementById('upload-msg');" +
+      "return JSON.stringify({noReport:document.body.classList.contains('no-report')," +
+      "egVis:!!eg&&eg.style.display!=='none'," +
+      "cardsEmpty:!sc||sc.children.length===0," +
+      "pdwAlive:!!pdw,pdwEmpty:!!pdw&&pdw.childNodes.length===0," +
+      "barsEmpty:!bars||bars.children.length===0," +
+      "alertsHidden:!ac||ac.style.display==='none'," +
+      "cpWalls:document.getElementById('cp-walls').textContent," +
+      "histEmpty:(document.getElementById('history-list').textContent||'').indexOf('尚无运行')>=0," +
+      "upload:(up&&up.textContent||'').slice(0,40)})})()"));
+    expect("E12a pristine: re-upload restores empty-guide + no-report + cleared panel",
+           pristine.noReport && pristine.egVis && pristine.cardsEmpty &&
+           pristine.barsEmpty && pristine.alertsHidden &&
+           pristine.cpWalls === "—" && pristine.histEmpty,
+           JSON.stringify(pristine));
+    expect("E12a survival: pd-warn mirror node survives the clear (lift-out)",
+           pristine.pdwAlive && pristine.pdwEmpty, JSON.stringify(pristine));
+    // cross-model delta guard: the new session's first render must not
+    // compare against the old session's run (state.history was emptied)
+    await evalJs("document.getElementById('btn-analyze').click(); 1");
+    const runB = await waitDone("fresh-session run after re-analyze");
+    let afterB = null;
+    for (let i = 0; i < 20; i++) {  // refreshHistory lands after the toast
+      afterB = JSON.parse(await evalJs("(function(){" +
+        "var d=document.querySelector('#summary-cards .run-delta');" +
+        "var hl=document.getElementById('history-list');" +
+        "var rows=Array.prototype.filter.call(hl.children," +
+        "function(n){return n.tagName==='DIV'}).length;" +
+        "return JSON.stringify({delta:!!d," +
+        "cpWalls:document.getElementById('cp-walls').textContent," +
+        "runs:rows})})()"));
+      if (afterB.runs >= 1) break;
+      await sleep(150);
+    }
+    expect("E12b cross-model delta: fresh session renders NO delta chips",
+           runB && !afterB.delta, JSON.stringify(afterB));
+    expect("E12b fresh session: history shows exactly its own 1 run (cancelled " +
+           "run appended nothing)",
+           runB && afterB.runs === 1, JSON.stringify(afterB));
+
+    // ---- E12c (v0.24) mid-run upload race (S7) ----------------------------
+    // walls=8 manual run (~1.3s) in flight → the cube re-upload swaps the
+    // session mid-run → the late response of the OLD run must be dropped and
+    // the queued run for the new session must fire (defaults echo walls=2).
+    // sawStale only counts AFTER the reset landed (cp-walls read "—") — the
+    // legitimate pre-upload "8" is not a stale render.
+    await evalJs("(function(){var i=document.querySelector('[data-param=walls]');" +
+      "if(i){i.value='8';i.dispatchEvent(new Event('input'));i.dispatchEvent(new Event('change'));}" +
+      "document.getElementById('btn-analyze').click();return 1})()");
+    await inject("cube_100.stl", cubeB64);  // session swap inside the window
+    let sawReset = false, sawStale = false, finalWalls = "";
+    for (let i = 0; i < 200; i++) {
+      const st = JSON.parse(await evalJs("(function(){" +
+        "var w=document.getElementById('cp-walls').textContent;" +
+        "var b=document.getElementById('btn-analyze');" +
+        "return JSON.stringify({w:w,run:b.className.indexOf('ui-running')>=0})})()"));
+      finalWalls = st.w;
+      if (st.w === "—") sawReset = true;
+      if (sawReset && st.w === "8") sawStale = true;
+      if (sawReset && !st.run && st.w !== "—") break;
+      await sleep(100);
+    }
+    expect("E12c race: old session's late render never lands (cp-walls≠8 " +
+           "after reset) and the new session's run fires (walls=2 echo)",
+           sawReset && !sawStale && finalWalls === "2",
+           JSON.stringify({ sawReset: sawReset, sawStale: sawStale,
+                            finalWalls: finalWalls }));
 
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");

@@ -17,3 +17,6 @@ test_data/real3mf-results/
 
 # 内部调研/工作文档（曾误公开于历史，2026-09-27 清洗出库，勿再提交）
 docs/
+
+# gcode-diff 伴随工具（兄弟仓库构建产物，不入库）
+bin/gcode-diff/

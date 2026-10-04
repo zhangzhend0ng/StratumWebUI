@@ -1,0 +1,4 @@
+# gcode fixtures must stay byte-exact across clones (LF): the engine
+# and companion tool parse them as committed, and E2E byte comparisons
+# (T105) depend on the authored bytes
+*.gcode -text
