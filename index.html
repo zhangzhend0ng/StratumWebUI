@@ -554,6 +554,15 @@
   body.mode-simple:not(.detail-open) .detail-wall { display: none !important; }
   body:not(.mode-simple) #detail-fold-toggle { display: none; }
   body.no-report #detail-fold-toggle { display: none; }
+  /* v0.33 pre-report action row: a permanently-disabled export/compare
+     button is noise for a first-run novice (nothing to export yet, no
+     explanation why it's grey). The row is 分析 alone until the first
+     report lands — no-report flips off at first render (v0.18 pristine
+     semantics), and the disabled lifecycle behind these buttons is
+     untouched (visibility layer only, both modes). */
+  body.no-report #btn-compare,
+  body.no-report #btn-report,
+  body.no-report #btn-snapshot { display: none; }
   /* structured engine warnings (phase_d.buckling_warning /
      fracture_risk_detected) mirror above the fold so folding cannot bury a
      safety signal with no other structured channel. Default-hidden gate:
@@ -1540,6 +1549,9 @@ Promise.all([
     var bs = $("btn-sample"), ls = $("lnk-sample");
     if (bs) bs.style.display = "";
     if (ls) ls.style.display = "";
+    // v0.33: preset cards are clickable pre-model when the bridge target
+    // exists (buildPresetPanel may not have run yet — it has the twin guard)
+    setPresetEnabled(true);
   }
   buildPresetMaterialSelect();  // options from the live schema enum
   state.params = pm.params || [];
@@ -1811,7 +1823,11 @@ function buildPresetPanel() {
     b.title = (p.desc || "") + (p.desc ? "\n" : "") + "共 " +
       Object.keys(p.params || {}).length + " 项参数";
     b.dataset.preset = p.name;
-    b.disabled = true;  // enabled by applySession once a model is live
+    b.disabled = true;  // enabled by applySession once a model is live —
+    // v0.33: …or right here when the bundled sample ships (the preset→
+    // sample bridge makes a pre-model click useful instead of a dead end);
+    // status may have arrived before this build, so check both orders
+    if (state.sampleAvailable) b.disabled = false;
     b.onclick = function () { applyPreset(p); };
     box.appendChild(b);
   });
@@ -1869,7 +1885,20 @@ function onPresetMaterial() {
   }
 }
 function applyPreset(p) {
-  if (!state.token) { toast("请先上传模型", "err"); return; }
+  // v0.33 preset→sample bridge: cards are enabled at boot when the bundled
+  // sample ships (the use-case question invites clicking BEFORE any model),
+  // and the first click with no model loads the sample instead of dead-
+  // ending (disclosed by the 已载入示例 line — no extra toast; the preset's
+  // own 已应用预设 toast + 分析完成 tell the story). Frozen layouts without
+  // the sample keep the cards disabled, so the err branch below stays the
+  // unreachable-by-mouse defensive fallback it always was.
+  if (!state.token) {
+    if (state.sampleAvailable) {
+      loadSample(function () { applyPreset(p); });
+      return;
+    }
+    toast("请先上传模型", "err"); return;
+  }
   if (state.running) { toast("上一次分析尚未结束，请稍候", "info"); return; }
   // v0.9 pre-fix (sibling of applyCheckedSuggestions): analyze() itself has
   // no batch gate (only scheduleAuto does), so a click mid-batch would run
@@ -2736,7 +2765,12 @@ function onFile() {
 // — success path identical to onFile's (the server response is the same
 // shape), so every downstream gate (reset-on-new-model, session guards,
 // F5 restore) applies for free. No file ever leaves the machine.
-function loadSample() {
+// v0.33 optional afterSession callback: the preset→sample bridge (below)
+// reuses this session path and applies the clicked preset instead of the
+// plain analyze. Both pre-existing entries (guide button + panel link) call
+// it argumentless — behavior unchanged. The user-won guard drops the bridge
+// when a real upload landed while our fetch was in flight (keep theirs).
+function loadSample(afterSession) {
   $("upload-msg").className = "ok";
   $("upload-msg").textContent = "载入示例模型…";
   fetch("/api/sample", { method: "POST",
@@ -2744,11 +2778,13 @@ function loadSample() {
     .then(function (r) { return r.json(); })
     .then(function (j) {
       if (!j.ok) throw new Error(j.error || "示例载入失败");
+      if (afterSession && state.token) return;  // superseded by user action
       resetTuningState();
       applySession(j);
       persistSession();
       $("upload-msg").textContent = "已载入示例 " + j.name
         + " (" + (j.size / 1024).toFixed(1) + " KB)";
+      if (afterSession) return afterSession(j);
       return analyze(false);
     })
     .catch(function (e) {
@@ -3098,6 +3134,25 @@ function analyze(compare, auto) {
     // auto runs stay quiet — a toast after every slider release would be noise;
     // errors and cancels below still surface (they need user attention)
     if (!auto) toast(compare ? "对比分析完成" : "分析完成", "ok");
+    // v0.33 novice visibility: in simple mode, bring the verdict into view
+    // when it landed outside the viewport. v0.18 rejected auto-scroll while
+    // the sticky verdict carried this job — v0.22 hid that sticky in simple
+    // mode, so the old rationale is gone. User-initiated runs only (!auto):
+    // real-time re-runs and auto-tune rounds must never yank the scroll.
+    // 80px口径 = "card top must at least peek into the viewport".
+    if (!auto && document.body.classList.contains("mode-simple")) {
+      var sc = $("summary-cards");
+      if (sc && sc.children.length) {
+        var scTop = sc.getBoundingClientRect().top;
+        var vh = window.innerHeight || document.documentElement.clientHeight;
+        if (scTop > vh - 80) {
+          var reduce = window.matchMedia
+            && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          sc.scrollIntoView({ block: "start",
+            behavior: reduce ? "auto" : "smooth" });
+        }
+      }
+    }
   }).catch(function (e) {
     // v0.24: same session-change guard on the rejection path — a late
     // network error / abort of the old session's run must not toast over

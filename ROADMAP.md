@@ -1041,6 +1041,50 @@
   语言（引擎侧，延续）；W2/W3/W4 走查发现（预设先于模型点击死路 /
   简单模式分析完成后结论在折叠线下方 / 首屏禁用快照按钮）→ 轮 3
 
+### v0.33.0 — 小白流程三件套：预设→示例桥 / 结论自动到位 / 首屏行动行瘦身（2026-10-05）
+
+> 8h 小白可用性专场·轮 3（走查发现 W2/W3/W4 清偿）。independent-REFUTE 一轮
+> （VERDICT: REJECT——**blocker 推翻 W2 现状描述**：预设卡在无模型时是
+> disabled 灰卡（不可点），applyPreset 的 !token err 分支对用户不可达=死
+> 防御代码；真实首屏问题是「用途问句邀请点击但灰卡死相」。详见 loop-journal
+> 迭代 107）。
+
+- [x] **W2 预设→示例桥**：预设卡启动即随示例可用（buildPresetPanel 与
+      status 回填双序守卫 setPresetEnabled）；无模型点按 → loadSample
+      可选 afterSession 回调（用户动作先落地则桥放弃保留其会话——B3/B4/B6
+      竞态面一行守卫全覆盖）→ 回调 applyPreset 正常路径；披露走
+      「已载入示例」upload-msg 行，**零新 toast**（refuter (g)：桥 toast
+      会与预设 toast+分析完成三连堆叠）；两个既有入口（guide 按钮/面板
+      链接）无回调行为不变；frozen 布局无示例时维持灰卡，err 分支保持
+      不可达防御
+- [x] **W3 结论自动到位**：analyze 成功路径（updateNoReportState 后），
+      mode-simple 且 summary-cards 非空且 top > innerHeight-80（80px 口径
+      注释=「卡片至少露头」）→ scrollIntoView(block:start)，
+      reduced-motion 降级 behavior:auto；仅用户触发（!auto——实时重跑与
+      自动调参各轮不拽滚动，refuter minor）；v0.18 拒自动滚屏的「sticky
+      职能重叠」理由在 v0.22 隐藏 sticky 后失效，本裁决重启
+- [x] **W4 首屏行动行瘦身**：body.no-report 下 btn-compare/btn-report/
+      btn-snapshot display:none（两模式统一——无可导出物的灰按钮=首跑噪声；
+      disabled 生命周期不动，纯可见性层；首渲染 no-report 摘除全行回归；
+      换模 resetTuningState 先 resetResultsPanel 再翻 no-report，无中间态
+      ——refuter (d) 核实）
+- [x] **测试**：E3 pin 更新（pristine 行=「分析」，立法本意=行构成
+      deliberate 保留，v0.17→v0.18 同款先例）+ W18 块 6 断言（pristine 行
+      构成+桥激活态/桥全链路 walls=5/简单模式滚动到位/两模式 post-report
+      行构成/advanced scrollIntoView 间谍=0）；E18 需 pristine 态——置于
+      套件尾，sessionStorage 清理 + reload 恢复
+- 配套：README 预设/结果段更新；UI_VERSION 0.33.0
+- 验证：smoke **157/157**；render_check **198**；ux **全绿**（+W18 6 项）；
+  browser/browser_en/i18n（FAIL 0+CONCAT 0）/consistency 全绿；sabotage
+  ×3 刀（砍桥→W18 桥+5 项红；砍 scrollIntoView→滚动断言红；砍 W4 CSS→
+  E3+W18 pristine 双红）翻红后还原。过程注记：advanced 对照首版判据
+  （scrollY===0）被浏览器原生 scroll-anchoring 抖动（26px）打假——改
+  scrollIntoView 间谍计数，几何判据在双栏布局下不可判
+- 遗留 backlog：B3 双击桥先到者胜（后点预设静默放弃——2s 后重点即达，
+  披露于 journal；加时间戳比较无收益）；W3 的 auto-tune 轮间滚动未单独
+  E2E（守卫 !auto 代码级+间谍机制已证）；多轮真链/overall_band/深链语言
+  （引擎侧延续）
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 

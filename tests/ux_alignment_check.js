@@ -195,9 +195,12 @@ async function main() {
     // left at 3 and silently red since e7e53c3 — surfaced during v0.18 E10
     // work. Spirit of the pin: the row's composition is deliberate and the
     // dirty chip stays a span (E9 re-checks span-ness).
-    expect("E3 options: collapsed by default, badge hidden, primary row = 4 buttons",
+    // v0.33: pre-report (pristine) the export/compare trio hides under
+    // body.no-report — a disabled grey button with nothing to export is
+    // first-run noise; the full row returns with the first report (W18 below).
+    expect("E3 options: collapsed by default, badge hidden, pristine row = 分析 only",
            opt !== "missing" && opt.open === false && opt.badge === "none"
-           && opt.btns === "分析,优化对比,下载报告 JSON,下载 HTML 快照", JSON.stringify(opt));
+           && opt.btns === "分析", JSON.stringify(opt));
     await evalJs("(function(){var c=document.getElementById('opt-fast');" +
       "c.checked=true;c.dispatchEvent(new Event('change'));return 1})()");
     const badgeOn = await evalJs("(function(){var b=document.getElementById('opt-count');" +
@@ -859,6 +862,91 @@ async function main() {
     expect("E17h height: risky beam simple page ≤2200 (worst shape)",
            hB.simple === true && hB.wallOpen === false && hB.h <= 2200,
            JSON.stringify(hB));
+
+    // ---- W18 (v0.33) novice-flow trio: preset→sample bridge / verdict
+    // auto-scroll (simple, user-initiated) / pre-report action row ----
+    // pristine reset: drop the persisted session (page reload keeps
+    // sessionStorage per tab, so clear it explicitly) and force simple mode
+    await evalJs("try{sessionStorage.removeItem('stratum_session')}catch(e){};" +
+      "try{localStorage.setItem('stratum-ui-mode','0')}catch(e){}; 1");
+    await send("Page.reload");
+    for (let i = 0; i < 50; i++) {
+      if (await evalJs("typeof renderReport") === "function") break;
+      await sleep(150);
+    }
+    await sleep(600);  // status/presets arrive async — bridge needs both
+    const pristineRow = await evalJs("(function(){var host=" +
+      "document.getElementById('opt-details').parentNode;var b=[];" +
+      "host.querySelectorAll('.actions > button').forEach(function(x){" +
+      "if(x.offsetParent!==null)b.push(x.textContent)});" +
+      "return JSON.stringify({row:b.join(',')," +
+      "noReport:document.body.classList.contains('no-report')," +
+      "presetEnabled:(document.querySelectorAll('.preset-btn')[0]||{}).disabled===false})})()");
+    expect("W18 pristine: simple row = 分析 only + preset cards live (bridge)",
+           pristineRow.indexOf('"row":"分析"') >= 0
+           && pristineRow.indexOf('"noReport":true') >= 0
+           && pristineRow.indexOf('"presetEnabled":true') >= 0,
+           pristineRow);
+    // W2 bridge: click a preset card with NO model → sample loads, preset
+    // applies, one real analysis lands
+    await evalJs("(function(){var b=document.querySelector('.preset-btn[data-preset=safe]');" +
+      "if(b)b.click();return 1})()");
+    const bridgeOk = await waitDone("bridge run");
+    const bridge = await evalJs("(function(){return JSON.stringify({" +
+      "msg:document.getElementById('upload-msg').textContent," +
+      "cards:document.querySelectorAll('#summary-cards .sum-card').length," +
+      "walls:document.getElementById('cp-walls').textContent})})()");
+    expect("W18 bridge: preset click with no model loads the sample + applies it",
+           bridgeOk === true
+           && bridge.indexOf("已载入示例") >= 0
+           && bridge.indexOf('"cards":2') >= 0
+           && bridge.indexOf('"walls":"5"') >= 0,
+           bridgeOk + " " + bridge);
+    // W3 scroll: simple + user-initiated + verdict outside viewport → the
+    // card is brought into view (smooth scroll settles, poll ~3s)
+    await evalJs("window.scrollTo(0,0); 1");
+    await sleep(150);
+    await evalJs("(function(){var b=document.querySelector('.preset-btn[data-preset=fast]');" +
+      "if(b)b.click();return 1})()");
+    const scrollOk = await waitDone("fast preset run");
+    let scY = 0;
+    for (let i = 0; i < 10; i++) {
+      scY = await evalJs("window.scrollY||document.documentElement.scrollTop");
+      if (scY > 0) break;
+      await sleep(300);
+    }
+    const inView = await evalJs("(function(){var r=document.getElementById('summary-cards')" +
+      ".getBoundingClientRect();return r.top>=0&&r.top<window.innerHeight})()");
+    expect("W18 scroll: simple mode lands the verdict in view",
+           scrollOk === true && scY > 0 && inView === true,
+           scrollOk + " y=" + scY + " inView=" + inView);
+    // W4 post-report row: simple = 分析+快照; advanced = the full quartet
+    const rowSimple = await evalJs("(function(){var host=" +
+      "document.getElementById('opt-details').parentNode;var b=[];" +
+      "host.querySelectorAll('.actions > button').forEach(function(x){" +
+      "if(x.offsetParent!==null)b.push(x.textContent)});return b.join(',')})()");
+    expect("W18 row: post-report simple row = 分析 + 快照",
+           rowSimple === "分析,下载 HTML 快照", rowSimple);
+    await evalJs("(function(){var s=document.querySelector('.sw');if(s)s.click();return 1})()");
+    const rowAdv = await evalJs("(function(){var host=" +
+      "document.getElementById('opt-details').parentNode;var b=[];" +
+      "host.querySelectorAll('.actions > button').forEach(function(x){" +
+      "if(x.offsetParent!==null)b.push(x.textContent)});return b.join(',')})()");
+    expect("W18 row: post-report advanced row = full quartet",
+           rowAdv === "分析,优化对比,下载报告 JSON,下载 HTML 快照", rowAdv);
+    // W3 advanced control: same run shape — the mode gate must keep the
+    // scroll code path silent (spy on scrollIntoView; native scroll
+    // anchoring may still jitter a few px, which is not our call)
+    await evalJs("window.scrollTo(0,0);window.__siv=0;" +
+      "Element.prototype.scrollIntoView=function(){window.__siv++;return null}; 1");
+    await sleep(150);
+    await evalJs("(function(){var b=document.querySelector('.preset-btn[data-preset=safe]');" +
+      "if(b)b.click();return 1})()");
+    const advOk = await waitDone("advanced preset run");
+    await sleep(600);
+    const advSiv = await evalJs("window.__siv");
+    expect("W18 scroll: advanced mode never auto-scrolls (scrollIntoView spy)",
+           advOk === true && advSiv === 0, advOk + " calls=" + advSiv);
 
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");
