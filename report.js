@@ -1467,19 +1467,33 @@ function renderReport(d, consoleText, applyable) {
       cbBox.appendChild(el("p", "hint",
         // v0.19: one line (page-height budget, round B) — semantics unchanged
         "条长=组内相对值：绿=安全系数 / 琥珀=时间 / 蓝=材料；排序以引擎为准。"));
-      // v0.28 novice summary: ONE line stating the enumeration fact — the
-      // first FEASIBLE row of the engine's candidate list. Candidates carry
-      // NO rank field (probed report.json: the array is the preset
-      // enumeration safe/balanced/fast/appearance), so "first" states table
-      // order only — never a claim that the engine ranked it, and no
-      // recommendation tone. SF rounds like the table's own SF column
-      // (Math.round; fmtSig is the scores/infill/speed convention — REFUTE).
-      var top = feas[0];
-      cbBox.appendChild(el("p", "hint cand-top",
+    }
+  }
+  // v0.28 novice summary (re-homed v0.29): ONE line stating the enumeration
+  // fact — the first FEASIBLE row of the engine's candidate list. Candidates
+  // carry NO rank field (probed report.json: the array is the preset
+  // enumeration safe/balanced/fast/appearance), so "first" states table
+  // order only — never a claim that the engine ranked it, and no
+  // recommendation tone. SF rounds like the table's own SF column
+  // (Math.round; fmtSig is the scores/infill/speed convention — REFUTE).
+  // Lives OUTSIDE #cand-bars: the bars joined the detail wall in simple
+  // mode (v0.29 budget) and this line is the above-the-fold replacement —
+  // cleared every render so a bars-less report drops it (false-positive
+  // guard, same discipline as the pd-warn mirror).
+  var noviceLine = $("cand-novice-line");
+  if (noviceLine) {
+    noviceLine.style.display = "none";
+    noviceLine.textContent = "";
+    var feasAll = (po.candidates || []).filter(function (c) {
+      return c.feasible !== false; });
+    if (feasAll.length >= 2) {
+      var top = feasAll[0];
+      noviceLine.textContent =
         "第一个可行档位（引擎枚举序）：" + (top.name || "??")
         + (typeof top.search_est_safety_factor === "number"
            ? " —— 安全系数 " + Math.round(top.search_est_safety_factor)
-           : "")));
+           : "");
+      noviceLine.style.display = "";
     }
   }
 

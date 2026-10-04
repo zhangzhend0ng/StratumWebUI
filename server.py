@@ -32,6 +32,7 @@ purpose), which blocks cross-site request forgery from web pages.
 """
 
 import atexit
+import errno
 import glob
 import io
 import json
@@ -41,6 +42,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -55,6 +57,39 @@ from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, quote, urlparse
 
 HOST = "127.0.0.1"
+
+
+# v0.29: on Windows the http.server default (allow_reuse_address=1 →
+# SO_REUSEADDR) permits a SECOND instance to bind the same port while the
+# first is actively listening — probed on win32 19045: two ThreadingHTTPServers
+# coexist silently and the browser reaches the OLD instance (the bind-failure
+# branch below was unreachable for the top novice scenario, "old instance
+# still running"). SO_EXCLUSIVEADDRUSE makes an occupied port actually FAIL
+# the bind (winerror 10048; a plain non-reuse listener denies with 10013 —
+# both matched below), which is what the auto-fallback needs. POSIX keeps the
+# stock TIME_WAIT-friendly REUSEADDR (no hijack semantics there).
+class _ExclusiveServer(ThreadingHTTPServer):
+    if os.name == "nt":
+        allow_reuse_address = 0
+        _exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+
+        def server_bind(self):
+            if self._exclusive is not None:
+                self.socket.setsockopt(socket.SOL_SOCKET, self._exclusive, 1)
+            ThreadingHTTPServer.server_bind(self)
+
+
+def _port_occupied_error(exc):
+    """True when a bind OSError means 'this port is taken' (vs a genuinely
+    broken config like an address we may never bind). Windows raises
+    WSAEADDRINUSE 10048 (exclusive-bind clash) or WSAEACCES 10013 (the
+    anti-hijack denial against a live listener — probed, see the class
+    note); POSIX raises EADDRINUSE. The default-port novice path treats
+    both as 'switch ports, say so'; an explicitly set STRATUM_UI_PORT and
+    every other OSError stay fail-loud."""
+    return (getattr(exc, "winerror", None) in (10048, 10013)
+            or exc.errno == errno.EADDRINUSE)
+
 
 
 def _validated_int(raw, lo, hi):
@@ -130,7 +165,7 @@ def _validated_float(raw, lo, hi):
 #         discloses gcode_diff_available; companion absence hides the panel
 #         (degrade, never a blocker); console channel = stderr (the
 #         one-line summary lives there, unlike stratum.exe's stdout).
-UI_VERSION = "0.28.0"
+UI_VERSION = "0.29.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -3222,6 +3257,7 @@ def _open_browser_later():
 
 
 def main():
+    global PORT  # v0.29: the occupied-port fallback rebinds it below
     _setup_file_logging()  # see note at the def: import-time would leak into test imports
     problems = []
     if PORT is None:
@@ -3264,13 +3300,46 @@ def main():
     # reclaim stratum_ui_* dirs orphaned by force kills (iter 40)
     _sweep_orphan_workdirs()
     try:
-        httpd = ThreadingHTTPServer((HOST, PORT), StratumHandler)
+        httpd = _ExclusiveServer((HOST, PORT), StratumHandler)
     except OSError as exc:
+        # v0.29 novice path: an occupied DEFAULT port (old instance still
+        # alive, another tool on 8765) used to be a console line + exit 1 +
+        # no browser = dead end for a double-click user. Auto-switch to a
+        # free port and disclose it loudly instead. An EXPLICIT
+        # STRATUM_UI_PORT keeps failing loud: explicit = deterministic
+        # contract (tests and scripts poll exactly that port; a silent
+        # switch would hang every one of them, and whoever sets the env
+        # var can read the message).
+        if ("STRATUM_UI_PORT" in os.environ
+                or not _port_occupied_error(exc)):
+            # the STRATUM_UI_PORT clause only reads as advice when the var
+            # is actually set (PORT_RAW alone cannot tell — it defaults to
+            # "8765"); on the default path a non-occupied OSError landing
+            # here must not claim the user configured anything
+            sys.stderr.write(
+                "无法监听 %s:%d（%s）。\n"
+                "可能已有一个 Stratum WebUI 在运行；关闭它%s后重启。\n"
+                % (HOST, PORT, exc,
+                   "，或换一个端口（当前由 STRATUM_UI_PORT=%s 指定）"
+                   % PORT_RAW
+                   if "STRATUM_UI_PORT" in os.environ else ""))
+            return 1
+        try:
+            # port 0 = kernel-picked free port, race-free (the bind itself
+            # is the reservation — no probe/close/rebind TOCTOU window)
+            httpd = _ExclusiveServer((HOST, 0), StratumHandler)
+        except OSError as exc2:
+            sys.stderr.write("自动换位也失败（%s）——请检查网络环境后重试。\n" % exc2)
+            return 1
+        old_port = PORT
+        # rebind the module global: the browser timer and the banner below
+        # read PORT at fire/print time (late binding), so the actual port
+        # propagates without threading it through
+        PORT = httpd.server_address[1]
         sys.stderr.write(
-            "无法监听 %s:%d（%s）。\n"
-            "可能已有一个 Stratum WebUI 在运行；或设置 STRATUM_UI_PORT 换端口。\n"
-            % (HOST, PORT, exc))
-        return 1
+            "端口 %d 被占用，已改用 %d —— 浏览器将打开新地址；"
+            "下次启动可设置 STRATUM_UI_PORT 固定端口。\n"
+            % (old_port, PORT))
     sys.stderr.write("Stratum WebUI v%s: engine=%s (%s)\n"
                      % (UI_VERSION, engine_version(BINARY), BINARY))
     sys.stderr.write("  -> http://%s:%d  (Ctrl+C 退出)\n" % (HOST, PORT))

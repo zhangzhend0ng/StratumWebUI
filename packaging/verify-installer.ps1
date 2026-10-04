@@ -55,24 +55,37 @@ if (Test-Path $distEngine) {
 
 # --- app smoke (hidden window, no browser, curl status) ------------------------
 # snapshot the app's temp work dirs: a Force kill can NEVER run in-process
-# cleanup (TerminateProcess), so this script reclaims what it kills itself
+# cleanup (TerminateProcess), so this script reclaims what it kills itself.
+# v0.29: the port is picked fresh per run instead of hardcoded — the app's
+# Windows bind now uses SO_EXCLUSIVEADDRUSE (occupied ports fail the bind
+# instead of silently double-binding), so a lingering TIME_WAIT socket from
+# a previous run's connections would fail a fixed-port restart.
 $tmpBefore = @(Get-ChildItem $env:TEMP -Filter "stratum_ui_*" -Directory `
                -ErrorAction SilentlyContinue | ForEach-Object FullName)
 $env:STRATUM_UI_NO_BROWSER = "1"
-$env:STRATUM_UI_PORT = "8803"
+$portListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$portListener.Start()
+$smokePort = ($portListener.LocalEndpoint).Port
+$portListener.Stop()
+$env:STRATUM_UI_PORT = "$smokePort"
+Write-Host "app smoke port = $smokePort"
 $app = Start-Process -FilePath (Join-Path $dir "StratumWebUI.exe") `
        -WorkingDirectory $dir -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 4
 try {
-    $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8803/api/status" -TimeoutSec 10
+    $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$smokePort/api/status" -TimeoutSec 10
     Write-Host "app /api/status= $($r.StatusCode): $($r.Content)"
     if ($r.StatusCode -ne 200) { Fail "api/status rc=$($r.StatusCode)" }
     elseif ($r.Content -notmatch '"binary_found":\s*true') { Fail "api/status binary_found!=true" }
+    # v0.29: the bundled sample (novice first-run path) must survive the
+    # packaging trip too — spec datas + _internal layout asserted above,
+    # here the SERVER side confirms the file is where it looks for it
+    elseif ($r.Content -notmatch '"sample_available":\s*true') { Fail "api/status sample_available!=true" }
 } catch {
     Fail "api/status request failed: $_"
 }
 try {
-    $i = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8803/" -TimeoutSec 10
+    $i = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$smokePort/" -TimeoutSec 10
     Write-Host "app index       = $($i.StatusCode) ($($i.RawContentLength) bytes)"
     if ($i.StatusCode -ne 200) { Fail "index rc=$($i.StatusCode)" }
 } catch {

@@ -1548,40 +1548,41 @@ expect("30 A4: grid+memory overlap → both buttons",
        !!findBtn(elements["analyze-error"], "提高网格精度")
        && !!findBtn(elements["analyze-error"], "开快速预览"),
        boxText("analyze-error").slice(0, 120));
-// d) A5 cand-bars novice summary (enumeration fact — candidates carry no
-// rank field, so the wording must NOT claim one)
+// d) A5 cand novice summary (v0.29: lives in #cand-novice-line OUTSIDE the
+// detail-walled bars — enumeration fact; candidates carry no rank field,
+// so the wording must NOT claim one)
 const d30c = JSON.parse(JSON.stringify(real3));
 d30c.process_optimization.candidates = [
   {name: "safe", feasible: true, search_est_safety_factor: 2.6},
   {name: "fast", feasible: true, search_est_safety_factor: 1.2}];
 rerender(d30c);
 expect("30 A5: first feasible row stated (Math.round SF, table convention)",
-       boxText("cand-bars").indexOf("第一个可行档位（引擎枚举序）：safe —— 安全系数 3") >= 0,
-       boxText("cand-bars").slice(0, 200));
+       boxText("cand-novice-line").indexOf("第一个可行档位（引擎枚举序）：safe —— 安全系数 3") >= 0,
+       boxText("cand-novice-line"));
 // C2: SF null on the first row → name only, no "null" fragment
 d30c.process_optimization.candidates = [
   {name: "safe", feasible: true},
   {name: "fast", feasible: true, search_est_safety_factor: 1.2}];
 rerender(d30c);
-const cb2 = boxText("cand-bars");
+const cb2 = boxText("cand-novice-line");
 expect("30 A5: first row without SF → name only (never renders null)",
        cb2.indexOf("第一个可行档位（引擎枚举序）：safe") >= 0
        && cb2.indexOf("安全系数 null") < 0 && cb2.indexOf("undefined") < 0,
-       cb2.slice(0, 200));
+       cb2);
 // C4: missing name → "??", not "undefined"
 d30c.process_optimization.candidates = [
   {feasible: true, search_est_safety_factor: 2},
   {name: "fast", feasible: true, search_est_safety_factor: 1}];
 rerender(d30c);
 expect("30 A5: missing name → ?? placeholder",
-       boxText("cand-bars").indexOf("第一个可行档位（引擎枚举序）：?? —— 安全系数 2") >= 0,
-       boxText("cand-bars").slice(0, 200));
-// C3: <2 feasible rows → the whole block (summary included) stays empty
+       boxText("cand-novice-line").indexOf("第一个可行档位（引擎枚举序）：?? —— 安全系数 2") >= 0,
+       boxText("cand-novice-line"));
+// C3: <2 feasible rows → the line is dropped (cleared every render)
 d30c.process_optimization.candidates = [
   {name: "safe", feasible: true, search_est_safety_factor: 2.6}];
 rerender(d30c);
-expect("30 A5: <2 feasible → no summary line (gate unchanged)",
-       boxText("cand-bars").indexOf("第一个可行档位") < 0,
-       boxText("cand-bars").slice(0, 120));
+expect("30 A5: <2 feasible → summary line cleared (gate unchanged)",
+       boxText("cand-novice-line").indexOf("第一个可行档位") < 0,
+       boxText("cand-novice-line"));
 
 process.exit(fails ? 1 : 0);

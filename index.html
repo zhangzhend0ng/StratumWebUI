@@ -523,8 +523,9 @@
      task-flow cap (centered, then left-aligned in v0.21) produced two
      panel widths on one page next to the full-width results stack — user
      verdict: stacked cards must be equal-width. Full-width it is; the
-     v0.19 page-height budget (≤2200px on the beam sample) is re-measured
-     in output.verification.md. */
+     page-height budget (≤2200px on the beam sample, 1440×900) is re-
+     measured ad hoc per round (v0.18: 2197 → v0.27 accumulation broke it
+     at 2376 → v0.29 bars-to-wall reclaim: 2118). */
   /* inverse of .advanced-only: flow-only chrome (step strip) — hidden
      whenever advanced mode is on */
   body:not(.mode-simple) .simple-only { display: none !important; }
@@ -1257,7 +1258,12 @@
            The capture/batch/writeback tooling below stays advanced-only. -->
       <div class="panel" id="cand-panel">
         <h2>档位对比 <span class="tag">安全 / 均衡 / 高速 / 外观</span></h2>
-        <div id="cand-bars"></div>
+        <!-- v0.29 page-height budget: the 4×3 bar block joins the detail
+             wall in simple mode (v0.22 layering precedent — engineering
+             comparison behind the fold); the one-line novice summary below
+             carries the answer above the fold. Advanced mode unchanged. -->
+        <p class="hint cand-top" id="cand-novice-line" style="display:none"></p>
+        <div id="cand-bars" class="detail-wall"></div>
         <details id="cand-raw-fold">
           <summary>原始对比表</summary>
           <div class="scroll">

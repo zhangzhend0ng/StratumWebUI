@@ -757,7 +757,7 @@ async function main() {
            langRun && bannerTxt.indexOf("零件可能被压弯/压塌（屈曲）——引擎原文：") >= 0
            && bannerTxt.indexOf("屈曲安全系数") >= 0,  // engine prose survives
            String(bannerTxt).slice(0, 200));
-    const sumTxt = await evalJs("(function(){var b=document.getElementById('cand-bars');" +
+    const sumTxt = await evalJs("(function(){var b=document.getElementById('cand-novice-line');" +
       "return b?b.textContent:''})()");
     expect("E17 cand summary: first-feasible line states the enumeration fact",
            langRun && sumTxt.indexOf("第一个可行档位（引擎枚举序）：") >= 0

@@ -896,6 +896,39 @@
       analyze(false)）；browser/browser_en/i18n/consistency 全绿；sabotage ×3 刀
       （砍前缀/砍摘要行/注释 closeTermPop）对应断言全翻红后还原
 
+### v0.29.0 — 首启与分发：端口占用自动换位 + 安装包首启走查 + 页高回收（2026-10-04）
+
+> 背景：v0.27 规划轮 P2 收尾。独立 REFUTE 一轮（VERDICT: REJECT——**实验实证
+> 推翻 B1 可达性前提**：win32 上 HTTPServer 默认 SO_REUSEADDR 允许两实例静默
+> 共存同一端口，「旧实例未杀」头号场景根本不抛 OSError、浏览器连旧实例；
+> 「其他工具占用」报 10013 非 10048——原 fail-loud 分支在发行平台近乎死代码。
+> 详见 loop-journal 迭代 103）。
+
+- [x] **B1 端口占用自动换位**：win32 绑定改 `_ExclusiveServer`（SO_EXCLUSIVEADDRUSE
+      + 关 REUSEADDR 劫持）让占用真正失败（实测 10048；裸占用者路径 10013 均入
+      匹配集）；默认端口路径→`ThreadingHTTPServer((HOST,0))` 无竞换取空闲口 +
+      `global PORT` 重绑（banner/浏览器开实际口）+ stderr 醒目披露；显式
+      STRATUM_UI_PORT 与非占用类 OSError 维持 fail-loud（REFUTE 裁决：显式=
+      确定性契约，三处测试基建轮询固定端口，静默换位=全部挂起）；换位二次失败
+      嵌套 try；F2 文案的「由 STRATUM_UI_PORT 指定」从句改为 env 真存在才出现
+      （sabotage 实测暴露的谎报缺陷）
+- [x] **B2 安装包首启走查**：verify-installer.ps1 追加 `sample_available:true`
+      断言（小白示例随包分发全链路）；smoke 端口改每轮动态挑空闲（EXCLUSIVEADDRUSE
+      语义下硬编码 8803 会踩上一轮 TIME_WAIT 假失败）；真实跑 build.ps1 全构建
+      （0.29.0 Setup.exe）+ verify 全绿（静默装→布局→sha→首启 status→卸载干净）
+- [x] **B3 页高复核与回收**：beam 口径简单模式实测 **2376px 超预算 176**（v0.19-
+      v0.27 累积债——仅 v0.27 next-step 卡 +138，无人复测；index.html 预算注释
+      指向的 output.verification.md 无记录=文档腐化）；回收=条形图简单模式进
+      detail-wall（v0.22 分层同款，A5 摘要行迁至 #cand-novice-line 常驻答题，
+      高级模式照旧）→ **2118px ≤ 2200**（余量 82px）；E11 出口不变式不动
+      （raw 表自动展开逻辑独立于墙）
+- 配套：README 端口段/档位段更新；UI_VERSION 0.29.0
+- 验证：smoke **157/157**（原 152+T109 族 5：显式撞口 fail-loud/默认撞口换位+
+      披露/新口真服务/分类器匹配集/类属性）；render_check **195**（A5 断言随
+      容器迁移更新）；ux_alignment 全绿；browser/browser_en/i18n/consistency
+      全绿；安装包 verify 全绿；sabotage ×2 刀（分类器恒 False→T109b/c/d 红；
+      sample 断言换不可能模式→verify FAIL）翻红后还原
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 

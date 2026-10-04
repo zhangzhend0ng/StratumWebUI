@@ -2402,6 +2402,85 @@ def main():
         proc.terminate()
         proc.wait(timeout=10)
 
+    # T109 (v0.29) — occupied-port behavior. The occupant is a plain
+    # in-process listener on the DEFAULT port (8765): against it the
+    # server's exclusive bind fails (winerror 10013 anti-hijack denial /
+    # POSIX EADDRINUSE — both in _port_occupied_error's match set). If the
+    # host already has 8765 occupied the tests are equally valid against
+    # that occupant, so a failed bind here is not an error.
+    import socket as _sock109
+    import shutil as _shutil109
+    occ109 = None
+    try:
+        occ109 = _sock109.socket()
+        occ109.bind(("127.0.0.1", 8765))
+        occ109.listen(1)
+    except OSError:
+        occ109 = None  # someone else holds 8765 — same test semantics
+    try:
+        # F2: EXPLICIT port collision → fail loud, never a silent switch
+        rc109, err109 = run_server_env({"STRATUM_UI_PORT": "8765"})
+        err109s = err109.decode("utf-8", "replace")
+        check("T109 explicit-port collision stays fail-loud (no switch)",
+              rc109 == 1 and "无法监听" in err109s and "已改用" not in err109s,
+              "rc=%s err=%s" % (rc109, err109s[:160]))
+        # F1: DEFAULT port occupied → auto-switch + disclosure. The process
+        # keeps serving after the switch, so stderr streams to a FILE
+        # (PIPE+communicate would wait for exit); the actual port is parsed
+        # from the startup banner.
+        env109 = dict(os.environ, STRATUM_UI_NO_BROWSER="1")
+        env109.pop("STRATUM_UI_PORT", None)
+        tdir109 = tempfile.mkdtemp(prefix="stratum-t109-")
+        eh109 = open(os.path.join(tdir109, "stderr.log"), "wb")
+        b109 = subprocess.Popen([sys.executable, os.path.join(ROOT, "server.py")],
+                                env=env109, stdout=eh109, stderr=eh109)
+        txt109, port109 = "", ""
+        for _ in range(120):  # 30s: module import + engine probe + bind
+            time.sleep(0.25)
+            with open(eh109.name, "rb") as fh109:
+                txt109 = fh109.read().decode("utf-8", "replace")
+            m109 = re.search(r"-> http://127\.0\.0\.1:(\d+)", txt109)
+            if m109 and "已改用" in txt109:
+                port109 = m109.group(1)
+                break
+            if b109.poll() is not None:
+                break
+        check("T109b default-port occupied → auto-switch with disclosure",
+              bool(port109) and port109 != "8765"
+              and "端口 8765 被占用，已改用" in txt109,
+              "port=%r tail=%r" % (port109, txt109[-200:]))
+        ok109c = False
+        if port109:
+            try:
+                st109, body109 = request(int(port109), "GET", "/api/status")
+                ok109c = (st109 == 200
+                          and b'"ok"' in body109)
+            except OSError:
+                ok109c = False
+        check("T109c the switched port actually serves /api/status",
+              ok109c, "port=%r" % port109)
+        b109.kill()
+        b109.wait(timeout=10)
+        eh109.close()
+        _shutil109.rmtree(tdir109, ignore_errors=True)
+        # classifier match set (unit): 10048/10013/EADDRINUSE in, others out
+        import errno as _errno109
+        import server as _srv109
+        e48 = OSError(); e48.winerror = 10048
+        e13 = OSError(); e13.winerror = 10013
+        eein = OSError(); eein.errno = _errno109.EADDRINUSE
+        eoth = OSError(); eoth.errno = _errno109.EACCES
+        check("T109d occupied-port classifier: 10048/10013/EADDRINUSE in, others out",
+              _srv109._port_occupied_error(e48)
+              and _srv109._port_occupied_error(e13)
+              and _srv109._port_occupied_error(eein)
+              and not _srv109._port_occupied_error(eoth))
+        check("T109e win32 server class disables the REUSEADDR hijack",
+              os.name != "nt" or _srv109._ExclusiveServer.allow_reuse_address == 0)
+    finally:
+        if occ109 is not None:
+            occ109.close()
+
     # hard-killed servers never run their shutdown rmtree — reclaim the
     # leaked stratum_ui_* work dirs via the SERVER'S OWN orphan sweep
     # (owner.pid liveness check). A bare glob-rmtree here once deleted the
