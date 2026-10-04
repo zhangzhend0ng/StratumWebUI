@@ -165,7 +165,7 @@ def _validated_float(raw, lo, hi):
 #         discloses gcode_diff_available; companion absence hides the panel
 #         (degrade, never a blocker); console channel = stderr (the
 #         one-line summary lives there, unlike stratum.exe's stdout).
-UI_VERSION = "0.30.0"
+UI_VERSION = "0.31.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and

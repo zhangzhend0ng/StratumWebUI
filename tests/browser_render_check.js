@@ -1079,11 +1079,14 @@ async function main() {
         "note:document.getElementById('gcode-tune-note').textContent," +
         "vis:bx.style.display!=='none'," +
         "cov:bx.textContent.indexOf('应力覆盖率')>=0," +
+        "gz:bx.textContent.indexOf('本次未改写任何挤出段')>=0," +
         "btn:(bx.querySelector('button')||{}).textContent||''})})()"));
       expect("v0.25 e2e: attach → auto analyze → tune audit card renders",
              t1.stage === "ok" && t1.note.indexOf("未附加") < 0
              && t1.note.indexOf("e2e-slice.gcode") >= 0
-             && t1.vis && t1.cov && t1.btn.indexOf("下载调优后 G-code") >= 0,
+             && t1.vis && t1.cov
+             && t1.btn.indexOf("下载调优后 G-code") >= 0
+             && t1.gz,   // v0.31: mismatch shape (tuned===0) shows guidance
              JSON.stringify(t1).slice(0, 220));
       const t2 = JSON.parse(await evalJs("(async function(){" +
         "document.getElementById('btn-gcode-detach').click();" +

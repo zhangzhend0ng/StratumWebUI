@@ -1343,6 +1343,30 @@ let btn2 = null;
 })(elements["gcode-tune-body"]);
 expect("tune: no token → card renders without the download button",
        elements["gcode-tune-box"].style.display === "" && !btn2);
+// §28b v0.31 mismatch guidance: tuned===0 → fact sentence + 3-cause
+// self-check list (never a cause assertion); tuned>0 → absent; the `tuned`
+// field missing → absent (strict ===0 keying — missing is not evidence of 0)
+ctx.renderGcodeTune(tuneFx, "tok99");
+expect("tune §28b: tuned===0 renders fact sentence + full 3-cause list",
+       boxText("gcode-tune-body").indexOf("本次未改写任何挤出段") >= 0
+       && boxText("gcode-tune-body").indexOf("① 这份 G-code") >= 0
+       && boxText("gcode-tune-body").indexOf("② 挤出段") >= 0
+       && boxText("gcode-tune-body").indexOf("③ 热区门槛") >= 0,
+       boxText("gcode-tune-body").slice(0, 300));
+const tuneOkFx = JSON.parse(JSON.stringify(tuneFx));
+tuneOkFx.gcode_tune.tuned = 80;
+tuneOkFx.gcode_tune.candidates = 160;
+ctx.renderGcodeTune(tuneOkFx, "tok99");
+expect("tune §28b: tuned>0 → guidance absent (normal tune stays clean)",
+       boxText("gcode-tune-body").indexOf("本次未改写任何挤出段") < 0,
+       boxText("gcode-tune-body").slice(0, 200));
+const tuneNoFx = JSON.parse(JSON.stringify(tuneFx));
+delete tuneNoFx.gcode_tune.tuned;
+ctx.renderGcodeTune(tuneNoFx, "tok99");
+expect("tune §28b: `tuned` field missing → guidance absent (strict keying)",
+       boxText("gcode-tune-body").indexOf("本次未改写") < 0,
+       boxText("gcode-tune-body").slice(0, 200));
+ctx.renderGcodeTune(tuneFx, "tok99"); // restore mismatch state
 // live shape: geometry-matched slice (engine probe 2026-10-03, Cura
 // WALL-OUTER/INNER markers) — tuned=80, drift +2.4278% renders WITH the
 // explicit plus sign (add-only law made visible)

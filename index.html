@@ -4577,6 +4577,14 @@ var LANG_EN = {
   "G-code 应力调优": "G-code stress tuning",
   "--gcode-in/--gcode-out · 引擎审计": "--gcode-in/--gcode-out · engine audit",
   "下载调优后 G-code": "Download tuned G-code",
+  "本次未改写任何挤出段。可自查的常见原因：":
+    "No extruding segments were rewritten. Common causes to check:",
+  "① 这份 G-code 是否用当前模型切片（几何对不上就采不到应力）":
+    "① Was this G-code sliced from the current model? (mismatched geometry yields no stress samples)",
+  "② 挤出段是否全部被特征排除（例如填充段不参与采样）":
+    "② Were all extruding segments excluded by feature type? (e.g. infill is not sampled)",
+  "③ 热区门槛内是否没有挤出段（应力下限 / 热区百分位）":
+    "③ Did no extruding segment fall inside the hot-zone gate? (vm floor / hot percentile)",
   "应力调优：": "stress tune: ", "应力调优：未附加切片":
     "stress tune: no slice attached",
   "已附加切片 ": "attached slice ", "，本次分析将执行应力调优":

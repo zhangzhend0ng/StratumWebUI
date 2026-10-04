@@ -2162,6 +2162,28 @@ function renderGcodeTune(tune, token) {
   });
   tbl.appendChild(tb);
   body.appendChild(tbl);
+  // v0.31 mismatch guidance (adjudicated iter 104 C5): tuned===0 is the one
+  // honest trigger for "why did nothing change". The engine ships no
+  // dedicated mismatch field and the three plausible causes are
+  // observationally indistinguishable in tune.json (geometry mismatch / all
+  // segments feature-excluded / hot-zone gate empty), so this states the
+  // FACT and offers a self-check list — it must never assert a cause
+  // (engine is the only source of truth). Strict ===0: a missing field is
+  // not evidence of zero.
+  if (t.tuned === 0) {
+    var gz = el("div", "hint", "本次未改写任何挤出段。可自查的常见原因：");
+    gz.style.marginTop = "6px";
+    [
+      "① 这份 G-code 是否用当前模型切片（几何对不上就采不到应力）",
+      "② 挤出段是否全部被特征排除（例如填充段不参与采样）",
+      "③ 热区门槛内是否没有挤出段（应力下限 / 热区百分位）",
+    ].forEach(function (line) {
+      var g = el("div", null, line);
+      g.style.paddingLeft = "12px";
+      gz.appendChild(g);
+    });
+    body.appendChild(gz);
+  }
   if (t.alignment || t.alignment_blind_spots) {
     var al = el("div", "hint",
       "对齐: " + (t.alignment || "—") +
