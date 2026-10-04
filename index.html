@@ -4900,6 +4900,47 @@ var LANG_WORDS = (function () {
     // em-dash separators keep 安全系数 out of bare-word reach
     ["第一个可行档位（引擎枚举序）：", "First feasible preset (engine order): "],
     [" —— 安全系数 ", " — safety factor "],
+    // v0.32 concat-context fragments (walkthrough-proven EN leaks): each of
+    // these literals also rides a LANG_EN exact key, but its runtime node
+    // carries appended variable content (counts / file names / engine
+    // numbers) so the exact match never fires — word-level is the only
+    // channel that reaches the assembled node. Pinned by the concat
+    // tripwire in tests/i18n_coverage_check.js.
+    ["将调整：", "Will adjust: "],
+    ["（材料按你的选择：", " (material per your choice: "],
+    ["（只读分析）", " (read-only analysis)"],
+    ["已载入示例 ", "sample loaded: "],
+    ["服务端未按 G-code 接收该文件（kind=", "server did not accept this file as G-code (kind="],
+    ["运行中 ", "running "],
+    ["应力调优：", "stress tune: "],
+    ["已附加切片 ", "attached slice "],
+    ["，本次分析将执行应力调优", " — every analyze now runs stress tuning"],
+    ["已下载优化后的 3MF（", "optimized 3MF downloaded ("],
+    ["候选", "candidate"],
+    ["已手动停止自动调参（共 ", "auto-tune stopped manually ("],
+    ["（未设）", " (unset)"],
+    
+    [" 等 ", " etc. "],
+    ["应用全部建议并重新分析 (", "Apply all suggestions & re-analyze ("],
+    ["自动调参（最多 ", "Auto-tune (max "],
+    ["每轮自动应用引擎全部可应用建议并重新分析；结论变安全、建议用尽、建议不再变化或满 ",
+     "Each round applies all engine-applicable suggestions and re-analyzes; stops when the verdict turns safe, suggestions run out, suggestions stop changing, or after "],
+    [" 轮即停（每轮都是一次真实引擎分析）", " rounds to stop (each round is one real engine run)"],
+    ["修改 ", "modified "],
+    [" 层 · 新增 ", " layers · added "],
+    [" · 删除 ", " · removed "],
+    [" · 重合率 ", " · overlap "],
+    ["新过热层 ", "newly overheated "],
+    [" · 焊合回退层 ", " · weld-regressed "],
+    [" · 超机器上限层 ", " · over machine-limit "],
+    [" · 超熔体上限层 ", " · over melt-ceiling "],
+    ["最差焊合强度变化 ", "worst weld strength delta "],
+    ["问题与建议（", "Issues & advice ("],
+    ["置信度: ", "confidence: "],
+    ["调参建议（", "Tuning advice ("],
+    ["悬垂评分 ", "overhang score "],
+    ["（最差层 ", " (worst layer "],
+    ["桥接: ", "bridge: "],
     // fullwidth punctuation → latin, LAST resort so chrome lines don't end
     // with CJK punctuation. Applied to every translated node; engine-authored
     // prose rendered outside skip nodes was already word-mangle-prone.
@@ -4949,14 +4990,18 @@ function _langAttrs(el) {
     if (typeof v !== "string" || !v) return;
     var zh = el["__zh_" + a];
     if (zh !== undefined) {
-      // unchanged since the snapshot (either the zh original or its current
-      // EN form) → nothing to do
-      if (v === zh || v === trTextKeepWs(zh)) return;
-      // the app re-set the attribute after boot with NEW content (e.g. the
-      // log button's path suffix lands after the boot pass) → re-adopt it as
-      // the new zh snapshot instead of silently skipping it forever
-      el["__zh_" + a] = _langHasZh(v) ? v : undefined;
-      if (!_langHasZh(v)) return;
+      // already showing its translated form → nothing to do
+      if (v === trTextKeepWs(zh)) return;
+      // the app re-set the attribute after boot. NEW content → re-adopt it
+      // as the zh snapshot (e.g. the log button's path suffix); the SAME
+      // zh original re-written (the KPI numeric tooltips are re-set to
+      // their zh value on every renderReport) → keep the snapshot and fall
+      // through to translate — the v===zh early-return of v0.20 left those
+      // re-written titles untranslated until a full re-adoption (v0.32)
+      if (v !== zh) {
+        el["__zh_" + a] = _langHasZh(v) ? v : undefined;
+        if (!_langHasZh(v)) return;
+      }
       var tr2 = trTextKeepWs(v);
       if (tr2 !== v) el.setAttribute(a, tr2);
       return;

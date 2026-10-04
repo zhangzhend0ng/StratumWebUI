@@ -195,6 +195,43 @@ async function main() {
            await evalJs("lg.title === 'Open the log folder\\nC:\\\\logs'"),
            await evalJs("lg.title"));
 
+    // ---- v0.32 composed-state gauntlet --------------------------------
+    // The sweeps above render fixtures WITHOUT an applyable array — the
+    // advice CTA family (server-response sibling key, never inside the
+    // report JSON) never rendered, which is exactly how the walkthrough
+    // leaks survived green suites. Inject applyable, render the rank2
+    // fixture (buckling → auto-tune CTA too), and produce composed
+    // toast/note strings through their real producers.
+    await evalJs("renderReport(window.__r3, '', " +
+      "[{applicable:true, ui_key:'fan', action:'decrease', value:60}]); 1");
+    await evalJs("toast('已附加切片 demo.gcode，本次分析将执行应力调优', 'ok'); 1");
+    await evalJs("toast('已下载优化后的 3MF（safe 档）', 'ok'); 1");
+    await evalJs("document.getElementById('upload-msg').textContent = '已载入示例 demo.stl';" +
+      "document.getElementById('gcode-run-indicator').textContent = '运行中 3s'; 1");
+    await evalJs("translateDom(); 1");
+    await sleep(300);
+    const sweep2 = await evalJs(SWEEP);
+    expect("gauntlet: CTA + toasts + notes leave no Chinese after translate",
+           sweep2.badCount === 0 && sweep2.attrCount === 0,
+           JSON.stringify({ bad: sweep2.bad, attrs: sweep2.attrs }).slice(0, 300));
+    const ctaTxt = await evalJs(
+      "(document.querySelector('.sum-cta.simple-only')||{textContent:''}).textContent");
+    expect("gauntlet: apply-all CTA really rendered (no vacuous green)",
+           ctaTxt.indexOf("Apply all") >= 0, ctaTxt);
+    const tuneTxt = await evalJs(
+      "((document.getElementById('btn-auto-tune')||{}).textContent||'')");
+    expect("gauntlet: auto-tune CTA rendered (rank2 fixture)",
+           tuneTxt.indexOf("Auto-tune") >= 0, tuneTxt);
+    const bkTitle = await evalJs(
+      "((document.getElementById('res-buckling')||{}).title||'')");
+    expect("gauntlet: KPI tooltip re-translated after re-render (v0.32 _langAttrs)",
+           bkTitle.indexOf("slenderness") >= 0, bkTitle);
+    // cleanup so the zh round-trip below starts from the plain state
+    await evalJs("document.getElementById('toasts').innerHTML='';" +
+      "document.getElementById('upload-msg').textContent='';" +
+      "document.getElementById('gcode-run-indicator').textContent='';" +
+      "renderReport(window.__r3, ''); 1");
+
     // zh round-trip: restore is lossless (the __zh snapshot), then EN again
     await evalJs("applyLang('zh'); 1");
     expect("zh round-trip: title restored",

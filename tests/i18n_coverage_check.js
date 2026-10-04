@@ -5,8 +5,9 @@
 // attribute. Leftovers are reported with file:line for dictionary backfill.
 //
 // Known limits (by construction):
-// - runtime-concatenated strings are checked per-literal; novel concatenation
-//   patterns are caught by the CDP browser sweep (tests/browser_en_check.js)
+// - the per-literal replay above passes literals whose LANG_EN exact key
+//   never fires at runtime (concatenated nodes) — the v0.32 concat tripwire
+//   at the bottom closes that hole with a runtime-order word-pass simulation
 // - data-i18n-skip nodes (engine-authored, Chinese by design) and the
 //   INTENTIONAL list below are excluded from the pass/fail count
 "use strict";
@@ -183,3 +184,82 @@ console.log("\nFAIL " + failures.length +
             " (intentional-by-design " + allowed.length + ": " +
             allowed.map(function (c) { return JSON.stringify(c.text); }).join(", ") + ")");
 process.exitCode = failures.length ? 1 : 0;
+
+// ---- v0.32 concat-context tripwire ----------------------------------
+// The per-literal replay above can pass a literal that LEAKS at runtime: a
+// CJK literal sitting in a concatenation context composes a node whose full
+// text never exact-matches its LANG_EN key (the literal's own key greenlights
+// the standalone replay). For such literals the ONLY runtime channel is the
+// word pass, so simulate it exactly as index.html applies it (pairs sorted
+// by key length DESC, stable) and fail when CJK survives.
+// Concat context = a `+` adjacent on the literal's line, the previous line
+// ending with `+` (multi-line tails), OR the next line starting with `+`
+// (multi-line heads — v0.32 probe caught the auto-tune title prefix hiding
+// in exactly that shape).
+var CONCAT_OK = {
+  // fragments rendered inside data-i18n-skip nodes (engine-prose carriers —
+  // the whole node is exempt from translation by design)
+  "切片器: ": "gcode diff slicer line is skip-flagged",
+  "切片器 ": "score metaBits line is skip-flagged",
+  "预期效果: ": "suggestion expected-effect hint is skip-flagged",
+  " · 可评估维度 ": "score summary line is skip-flagged",
+  "对齐: ": "tune audit alignment line is skip-flagged",
+  "（盲区: ": "tune audit alignment line is skip-flagged",
+  "——该 G-code 没有任何可评分的维度（无有效挤出/运动证据）。":
+    "void-card reason line is skip-flagged",
+  "请确认上传的是切片器导出的 G-code 而非空文件。":
+    "void-card reason line is skip-flagged"
+  // (INTENTIONAL entries above are honored too — several of its members,
+  // e.g. the skip-prefix family, are concat-context fragments)
+};
+function wordPassOnly(s) {
+  var out = s;
+  for (var i = 0; i < LANG_WORDS.length; i++)
+    out = out.split(LANG_WORDS[i][0]).join(LANG_WORDS[i][1]);
+  return out;
+}
+var concatFails = [];
+function scanConcat(src, file, baseLine) {
+  var lines = stripJsComments(src).split("\n");
+  lines.forEach(function (line, i) {
+    var re = /"((?:[^"\\\n]|\\.)*)"/g, m;
+    while ((m = re.exec(line))) {
+      var text;
+      try { text = JSON.parse('"' + m[1] + '"'); } catch (e) { continue; }
+      if (!hasZh(text) || text.length < 2) continue;
+      var rest = line.slice(m.index + m[0].length);
+      var before = line.slice(0, m.index);
+      var prev = i > 0 ? lines[i - 1] : "";
+      var next = i < lines.length - 1 ? lines[i + 1] : "";
+      var isConcat = /^\s*\+/.test(rest) || /\+\s*$/.test(before)
+        || /\+\s*$/.test(prev) || /^\s*\+/.test(next);
+      if (!isConcat) continue;
+      if (!hasZh(wordPassOnly(text))) continue;
+      if (CONCAT_OK.hasOwnProperty(text)) continue;
+      if (INTENTIONAL.indexOf(text) >= 0) continue;
+      concatFails.push(file + ":" + ((baseLine || 1) + i) + " " + JSON.stringify(text));
+    }
+  });
+}
+scanConcat(reportJs, "report.js");
+(function () {
+  // per-script bodies with true baseLine offsets (line numbers stay honest);
+  // dictionary regions blanked with newline-preserving masks first
+  function blankRegion(src, startMarker, endMarker) {
+    var region = sliceBetween(src, startMarker, endMarker);
+    return src.replace(region, new Array(region.split("\n").length).join("\n"));
+  }
+  var masked = blankRegion(indexHtml, "var LANG_EN = {", "\n};");
+  masked = blankRegion(masked, "var pairs = [", "\n  ];");
+  var re = /<script[\s\S]*?<\/script>/g, m;
+  while ((m = re.exec(masked))) {
+    var body = m[0].replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
+    var pre = masked.slice(0, m.index + m[0].indexOf(body));
+    var baseLine = (pre.match(/\n/g) || []).length + 1;
+    scanConcat(body, "index.html", baseLine);
+  }
+})();
+concatFails.forEach(function (f) { console.log("[concat] " + f); });
+console.log("CONCAT FAIL " + concatFails.length +
+            " (ok " + Object.keys(CONCAT_OK).length + " skip/composed)");
+if (concatFails.length) process.exitCode = 1;

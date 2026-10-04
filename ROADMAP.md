@@ -1002,6 +1002,45 @@
 - 遗留 backlog：多轮自动调参真链 E2E（引擎建议面）、overall_band、
       gcode 评分深链报告语言（延续 v0.28 清单）
 
+### v0.32.0 — EN 拼接泄漏族清偿：词对补全 + _langAttrs 重写同值 bug + concat 绊线 + gauntlet（2026-10-05）
+
+> 8h 小白可用性专场·轮 2（CDP 新手走查审计触发）。走查实测 EN 模式下
+> 「将调整: fan 100→60」「应用全部建议并重新分析 (1)」「自动调参（最多 3 轮）」
+> 漏中文——静态 i18n 检查全绿 = 盲区坐实。independent-REFUTE 一轮
+> （VERDICT: REJECT——**实验推翻 R2 前提**：运行时词对按 key 长度降序 sort
+> 后应用（index.html `pairs.sort`），初版模拟器的数组序是错误模型，12/59
+> 候选为幻影；采纳后重建模型重枚举，详见 loop-journal 迭代 106）。
+
+- [x] **根因 R1（拼接语境精确键失效）**：字面量有 LANG_EN 精确键 → 静态
+      重放绿灯；运行时节点 = 字面量+变量内容，精确键永不命中，词级无覆盖
+      → 泄漏。修复=词级补全 ~32 条（advice CTA 族/自动调参 title 两段/
+      gcode diff+score 面板族/toast+note 族/report 细节族/已手动停止+（未设））
+- [x] **根因 R2 修正（顺序干扰为伪）**：refuter 实证 sort 降序使长键恒先于
+      短键，「（共 」预改写机械上不可能——初版方案的词对后移为 no-op，弃
+- [x] **_langAttrs 重写同值 bug（走查 gauntlet 活捉，v0.20 期既有）**：静态
+      KPI 元素（#res-buckling/#res-fatigue）的数值 title 每次 renderReport
+      重写回**同值中文**，`v === zh` 早退分支判「快照未变」直接 return——
+      EN 用户第二次分析后悬停变回中文。修复=同值重写走翻译路径（快照
+      不变、不重收养）
+- [x] **concat 绊线**（i18n_coverage_check 新检查类）：拼接语境（同行邻接
+      +/前行尾 +/后行首 +，跨行头尾双向）的 CJK 字面量 → 按运行时序
+      （长度降序）模拟词级替换 → 残留 CJK=FAIL，除非 CONCAT_OK 白名单
+      （8 项逐条理由：skip 节点前缀）。删词对 sabotage 实证有牙（且证明
+      旧逐字面量重放在同刀下仍绿=盲区自证）
+- [x] **E2E gauntlet**（browser_en_check）：注入 applyable 数组 + rank2
+      fixture 渲染（CTA/自动调参按钮真出现，防空转绿灯）+ 真实 producer
+      产 toast/note/indicator 拼接串 + translateDom 后全 DOM 清扫 0 中文；
+      显式断言 KPI title 重译（sabotage 两刀红）
+- 配套：检查器头注「已知限制」同步（concat 兜底已从 CDP sweep 升格为
+  静态绊线）；UI_VERSION 0.32.0
+- 验证：smoke **157/157**；render_check **198**；ux/browser/browser_en
+  （含 gauntlet）/consistency 全绿；i18n **FAIL 0 + CONCAT FAIL 0**；
+  sabotage ×3 刀（删「将调整：」词对→concat 红 / 恢复 v===zh 早退→
+  gauntlet+KPI 断言红 / 无）翻红后还原
+- 遗留 backlog：多轮自动调参真链 E2E、overall_band、gcode 评分深链报告
+  语言（引擎侧，延续）；W2/W3/W4 走查发现（预设先于模型点击死路 /
+  简单模式分析完成后结论在折叠线下方 / 首屏禁用快照按钮）→ 轮 3
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 
