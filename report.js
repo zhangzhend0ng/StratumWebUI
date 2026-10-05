@@ -1484,9 +1484,11 @@ function renderReport(d, consoleText, applyable) {
   // cleared every render so a bars-less report drops it (false-positive
   // guard, same discipline as the pd-warn mirror).
   var noviceLine = $("cand-novice-line");
+  var presetCand = $("preset-cand");
   if (noviceLine) {
     noviceLine.style.display = "none";
     noviceLine.textContent = "";
+    if (presetCand) presetCand.textContent = "";  // stale-clear is symmetric
     var feasAll = (po.candidates || []).filter(function (c) {
       return c.feasible !== false; });
     if (feasAll.length >= 2) {
@@ -1497,6 +1499,10 @@ function renderReport(d, consoleText, applyable) {
            ? " —— 安全系数 " + Math.round(top.search_est_safety_factor)
            : "");
       noviceLine.style.display = "";
+      // v0.34: simple mode hides the compare card (its chrome outweighed
+      // this one line) — the same engine fact rides the folded preset
+      // summary (dual write of the identical string, no second derivation)
+      if (presetCand) presetCand.textContent = noviceLine.textContent;
     }
   }
 

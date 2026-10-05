@@ -563,6 +563,59 @@
   body.no-report #btn-compare,
   body.no-report #btn-report,
   body.no-report #btn-snapshot { display: none; }
+  /* ============ v0.34 staged spotlight (simple mode only) ============
+     The single-column flow already orders 模型→预设→结果; what was missing
+     is the VISUAL encoding of "which decision is mine right now". One new
+     body bit (no-model, toggled where the token lives) combined with the
+     existing no-report bit yields the three stages. Every selector is
+     mode-simple-prefixed — the advanced dashboard is untouched (v0.30
+     density-block discipline). */
+  /* stage 1 (no model): the dropzone is the one spotlight; the question
+     panel dims but stays ALIVE (hover restores + cards stay clickable —
+     the v0.33 bridge still answers a premature click; iter107 blocker
+     forbids a dead-looking grey) */
+  body.mode-simple.no-model #dropzone {
+    outline: 2px dashed var(--accent); outline-offset: 4px;
+  }
+  body.mode-simple.no-model #preset-panel {
+    opacity: .62; transition: opacity .15s ease;
+  }
+  body.mode-simple.no-model #preset-panel:hover,
+  body.mode-simple.no-model #preset-panel:focus-within { opacity: 1; }
+  /* stage 2 (model live, no verdict yet): the question is the spotlight;
+     the dropzone did its job and shrinks to a compact re-upload chip */
+  body.mode-simple.no-report:not(.no-model) #dropzone {
+    padding: var(--sp-2) var(--sp-3);
+  }
+  body.mode-simple.no-report:not(.no-model) #dropzone .ui-drop-icon,
+  body.mode-simple.no-report:not(.no-model) #dropzone br,
+  body.mode-simple.no-report:not(.no-model) #dropzone .muted { display: none; }
+  /* stage 3 (verdict on screen): an ANSWERED question folds to a summary
+     row unless the user pinned it back open ([换] — ownership, risk-card
+     open-state precedent). An unanswered one stays open: skipping the
+     question leaves it the pending decision. */
+  body.mode-simple:not(.no-report):not(.no-model) #preset-panel.answered:not(.pinned) #preset-buttons,
+  body.mode-simple:not(.no-report):not(.no-model) #preset-panel.answered:not(.pinned) #preset-material,
+  body.mode-simple:not(.no-report):not(.no-model) #preset-panel.answered:not(.pinned) > .hint { display: none; }
+  /* !important: the row's inline display:none is its base state (v0.21
+     inline-beats-class lesson) — the stage rule must win over it */
+  body.mode-simple:not(.no-report):not(.no-model) #preset-panel.answered:not(.pinned) #preset-summary {
+    display: flex !important;
+  }
+  /* the compare panel's one novice answer rides the folded preset summary
+     (the card chrome was heavier than its one line — walkthrough ④) */
+  body.mode-simple:not(.no-report):not(.no-model) #cand-panel { display: none; }
+  /* 分析 in simple mode: every action auto-runs, so the button only means
+     something while edits are pending or an error needs a retry (advanced
+     keeps it always — the two-column slider workspace lives on it) */
+  body.mode-simple #btn-analyze { display: none; }
+  body.mode-simple.has-dirty #btn-analyze,
+  body.mode-simple.analyze-err #btn-analyze { display: inline-flex; }
+  /* G-code tools: one line in simple mode (v0.23's score entry stays a
+     verb-carrying link; the panel expands on demand — !important beats the
+     status gate's inline display) */
+  body.mode-simple #gcode-panel { display: none !important; }
+  body.mode-simple.gcode-open #gcode-panel { display: block !important; }
   /* structured engine warnings (phase_d.buckling_warning /
      fracture_risk_detected) mirror above the fold so folding cannot bury a
      safety signal with no other structured channel. Default-hidden gate:
@@ -925,6 +978,10 @@
              button) hides after the first render, so the 模型 panel keeps a
              quiet always-there link (status-gated like the guide button) -->
         <div class="hint" style="margin-top:2px"><a href="#" id="lnk-sample" style="display:none">试试内置示例模型</a></div>
+        <!-- v0.34: the G-code companion is one verb-carrying line in simple
+             mode (v0.23's score entry intent preserved as copy); the panel
+             expands on click. Status-gated like the sample link. -->
+        <div class="hint simple-only" style="margin-top:2px"><a href="#" id="lnk-gcode" style="display:none">有 G-code 文件？给切片结果打分</a></div>
         <div class="actions">
           <button id="btn-analyze" class="primary" disabled>分析</button>
           <!-- v0.22: 优化对比/下载报告 JSON are advanced-mode tools — in
@@ -1012,6 +1069,15 @@
 
       <div class="panel" id="preset-panel">
         <h2>这个零件拿来做什么？ <span class="tag">按用途一键设置参数并分析</span></h2>
+        <!-- v0.34 stage-3 fold target: once a preset is applied and the
+             verdict is on screen, the question is answered — the panel
+             collapses to this summary row (mode-simple CSS; [换] pins the
+             full panel back open, ownership like the risk-card open flag) -->
+        <div class="actions" id="preset-summary" style="display:none">
+          <span class="hint" id="preset-summary-txt">未选预设</span>
+          <span class="hint" id="preset-cand"></span>
+          <button id="btn-preset-change" title="展开预设面板重新选择用途（当前参数会随新预设重设并重新分析）">换</button>
+        </div>
         <div class="actions" id="preset-buttons"></div>
         <!-- v0.27 material question: the ONE parameter a novice can always
              answer (it is printed on the spool label). STL-family inputs
@@ -1026,7 +1092,7 @@
           </label>
           <span class="hint" style="align-self:center">看耗材卷标签；不确定就保持 PLA</span>
         </div>
-        <div class="hint">上传模型后点一个用途即可，10 项打印参数会自动设置并立即分析。想手动微调每个参数？打开右上角「高级选项」。</div>
+        <div class="hint">上传模型后点一个用途即可，10 项打印参数会自动设置并立即分析；现在点会先载入内置示例试跑。想手动微调每个参数？打开右上角「高级选项」。</div>
       </div>
 
       <!-- v0.21: wrapper is advanced-only — it holds ONLY the two advanced
@@ -1115,6 +1181,10 @@
         <!-- v0.10 (1.1) empty-state guide: shown until the first render -->
         <div id="empty-guide" class="empty-guide">
           <div class="eg-title">三步得到强度结论</div>
+          <!-- v0.34 capability-style opening line: what the app DOES, no
+              promise about the verdict (engine is the only source of
+              "safe" — REFUTE (i) wording discipline) -->
+          <div class="hint" style="margin:2px 0 6px 0">上传 3D 模型，得到强度结论、风险提示与参数建议——结论以引擎为准</div>
           <div class="eg-steps">
             <div class="eg-step"><span class="eg-n">1</span>左侧上传模型<div class="hint" style="margin:0">支持 .stl / .3mf / .obj 等</div></div>
             <div class="eg-step"><span class="eg-n">2</span>回答「这个零件拿来做什么」<div class="hint" style="margin:0">或直接点「分析」用默认参数</div></div>
@@ -1541,7 +1611,12 @@ Promise.all([
   // v0.23: the G-code tools panel exists only when the gcode-diff companion
   // exe resolves server-side — hidden (not disabled) when absent, so the
   // engine-only flow never sees a dead entry point
-  if (st.gcode_diff_available) $("gcode-panel").style.display = "";
+  state.gcodeAvailable = !!st.gcode_diff_available;  // v0.34 sniff gate
+  if (st.gcode_diff_available) {
+    $("gcode-panel").style.display = "";
+    var lg = $("lnk-gcode");  // simple-mode one-line entry (v0.34)
+    if (lg) lg.style.display = "";
+  }
   // v0.27: bundled sample entries (empty-guide button + the durable link in
   // the 模型 panel) follow the same degrade-not-error gate
   state.sampleAvailable = !!st.sample_available;
@@ -1869,6 +1944,7 @@ function onPresetMaterial() {
   var sel = $("preset-material-sel");
   if (!sel || !sel.value) return;
   state.materialChoice = sel.value;
+  updatePresetSummary();  // v0.34: the folded row must not show a stale spool
   // ALWAYS write the ordinary material row — collectParams reads the ROW
   // value for dirty keys, so marking dirty without writing it would send
   // the stale value (E14 caught exactly this: echo stayed PLA)
@@ -1941,6 +2017,13 @@ function applyPreset(p) {
       updateRowState("material");
     }
   }
+  // v0.34: the question is answered — remember it for the stage-3 fold
+  // summary (panel gets .answered; [换] pins it back open, resetTuningState
+  // clears both on a new model)
+  state.lastPreset = p.label || p.name;
+  var pp = $("preset-panel");
+  if (pp) pp.classList.add("answered");
+  updatePresetSummary();
   toast("已应用预设「" + (p.label || p.name) + "」"
     + ((!state.is3mf && state.materialChoice && state.materialChoice !== "PLA")
        ? "（材料按你的选择：" + state.materialChoice + "）" : ""), "info");
@@ -2598,6 +2681,11 @@ function resetTuningState() {
                                // the chip/inputs must not claim one
   state.lastHeatmap = null;         // stale heatmap cubes must not linger
   stlSetHeatmap(null);
+  // v0.34: the answered-question fold dies with the model it answered for
+  state.lastPreset = null;
+  var pp = $("preset-panel");
+  if (pp) pp.classList.remove("answered", "pinned");
+  updatePresetSummary();
 }
 
 function applySession(j) {
@@ -2626,6 +2714,7 @@ function applySession(j) {
   $("export-msg").textContent = "";
   setPresetMaterialVisible(true);  // v0.27 (hidden again for 3MF inputs)
   loadStlPreview(j);
+  updateStageClasses();  // v0.34: model is live — spotlight moves to the question
 }
 
 // ---------- v0.13 task-flow chrome: sticky verdict / dirty chip ----------
@@ -2642,6 +2731,25 @@ function updateNoReportState() {
   var eg = $("empty-guide");
   var pristine = !eg || eg.style.display !== "none";
   document.body.classList.toggle("no-report", pristine);
+}
+// v0.34 staged spotlight: ONE new body bit — no-model. Toggled at every
+// point the token changes value (applySession / unknown-token drop / boot).
+// Combined with no-report this encodes the three simple-mode stages without
+// a new state machine (REFUTE (h): the third "answered" signal is the
+// #preset-panel.answered class, owned by applyPreset/resetTuningState).
+function updateStageClasses() {
+  document.body.classList.toggle("no-model", !state.token);
+}
+// folded-question summary (stage 3): 用途 from the last applied preset,
+// 材料 from the live sticky answer — 3MF carries its own
+function updatePresetSummary() {
+  var t = $("preset-summary-txt");
+  if (!t) return;
+  var parts = [];
+  if (state.lastPreset) parts.push("用途：" + state.lastPreset);
+  if (state.is3mf) parts.push("材料：3MF 自带");
+  else if (state.materialChoice) parts.push("材料：" + state.materialChoice);
+  t.textContent = parts.join(" · ") || "未选预设";
 }
 // v0.18 detail-wall fold toggle (simple mode): flips body.detail-open; the
 // wall containers keep their DOM ids/positions, so report.js writes are
@@ -2703,6 +2811,9 @@ function updateDirtyChip() {
   var chip = $("dirty-chip");
   if (!chip) return;
   var n = Object.keys(state.dirty || {}).length;
+  // v0.34: the same count drives the simple-mode 分析 button visibility
+  // (pending edits = the one moment a manual run means something there)
+  document.body.classList.toggle("has-dirty", n > 0);
   if (n > 0) {
     chip.textContent = "已改 " + n + " 项";
     chip.style.display = "inline-flex";  // "" would fall back to CSS none
@@ -2803,6 +2914,22 @@ function uploadModelFile(f) {
     .then(function (r) { return r.json(); })
     .then(function (j) {
       if (!j.ok) throw new Error(j.error || "上传失败");
+      // v0.34 sniff: a .gcode dropped on the MODEL dropzone used to upload
+      // fine and then dead-end at the analyze kind gate (400 error card).
+      // The server already typed the session — route it to the score flow
+      // the dedicated panel would have used. Companion absent → old honest
+      // dead-end (the error card still explains).
+      if (j.kind === "gcode" && state.gcodeAvailable) {
+        $("upload-msg").textContent = "已上传 " + j.name + " — 转入 G-code 评分";
+        gcodeState.a = { token: j.token, name: j.name };
+        $("gcode-a-name").textContent = j.name;
+        gcodeGate();
+        document.body.classList.add("gcode-open");
+        if (document.body.classList.contains("mode-simple")
+            && typeof document.getElementById("gcode-panel").scrollIntoView === "function")
+          document.getElementById("gcode-panel").scrollIntoView({ block: "start" });
+        return gcodeRun();
+      }
       resetTuningState();
       applySession(j);
       persistSession();
@@ -3110,8 +3237,10 @@ function analyze(compare, auto) {
       if (j.status === "validation_refused") renderValidationRefused(j);
       // v0.10 (1.4) actionable error card — next-step buttons, not just a toast
       if (typeof renderAnalyzeError === "function") renderAnalyzeError(j);
+      document.body.classList.add("analyze-err");  // v0.34: retry entry
       throw new Error(j.error || "分析失败");
     }
+    document.body.classList.remove("analyze-err");  // v0.34: error cleared
     // v0.23: a successful model render reclaims the right column from a
     // previous gcode result (panel-level mutual exclusion)
     if (typeof showGcodeResultPanel === "function") showGcodeResultPanel(false);
@@ -3165,6 +3294,10 @@ function analyze(compare, auto) {
     if (/unknown token/i.test(String(e))) {
       // server was restarted (or the session expired) — drop the dead session
       clearPersistedSession();
+      // v0.34: the dead session's stale hero/results must not linger on a
+      // no-model screen (stage contradiction — REFUTE finding #3); the
+      // standard reset also clears the answered-question fold
+      resetTuningState();
       state.token = null; state.name = null; state.is3mf = false;
       // v0.27: the dead session's loop state dies with it (stopAutoTune
       // without a toast — the unknown-token toast below is the story)
@@ -3184,6 +3317,7 @@ function analyze(compare, auto) {
       $("btn-supports").disabled = true;
       $("btn-stress-modifier").disabled = true;
       $("export-hint").textContent = "先上传模型";
+      updateStageClasses();  // v0.34: back to stage-1 spotlight
     }
     toast(String(e), "err");
   }).finally(function () {
@@ -4040,6 +4174,7 @@ function applyMode(advanced) {
   // run only on upload/analyze/render hooks — at boot the pristine-empty
   // class was never applied, so the fold toggle floated over an empty panel.
   updateNoReportState();
+  updateStageClasses();  // v0.34: boot is stage-1 until a session lands
 })();
 $("mode-toggle").addEventListener("change", function () {
   applyMode(document.body.classList.contains("mode-simple"));
@@ -4130,6 +4265,18 @@ var LANG_EN = {
   "选预设": "Pick preset",
   "看结论": "Read verdict",
   "三步得到强度结论": "Strength verdict in three steps",
+  "上传 3D 模型，得到强度结论、风险提示与参数建议——结论以引擎为准":
+    "Upload a 3D model to get a strength verdict, risk warnings and parameter advice — the engine decides",
+  "有 G-code 文件？给切片结果打分":
+    "Have a G-code file? Score your slice",
+  "换": "change",
+  "展开预设面板重新选择用途（当前参数会随新预设重设并重新分析）":
+    "Reopen the preset panel to pick another use case (parameters reset to the new preset and re-analyze)",
+  "未选预设": "no preset chosen",
+  "上传模型后点一个用途即可，10 项打印参数会自动设置并立即分析；现在点会先载入内置示例试跑。想手动微调每个参数？打开右上角「高级选项」。":
+    "After uploading, click one use case — all 10 print parameters are set and analyzed at once; clicking now loads the bundled sample for a trial run. Want full manual control? Open Advanced options at the top right.",
+  "已上传 ": "uploaded ",
+
   "上传模型（.stl / .3mf）": "Upload a model (.stl / .3mf)",
   "点一个快速预设": "Pick a quick preset",
   "或直接点「分析」用默认参数": "or hit Analyze for defaults",
@@ -4972,6 +5119,9 @@ var LANG_WORDS = (function () {
     ["，本次分析将执行应力调优", " — every analyze now runs stress tuning"],
     ["已下载优化后的 3MF（", "optimized 3MF downloaded ("],
     ["候选", "candidate"],
+    [" — 转入 G-code 评分", " — routing to G-code scoring"],
+    ["用途：", "use: "], ["材料：", "material: "],
+    ["3MF 自带", "carried by the 3MF"],
     ["已手动停止自动调参（共 ", "auto-tune stopped manually ("],
     ["（未设）", " (unset)"],
     
@@ -5214,6 +5364,20 @@ $("btn-sample").addEventListener("click", loadSample);
 $("lnk-sample").addEventListener("click", function (e) {
   e.preventDefault();  // <a href="#"> is for affordance, not navigation
   loadSample();
+});
+// v0.34: the simple-mode G-code line expands the panel (mode-simple CSS
+// keeps it a one-line entry; advanced shows the panel natively)
+$("lnk-gcode").addEventListener("click", function (e) {
+  e.preventDefault();
+  document.body.classList.add("gcode-open");
+  var gp = document.getElementById("gcode-panel");
+  if (gp && typeof gp.scrollIntoView === "function")
+    gp.scrollIntoView({ block: "start" });
+});
+// v0.34: [换] pins the answered question back open (ownership — stays
+// open until the next model resets it)
+$("btn-preset-change").addEventListener("click", function () {
+  document.getElementById("preset-panel").classList.add("pinned");
 });
 $("preset-material-sel").addEventListener("change", onPresetMaterial);
 // dropzone overlay (presentation only): routes a drop onto the SAME file

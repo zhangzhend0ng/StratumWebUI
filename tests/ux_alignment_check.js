@@ -355,16 +355,22 @@ async function main() {
     expect("E7 flow: simple mode is single-column (advanced was 2-col)",
            advCols.indexOf(" ") >= 0 && simple.cols.indexOf(" ") < 0,
            JSON.stringify({ advCols, cols: simple.cols }));
-    // v0.23: G-code 工具面板（评分入口）有意暴露给简单模式，插在快速预设之后
-    expect("E7 flow: panel order = 模型→快速预设→G-code→分析结果→档位对比, 档位对比 visible",
-           simple.names === "模型,这个零件拿来做什么？,G-code,分析结果,档位对比" && simple.candVis,
+    // v0.23 exposed the G-code panel to simple mode; v0.34 demoted it to a
+    // one-line link (lnk-gcode) and folded the compare card into the preset
+    // summary — the visible simple-mode stack is now exactly the three
+    // decision stages: 模型 → 问句 → 结果
+    expect("E7 flow: panel order = 模型→问句→结果 (v0.34 spotlight stack)",
+           simple.names === "模型,这个零件拿来做什么？,分析结果",
            JSON.stringify(simple));
     expect("E7 v0.22: idle sticky hidden in simple mode (hero carries SF once)",
            !simple.svVis, JSON.stringify(simple));
     expect("E7 v0.22: KPI row + rec list live behind the detail fold",
            !simple.kpiVis && !simple.recVis, JSON.stringify(simple));
-    expect("E7 v0.22: primary row = 分析 + 快照 (compare/report advanced-only)",
-           simple.anz && simple.snap && !simple.cmp && !simple.rpt,
+    // v0.34: 分析 hides in simple mode while clean (E9 just reset all
+    // edits) — it returns with pending edits or an error; the snapshot is
+    // the one shareable artifact that stays
+    expect("E7 v0.34: clean simple row = 快照 only (分析 returns when dirty/err)",
+           !simple.anz && simple.snap && !simple.cmp && !simple.rpt,
            JSON.stringify(simple));
     // v0.22: while RUNNING the sticky bar returns even in simple mode —
     // it is the run feedback channel; it hides again when the hero re-renders
@@ -465,8 +471,11 @@ async function main() {
       "openState:f?f.open:null," +
       "summary:((f&&f.querySelector('summary'))||{}).textContent||''," +
       "panelVis:!!(p&&p.offsetParent!==null)})})()"));
+    // v0.34: the compare card hides in simple stage-3 (its novice line
+    // rides #preset-cand) — the structural invariants below are what the
+    // fold contract still promises; panelVis is asserted false now
     expect("E11 fold: in-panel <details> wraps the raw table, bars stay outside",
-           e11.hasFold && e11.hasTable && e11.inside && e11.barsOutside && e11.panelVis,
+           e11.hasFold && e11.hasTable && e11.inside && e11.barsOutside && !e11.panelVis,
            JSON.stringify(e11));
     expect("E11 fold: open state mirrors the outlet invariant (bars rendered ⇒ closed)",
            e11.openState === !e11.barsRendered, JSON.stringify(e11));
@@ -882,8 +891,10 @@ async function main() {
       "return JSON.stringify({row:b.join(',')," +
       "noReport:document.body.classList.contains('no-report')," +
       "presetEnabled:(document.querySelectorAll('.preset-btn')[0]||{}).disabled===false})})()");
-    expect("W18 pristine: simple row = 分析 only + preset cards live (bridge)",
-           pristineRow.indexOf('"row":"分析"') >= 0
+    // v0.34: stage-1 simple mode hides 分析 too (nothing to run yet) — the
+    // whole action row is empty until edits/errors/presets give it meaning
+    expect("W18 pristine: simple row empty + preset cards live (bridge)",
+           pristineRow.indexOf('"row":""') >= 0
            && pristineRow.indexOf('"noReport":true') >= 0
            && pristineRow.indexOf('"presetEnabled":true') >= 0,
            pristineRow);
@@ -947,6 +958,79 @@ async function main() {
     const advSiv = await evalJs("window.__siv");
     expect("W18 scroll: advanced mode never auto-scrolls (scrollIntoView spy)",
            advOk === true && advSiv === 0, advOk + " calls=" + advSiv);
+
+    // ---- W19 (v0.34) staged spotlight: stage classes / fold / [换] /
+    // cand merge / gcode link + .gcode sniff routing ----------------------
+    await evalJs("try{sessionStorage.removeItem('stratum_session')}catch(e){};" +
+      "try{localStorage.setItem('stratum-ui-mode','0')}catch(e){}; 1");
+    await send("Page.reload");
+    for (let i = 0; i < 50; i++) {
+      if (await evalJs("typeof renderReport") === "function") break;
+      await sleep(150);
+    }
+    await sleep(600);
+    const s1 = JSON.parse(await evalJs("(function(){var dz=document.getElementById('dropzone');" +
+      "var pp=document.getElementById('preset-panel');" +
+      "return JSON.stringify({noModel:document.body.classList.contains('no-model')," +
+      "outline:getComputedStyle(dz).outlineStyle!=='none'," +
+      "dim:(parseFloat(getComputedStyle(pp).opacity)||1)<0.9," +
+      "glink:document.getElementById('lnk-gcode').style.display!=='none'," +
+      "open:document.querySelector('#empty-guide .hint').textContent," +
+      "h:document.documentElement.scrollHeight})})()"));
+    expect("W19 stage1: dropzone spotlight + preset dimmed-but-alive + gcode link + opening line",
+           s1.noModel === true && s1.outline === true && s1.dim === true
+           && s1.glink === true
+           && s1.open.indexOf("结论以引擎为准") >= 0,
+           JSON.stringify(s1));
+    expect("W19 stage1: first screen height ≤1600 (spotlight budget)",
+           s1.h <= 1600, String(s1.h));
+    // stage 3 via the bridge (sample + preset): the question folds, the
+    // compare card hides, its one line rides the summary, [换] reopens
+    await evalJs("(function(){var b=document.querySelector('.preset-btn[data-preset=safe]');" +
+      "if(b)b.click();return 1})()");
+    const foldOk = await waitDone("bridge run 2");
+    const s3 = JSON.parse(await evalJs("(function(){var pp=document.getElementById('preset-panel');" +
+      "return JSON.stringify({folded:document.getElementById('preset-buttons').offsetParent===null," +
+      "sum:document.getElementById('preset-summary-txt').textContent," +
+      "sumVis:document.getElementById('preset-summary').offsetParent!==null," +
+      "candHidden:document.getElementById('cand-panel').offsetParent===null," +
+      "dual:document.getElementById('preset-cand').textContent===" +
+      "document.getElementById('cand-novice-line').textContent," +
+      "analyzeVis:document.getElementById('btn-analyze').offsetParent!==null})})()"));
+    expect("W19 stage3: answered question folds to summary (dual-write intact)",
+           foldOk === true && s3.folded === true && s3.sumVis === true
+           && s3.sum.indexOf("用途") >= 0 && s3.dual === true
+           && s3.candHidden === true && s3.analyzeVis === true,
+           foldOk + " " + JSON.stringify(s3));
+    await evalJs("document.getElementById('btn-preset-change').click(); 1");
+    const pinned = await evalJs("(function(){return JSON.stringify({" +
+      "buttons:document.getElementById('preset-buttons').offsetParent!==null," +
+      "cls:document.getElementById('preset-panel').className})})()");
+    expect("W19 stage3: [换] pins the full panel back open",
+           pinned.indexOf('"buttons":true') >= 0 && pinned.indexOf("pinned") >= 0,
+           pinned);
+    // gcode link expands the panel; a .gcode dropped on the MODEL dropzone
+    // routes to scoring (v0.34 sniff — used to dead-end at the kind gate)
+    await evalJs("document.getElementById('lnk-gcode').click(); 1");
+    const gOpen = await evalJs("document.getElementById('gcode-panel').offsetParent!==null");
+    expect("W19 gcode: link expands the panel", gOpen === true, String(gOpen));
+    const gB64 = fs.readFileSync(path.join(ROOT, "test_data", "gcode", "a.gcode"))
+      .toString("base64");
+    const sniff = JSON.parse(await evalJs("(async function(){" +
+      "var b=atob('" + gB64 + "');var u=new Uint8Array(b.length);" +
+      "for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);" +
+      "var f=new File([u],'sniff.gcode');var dt=new DataTransfer();" +
+      "dt.items.add(f);var inp=document.getElementById('model-file');" +
+      "inp.files=dt.files;inp.dispatchEvent(new Event('change'));" +
+      "for(var t=0;t<160;t++){await new Promise(function(r){setTimeout(r,250)});" +
+      "var rp=document.getElementById('gcode-result-panel');" +
+      "if(rp.style.display!=='none'&&document.getElementById('gcode-result').textContent.length>50)break;}" +
+      "return JSON.stringify({msg:document.getElementById('upload-msg').textContent," +
+      "panel:document.getElementById('gcode-result-panel').style.display!=='none'," +
+      "body:document.getElementById('gcode-result').textContent.slice(0,80)})})()"));
+    expect("W19 sniff: .gcode on the model dropzone routes to scoring",
+           sniff.msg.indexOf("转入 G-code 评分") >= 0 && sniff.panel === true,
+           JSON.stringify(sniff).slice(0, 220));
 
     console.log(fails === 0 ? "ux alignment E2E all green"
                             : fails + " FAILURES");
