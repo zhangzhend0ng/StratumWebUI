@@ -6,10 +6,91 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.7.3"
+# version = "0.9.1"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.9.1 (selected-model check fixes):
+  - the write paths (写回对象 / AI proposal apply+revert / propose_settings)
+    resolve the target by the pick-time ModelObject.id() instead of
+    demanding the user's 3D-view selection still be the picked object.
+    Identity is the id; attention is the selection — a selection mismatch
+    is disclosed in the result note instead of a hard refusal (the old
+    guard made any conversation-driven apply fail the moment the user
+    clicked another object to look at it). An object no longer on the
+    plate is refused honestly（「已不在盘上」）.
+  - _select_object validates the selection index on BOTH bounds: a
+    negative sentinel (e.g. -1) used to index objects[-1] silently — the
+    LAST object got picked with every downstream identity check
+    "passing" on the wrong object.
+  - the v0.8 3MF export channel is cross-checked: the exported 3MF's
+    triangle total must match the picked object (model parts only, or
+    parts+modifiers — both host serializations accepted). A mismatch
+    falls back to the mesh-only STL pack WITH THE REASON DISCLOSED
+    instead of silently analyzing whatever the host exported.
+  - server-side assistant step no longer dies on a stale token (server
+    restart / eviction): it degrades to the no-facts placeholder and
+    flags stale_token so the page drops the dead token (the page
+    previously never cleared it — every turn errored until a new pick).
+    get_analysis / read_gcode answer a stale token with an actionable
+    Chinese message instead of "unknown token (upload expired?)".
+  - assistant instructions gain the facts-vs-selection rule: the facts
+    block's 模型 is the LAST analyzed object, not necessarily the
+    currently selected one; when the user says 「这个/选中的」, the model
+    must reconcile with get_print_context first (re-run run_analysis on
+    the selection, or declare 「以下基于上次分析的 X」).
+
+v0.9.0 (conversation-first UI):
+  - the plugin's face is now ONE conversation (orca-complaint-risk pattern):
+    the page opens on a full-height chat; the step cards / verdict / warnings
+    / suggestions become a compact report card appended INTO the conversation
+    after each analysis, with a "查看完整报告" link into the folded 报告
+    view (button paths unchanged there). Talking needs no prior pick — the
+    assistant's run_analysis tool picks from the plate itself.
+  - server-side assistant upgraded to true conversation mode: full history
+    resent (50-turn stdin bound, not a UX cap), follow-up messages merged
+    with context ("换个模型再看看"), clarify-when-insufficient (judgement
+    first, ≤3 numbered questions), spoken-style replies ≤300 chars, and a
+    new 写入全局预设 action chip (panel relay wired) so repair flows can
+    be finished from the conversation.
+
+v0.8.0 (rejected-value repair, plugin-side):
+  - 写回对象/写入全局预设 now also REPAIR rejected values: the engine's
+    iter 883 legality gate discloses illegal 3mf values in warnings[]; keys
+    not covered by a suggestion get the factory-default preset's serialized
+    value ('Default Setting', read via preset_bundle().prints) written back
+    VERBATIM — no parsing, no range table, legality authority stays in
+    Orca. Repairs are itemized in the result note (key old→new); keys with
+    no default available are disclosed as unrepairable, never guessed.
+    Fail-soft: a host without the preset read surface only loses repair.
+  - _host_probe gains a permanent preset-default-read step so the repair
+    channel's health is visible in python_*.log at every launch.
+  - robustness (found by fresh-install redeploy): wheel extraction now
+    skips /tests/ members and tolerates per-file audit denies — the host
+    sandbox denied numpy/typing/tests/data/mypy.ini outright, which killed
+    the server thread on any install without a cached __extracted__.
+    _run_server's except now prints the traceback to python_*.log too
+    (panel-less failures were previously invisible).
+  - global-preset write self-heals schema drift: commit() is retried with
+    the host-rejected key dropped and disclosed (the engine can suggest
+    filament-scope keys — enable_overhang_bridge_fan — that the process
+    preset has no slot for; the whole transaction used to die on them).
+  - 从盘选取 (panel button and the AI run_analysis tool) now uploads the
+    host's export_object_3mf output instead of a mesh-only STL: the engine
+    sees the REAL preset config (current values in suggestions stop being
+    a fiction of defaults, and rejected-value repair finally fires on
+    live-preset values like the 2003/3001mm/s speed family). Hosts without
+    the binding fall back to the STL pack with a disclosure note.
+
+v0.7.4 (engine f3bb89f repack):
+  - vendored engine swapped to the 0.27.0 rebuild (hash de744ae8…, version
+    string unchanged — md5 is the swap signal): iter 883 advisory legality
+    gate — 55 advisory keys now carry per-key ranges/bool/enum/percent checks
+    (Snapmaker Orca PrintConfig @bac6fd5c1), illegal values join the
+    disclosure channel as "rejected, not applied" warning lines (loader
+    reject-forwarding overwrite->append fix included). UI renders warnings[]
+    verbatim — zero UI-side changes.
 
 v0.7.3 (dual write-back targets + sandbox-friendly temp):
   - toolbar now has TWO write targets: 写回对象 (per-object process
@@ -143,6 +224,7 @@ Plater.selected_object_indices() host binding.
 import importlib.util
 import json
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -209,8 +291,29 @@ def _install_bundled_wheels():
             if os.path.isdir(tmp):  # interrupted extraction
                 shutil.rmtree(tmp, ignore_errors=True)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
+            # v0.8: member-filtered extraction. The host audit sandbox
+            # denies some wheel members outright (observed: numpy/typing/
+            # tests/data/mypy.ini — an .ini under tests/data; earlier
+            # members in the same tree wrote fine, so the deny is
+            # file-specific, not plugin-dir-wide). Runtime never imports
+            # bundled test data, so /tests/ members are skipped up front
+            # and any remaining per-file PermissionError is tolerated
+            # (counted + logged) instead of killing the server thread —
+            # a fresh install must not depend on audit mood.
+            denied = []
             with zipfile.ZipFile(os.path.join(vendor, fname)) as zf:
-                zf.extractall(tmp)
+                for member in zf.namelist():
+                    if "/tests/" in member or "/__pycache__/" in member:
+                        continue
+                    try:
+                        zf.extract(member, tmp)
+                    except PermissionError:
+                        denied.append(member)
+            if denied:
+                sys.stderr.write(
+                    "[stratum] wheel %s: %d member(s) denied by host audit,"
+                    " skipped (test/data files, runtime unaffected): %s\n"
+                    % (fname, len(denied), ", ".join(denied[:5])))
             os.replace(tmp, dest)
         if dest not in sys.path:
             sys.path.append(dest)
@@ -247,6 +350,11 @@ def _run_server():
             pass
         httpd.serve_forever()
     except Exception as exc:  # noqa: BLE001 - surface anything to the panel
+        # v0.8: also print to stderr — python_*.log is the only channel an
+        # operator can read when the panel never opens (start() returns a
+        # failure result but on_load continues, so nothing else shows it).
+        import traceback
+        traceback.print_exc()
         _state["error"] = "%s: %s" % (type(exc).__name__, exc)
 
 
@@ -266,7 +374,10 @@ def _panel_doc(port):
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<style>"
         "  body { margin: 0; display: flex; flex-direction: column; height: 100vh; }"
-        "  #bar { display: flex; align-items: center; gap: 8px; padding: 4px 8px;"
+        # v0.9: the bar is HIDDEN — its buttons and status moved into the
+        # page (对话 chips + 报告视图 buttons); the element stays because the
+        # routing JS still references #pickstat.
+        "  #bar { display: none; align-items: center; gap: 8px; padding: 4px 8px;"
         "         border-bottom: 1px solid #d0d0d0; background: #f7f7f7;"
         "         font: 12px/1.4 system-ui, sans-serif; }"
         "  #pick { padding: 2px 10px; font: 12px system-ui, sans-serif; cursor: pointer; }"
@@ -344,6 +455,8 @@ def _panel_doc(port):
         "    if (!ev.data || !f || ev.source !== f.contentWindow) return;"
         "    var t = ev.data.type;"
         "    if (t === 'stratum-orca-apply') doApply();"
+        "    else if (t === 'stratum-orca-apply-global')"
+        "      orca.postMessage({ command: 'apply-global' });"
         "    else if (t === 'stratum-orca-pick')"
         "      orca.postMessage({ command: 'pick' });"
         "    else if (t === 'stratum-orca-gcode')"
@@ -353,6 +466,9 @@ def _panel_doc(port):
         "    else if (t === 'stratum-orca-apply-proposal')"
         "      orca.postMessage({ command: 'apply-proposal',"
         "        values: ev.data.values, old_values: ev.data.old_values });"
+        "    else if (t === 'stratum-orca-apply-global-proposal')"
+        "      orca.postMessage({ command: 'apply-global-proposal',"
+        "        values: ev.data.values });"
         "    else if (t === 'stratum-orca-revert-proposal')"
         "      orca.postMessage({ command: 'revert-proposal' });"
         "  });"
@@ -363,6 +479,15 @@ def _panel_doc(port):
         "      if (ft) ft.contentWindow.postMessage("
         "        { type: 'stratum-orca-tool-result', id: msg.id, ok: msg.ok,"
         "          result: msg.result, error: msg.error },"
+        "        'http://127.0.0.1:{PORT}');"
+        "      return;"
+        "    }"
+        "    if (msg.command === 'gcode-progress') {"
+        "      stat.textContent = '切片导出中… ' +"
+        "        (msg.bytes / 1048576).toFixed(1) + ' MB';"
+        "      var fg = document.getElementById('sf');"
+        "      if (fg) fg.contentWindow.postMessage("
+        "        { type: 'stratum-orca-gcode-progress', bytes: msg.bytes },"
         "        'http://127.0.0.1:{PORT}');"
         "      return;"
         "    }"
@@ -433,11 +558,15 @@ def _select_object():
             return 0, objects[0], "盘上仅一个对象，未选中也已自动选取"
         raise ValueError("请先在 3D 视图选中一个对象（盘上共 %d 个）" % len(objects))
     if len(idxs) > 1:
-        names = ", ".join((objects[i].name or "(未命名)") for i in idxs if i < len(objects))
+        names = ", ".join((objects[i].name or "(未命名)")
+                          for i in idxs if isinstance(i, int) and 0 <= i < len(objects))
         raise ValueError("一次只支持一个对象（选中了 %d 个: %s）" % (len(idxs), names))
     i = idxs[0]
-    if i >= len(objects):
-        raise ValueError("选中的对象索引越界（%d）" % i)
+    # both bounds: a negative sentinel from the binding (e.g. -1 for
+    # "none") used to index objects[-1] silently — the LAST object got
+    # picked and every downstream id check then "passed" on it
+    if not isinstance(i, int) or not 0 <= i < len(objects):
+        raise ValueError("选中的对象索引越界（%r，盘上共 %d 个）" % (i, len(objects)))
     return i, objects[i], None
 
 
@@ -473,6 +602,93 @@ def _collect_mesh_payload(obj):
     if obj.instance_count() > 1:
         notes.append("取第 1 个摆放（共 %d 实例）" % obj.instance_count())
     return payload, ("；".join(notes) if notes else None)
+
+
+def _object_triangle_totals(obj):
+    """UI thread: (parts, with_modifiers) triangle totals of the object's
+    volumes — identity data for the 3MF cross-check below. Hosts serialize
+    either every volume or model parts only; both are accepted, so both
+    sums are needed."""
+    parts = total = 0
+    for vol in obj.volumes():
+        mesh = vol.mesh()
+        if mesh.is_empty() or mesh.triangle_count() == 0:
+            continue
+        n = mesh.triangle_count()
+        total += n
+        if vol.is_model_part():
+            parts += n
+    return parts, total
+
+
+def _3mf_triangle_count(path):
+    """Count <triangle> elements across the 3MF's model entries (stdlib
+    only; streaming iterparse keeps large meshes off the heap)."""
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    count = 0
+    with zipfile.ZipFile(path) as zf:
+        for entry in zf.namelist():
+            if not entry.lower().endswith(".model"):
+                continue
+            with zf.open(entry) as fh:
+                for _ev, el in ET.iterparse(fh, events=("end",)):
+                    if el.tag.rsplit("}", 1)[-1] == "triangle":
+                        count += 1
+                    el.clear()
+    return count
+
+
+def _collect_upload_payload(obj, object_idx):
+    """UI thread: build the analyze upload blob for the picked object.
+
+    v0.8: prefers the host's export_object_3mf — a standalone 3MF carrying
+    the CURRENT PRESET CONFIG (illegal values included), so the engine's
+    legality gate sees the real config instead of a fiction of defaults,
+    and rejected-value repair has something to fire on. Falls back to the
+    mesh-only STL pack on hosts without the binding; the note discloses
+    the downgrade (engine then analyzes default parameters and can neither
+    see nor reject preset values).
+    v0.9.1: the export is identity-CHECKED — the binding takes an index we
+    derived from model.objects(); if its index space means something else,
+    the file silently carries another object. Triangle totals must match
+    this object, else export-failure semantics (STL fallback + reason in
+    the note), never a silent wrong-object analysis.
+    """
+    name = (obj.name or "model")
+    exporter = getattr(orca.host.plater(), "export_object_3mf", None)
+    if exporter is not None:
+        path = os.path.join(_TMP_BASE, "pick_%d.3mf" % int(time.time() * 1000))
+        down_reason = None
+        try:
+            exporter(object_idx, path)
+            parts, with_mods = _object_triangle_totals(obj)
+            got = _3mf_triangle_count(path)
+            if got not in (parts, with_mods):
+                down_reason = ("内容与对象不符（导出 %d 个三角形，对象为 "
+                               "%d/%d），疑非选中对象" % (got, parts, with_mods))
+                raise ValueError(down_reason)
+            with open(path, "rb") as fh:
+                blob = fh.read()
+            return blob, ("%s.3mf" % name).strip(), "已携带当前预设配置"
+        except Exception:  # noqa: BLE001 - fall back to STL, disclose
+            import traceback
+            traceback.print_exc()
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        payload, note = _collect_mesh_payload(obj)
+        down = ("未携带预设配置（3MF 导出%s，引擎按默认参数分析）"
+                % (down_reason or "失败"))
+        return (_pack_binary_stl(payload), ("%s.stl" % name).strip(),
+                "；".join(x for x in (note, down) if x))
+    payload, note = _collect_mesh_payload(obj)
+    down = "未携带预设配置（宿主无 3MF 导出绑定，引擎按默认参数分析）"
+    return (_pack_binary_stl(payload), ("%s.stl" % name).strip(),
+            "；".join(x for x in (note, down) if x))
 
 
 def _pack_binary_stl(payload):
@@ -512,7 +728,7 @@ def _upload_worker(payload, filename, note, object_idx, object_id):
             _picking.clear()
 
     try:
-        blob = _pack_binary_stl(payload)
+        blob = payload  # packed on the UI thread (3MF bytes or binary STL)
         port = _state["port"]
         req = urllib.request.Request(
             "http://127.0.0.1:%d/api/upload?name=%s" % (port, urllib.parse.quote(filename)),
@@ -559,6 +775,7 @@ def _gcode_attach_worker(token, gcode_path):
         deadline = time.monotonic() + 600.0
         stable_since = None
         last_size = -1
+        reported = -1
         while time.monotonic() < deadline:
             try:
                 size = os.path.getsize(gcode_path)
@@ -573,6 +790,12 @@ def _gcode_attach_worker(token, gcode_path):
                 else:
                     stable_since = None
                 last_size = size
+                # relay growing-file progress to the panel (toolbar status +
+                # iframe slice-status); no total size exists, bytes ARE the
+                # progress. Only post on change to keep the bridge quiet.
+                if _panel is not None and size != reported:
+                    reported = size
+                    _panel.post({"command": "gcode-progress", "bytes": size})
             time.sleep(0.5)
         else:
             return reply(False, error="切片 10 分钟内未产出 G-code 文件（被取消或失败？）")
@@ -624,6 +847,105 @@ def _start_gcode_flow():
                      args=(_last_pick["token"], gcode_path)).start()
 
 
+# ---- v0.8 rejected-value repair (engine iter 883 consumption) -----------
+#
+# The engine's legality gate rejects illegal values at 3MF load and
+# discloses them in warnings[] via format_ignored_keys_warning — one
+# wording for physical and advisory keys alike, and the rejected list is
+# NOT capped, so every reject is parseable from the report. Suggestions
+# already carry legal values for the keys they touch; the repair closes
+# the remaining gap: a rejected key WITHOUT a suggestion gets the
+# factory-default preset's serialized value written back VERBATIM. No
+# parsing, no range table, no defaults hardcoded here — the legality
+# authority stays inside Orca itself ('Default Setting', is_default).
+
+_RE_REJECT = re.compile(r"key '([^']+)' value '([^']+)' rejected")
+
+
+def _parse_rejected_keys(report):
+    """Report -> {key: raw illegal value} from the engine's reject
+    disclosure lines. Fail-soft: any warnings[] shape; no match -> {}."""
+    out = {}
+    for w in ((report or {}).get("warnings") or []):
+        text = w if isinstance(w, str) else str(
+            (w.get("message") if isinstance(w, dict) else w) or "")
+        for key, raw in _RE_REJECT.findall(text):
+            out[key] = raw
+    return out
+
+
+def _serialize_orca_value(v):
+    """Preset config_value() return -> Orca config serialization string.
+    Strings (the normal case, incl. multi-extruder '150,150') pass through
+    untouched; bools/numbers/lists fall back to Orca's serialization."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    if isinstance(v, (list, tuple)):
+        return ",".join(_serialize_orca_value(x) for x in v)
+    return str(v)
+
+
+def _factory_default_repairs(rejected, suggestion_values):
+    """UI thread: rejected keys not covered by a suggestion get the
+    factory-default preset's value. Returns (repairs, unrepairable):
+    repairs = [(key, raw_illegal, serialized_default)], unrepairable =
+    keys we could not source a default for (host surface missing, no
+    is_default preset, or key absent from its config) — disclosed, never
+    guessed."""
+    todo = [k for k in rejected if k not in suggestion_values]
+    if not todo:
+        return [], []
+    try:
+        coll = orca.host.preset_bundle().prints
+        default = None
+        for i in range(coll.size()):
+            p = coll.preset(i)
+            isdef = p.is_default
+            if callable(isdef):
+                isdef = isdef()
+            if isdef:
+                default = p
+                break
+        if default is None:
+            return [], todo
+        keys = default.config_keys
+        if callable(keys):
+            keys = keys()
+        repairs, unrepairable = [], []
+        for k in todo:
+            if k not in keys:
+                unrepairable.append(k)
+                continue
+            repairs.append(
+                (k, rejected[k], _serialize_orca_value(default.config_value(k))))
+        return repairs, unrepairable
+    except Exception:  # noqa: BLE001 - repair degrades, never blocks apply
+        import traceback
+        traceback.print_exc()
+        return [], todo
+
+
+def _repair_note(repairs, unrepairable):
+    """Disclosure suffix for the apply note — repairs are itemized with
+    old→new so nothing is written silently."""
+    if not repairs and not unrepairable:
+        return ""
+    parts = []
+    if repairs:
+        parts.append("顺带修复非法值 %d 项（%s，取出厂默认）" % (
+            len(repairs),
+            "; ".join("%s %s→%s" % (k, old, new)
+                      for k, old, new in repairs)))
+    if unrepairable:
+        parts.append("未能修复 %d 项（无出厂默认可取：%s）" % (
+            len(unrepairable), ", ".join(unrepairable)))
+    return "；" + "；".join(parts)
+
+
 # ---- apply (写回 Orca) ---------------------------------------------------
 
 def _orca_serialize(value):
@@ -638,7 +960,10 @@ def _orca_serialize(value):
 def _collect_suggestion_values():
     """UI thread: the pick session's engine suggestions as an Orca
     {key: serialized value} dict, plus the keys skipped for having no
-    recommended value. Shared by 写回对象 and 写入全局预设."""
+    recommended value and the repair disclosure suffix. Shared by 写回对象
+    and 写入全局预设. v0.8: values also carries factory-default repairs
+    for rejected keys without a suggestion (merged; the suffix itemizes
+    them — nothing repairs silently)."""
     if not _last_pick.get("token"):
         raise ValueError("先点「从盘选取」并完成一次分析，再写回")
     module = sys.modules.get("stratum_server")
@@ -660,9 +985,14 @@ def _collect_suggestion_values():
             skipped.append(key)
             continue
         values[key] = _orca_serialize(item["recommended_value"])
+    rejected = _parse_rejected_keys(report)
+    repairs, unrepairable = _factory_default_repairs(rejected, values)
+    for key, _raw, val in repairs:
+        values[key] = val
+    note_suffix = _repair_note(repairs, unrepairable)
     if not values:
         raise ValueError("报告里没有可写回的建议（%d 项无推荐值）" % len(skipped))
-    return values, skipped
+    return values, skipped, note_suffix
 
 
 def _apply_suggestions():
@@ -673,14 +1003,44 @@ def _apply_suggestions():
     only); the report is read from the in-process server module under its
     session lock — no HTTP, no audit surface.
     """
-    values, skipped = _collect_suggestion_values()
+    values, skipped, repair_suffix = _collect_suggestion_values()
     note = _write_pick_object_overrides(values)
     if skipped:
         note += "；跳过 %d 项无推荐值（%s）" % (len(skipped), ", ".join(skipped))
+    note += repair_suffix
     return note
 
 
-def _apply_global_worker(values, skipped):
+_RE_UNKNOWN_SETTING = re.compile(r'Unknown \w+ preset setting "([^"]+)"')
+
+
+def _commit_global_preset(editor, values):
+    """Background thread: run the preset transaction, self-healing against
+    schema drift. commit() is all-or-nothing per transaction and the host
+    throws ValueError naming the first key its process tab doesn't know
+    (observed: the engine suggests filament-scope keys — e.g.
+    enable_overhang_bridge_fan — that have no slot in the process preset).
+    On such an error the named key is dropped, disclosed, and a FRESH
+    transaction re-commits the rest; keys set before the throw are re-set
+    idempotently. Returns (applied_values, dropped_keys)."""
+    dropped = []
+    while values:
+        txn = editor.begin_update()
+        for k, v in values.items():
+            txn.set(k, v)
+        try:
+            txn.commit()
+            return values, dropped
+        except ValueError as exc:
+            m = _RE_UNKNOWN_SETTING.search(str(exc))
+            if not m or m.group(1) not in values:
+                raise  # not a schema-drift reject — surface it
+            dropped.append(m.group(1))
+            values.pop(m.group(1))
+    return values, dropped
+
+
+def _apply_global_worker(values, skipped, repair_suffix=""):
     """Background thread: write the suggestions into the CURRENT process
     preset through the host's preset-transaction API
     (orca.host.preset.process begin_update/set/commit). The transaction API
@@ -698,15 +1058,16 @@ def _apply_global_worker(values, skipped):
         editor = getattr(getattr(orca.host, "preset", None), "process", None)
         if editor is None or not hasattr(editor, "begin_update"):
             raise ValueError("宿主缺少 preset.process 事务接口（需含该接口的构建）")
-        txn = editor.begin_update()
-        for k, v in values.items():
-            txn.set(k, v)
-        txn.commit()
-        applied = ["%s=%s" % (k, values[k]) for k in values]
+        applied_values, dropped = _commit_global_preset(editor, values)
+        applied = ["%s=%s" % (k, applied_values[k]) for k in applied_values]
         note = ("全局预设已更新 %d 项（%s）——参数面板即刻生效，预设已标记为已修改，"
                 "可在参数面板保存" % (len(applied), ", ".join(applied)))
+        if dropped:
+            note += ("；跳过 %d 项宿主工艺预设不支持的键（%s，非本机作用域/版本差异）"
+                     % (len(dropped), ", ".join(dropped)))
         if skipped:
             note += "；跳过 %d 项无推荐值（%s）" % (len(skipped), ", ".join(skipped))
+        note += repair_suffix
         reply(True, note=note)
     except Exception as exc:  # noqa: BLE001 - toolbar line
         import traceback
@@ -714,33 +1075,52 @@ def _apply_global_worker(values, skipped):
         reply(False, error="%s: %s" % (type(exc).__name__, exc))
 
 
+def _picked_object_index():
+    """UI thread: resolve the write target by the pick-time ModelObject.id()
+    — ids stay with the object while indices shift on add/remove and the
+    3D-view selection drifts with user attention. Returns
+    (object_idx, obj, objects) or raises a user-facing ValueError."""
+    picked_id = _last_pick.get("object_id")
+    if picked_id is None:
+        raise ValueError("选取会话缺少对象 id（插件重启过？请重新「从盘选取」）")
+    objects = orca.host.plater().model().objects()
+    for i, obj in enumerate(objects):
+        if obj.id() == picked_id:
+            return i, obj, objects
+    raise ValueError("分析对象已不在盘上（被删除或撤销？）——请对新对象重新「从盘选取」")
+
+
 def _write_pick_object_overrides(values):
-    """UI thread: T1 identity guard + apply_object_config + result note.
-    Shared by 写回（report suggestions）, the AI proposal Apply, and its
-    Revert — one guard, one writer, no drift between entry points."""
+    """UI thread: resolve the write target by pick-time id + apply_object_
+    config + result note. Shared by 写回（report suggestions）, the AI
+    proposal Apply, and its Revert — one resolver, one writer, no drift
+    between entry points.
+
+    v0.9.1: the target is the object whose id was recorded at pick time —
+    the write can never be redirected by a selection change. The user's
+    current selection is ATTENTION, not addressing: a mismatch is
+    disclosed in the note (so nothing writes silently) instead of the old
+    hard refusal, which made every conversation-driven apply fail the
+    moment the user clicked another object to look at it."""
     plater = orca.host.plater()
     applier = getattr(plater, "apply_object_config", None)
     if applier is None:
-        raise ValueError("宿主缺少 apply_object_config 绑定（需含该绑定的 Orca 构建）")
-    object_idx, obj, _ = _select_object()
-    # v0.4 identity guard: suggestions belong to the PICKED object. Compare
-    # the pick-time ModelObject.id() with the currently selected one — a
-    # selection change between pick and apply must not redirect the write
-    # onto whatever is selected now. id (not idx): indices shift when
-    # objects are added/removed; ModelObject ids stay with the object.
-    picked_id = _last_pick.get("object_id")
-    if picked_id is None:
-        raise ValueError("选取会话缺少对象 id（旧版会话残留？请重新「从盘选取」）")
-    if obj.id() != picked_id:
-        raise ValueError(
-            "分析对象与当前选中不一致——请重新选中「%s」再写回，或对其重新「从盘选取」"
-            % (_last_pick.get("name") or "原分析对象"))
+        raise ValueError("宿主缺少 apply_object_config 绑定（需含该绑定的构建）")
+    object_idx, obj, objects = _picked_object_index()
     results = list(applier(object_idx, values))
     applied = ["%s=%s" % (k, values[k]) for k, ok, _err in results if ok]
     failed = ["%s: %s" % (k, err) for k, ok, err in results if not ok]
     parts = ["写回 %d 项（%s）" % (len(applied), ", ".join(applied))]
     if failed:
         parts.append("失败 %d 项（%s）" % (len(failed), "; ".join(failed)))
+    getter = getattr(plater, "selected_object_indices", None)
+    if getter is not None:
+        sel = [i for i in list(getter())
+               if isinstance(i, int) and 0 <= i < len(objects)]
+        if len(sel) == 1 and sel[0] != object_idx:
+            parts.append("注意：写入对象是「%s」，当前选中的是「%s」"
+                         % (obj.name or "(未命名)",
+                            objects[sel[0]].name or "(未命名)"))
     return "；".join(parts)
 
 
@@ -789,7 +1169,7 @@ def _analysis_tool_worker(call_id, payload, filename, object_idx, picked_id,
             _picking.clear()
 
     try:
-        blob = _pack_binary_stl(payload)
+        blob = payload  # packed on the UI thread (3MF bytes or binary STL)
         port = _state["port"]
         req = urllib.request.Request(
             "http://127.0.0.1:%d/api/upload?name=%s"
@@ -853,8 +1233,7 @@ def _dispatch_host_tool(call):
             try:
                 object_idx, obj, note0 = _select_object()
                 picked_id = obj.id()
-                payload, note1 = _collect_mesh_payload(obj)
-                filename = ("%s.stl" % (obj.name or "model")).strip()
+                payload, filename, note1 = _collect_upload_payload(obj, object_idx)
             except Exception:
                 _picking.clear()
                 raise
@@ -869,9 +1248,10 @@ def _dispatch_host_tool(call):
                 raise ValueError("propose_settings 需要 args.values 参数字典")
             if not _last_pick.get("token"):
                 raise ValueError("还没有选取/分析会话——先 run_analysis")
-            _idx, obj, _ = _select_object()
-            if obj.id() != _last_pick.get("object_id"):
-                raise ValueError("分析对象与当前选中不一致——提案要求选中的仍是分析对象")
+            # v0.9.1: read current values from the PICKED object (by id),
+            # not from whatever is currently selected — the diff must
+            # describe the object the proposal will be applied to.
+            _idx, obj, _objs = _picked_object_index()
             keys = list(obj.config_keys())
             old = {k: (obj.config_value(k) if k in keys else None)
                    for k in values}
@@ -945,6 +1325,37 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
             return True
         step("numpy", _numpy_origin)
 
+        # v0.8: factory-default read — the repair flow's legal-value source
+        # (rejected keys without a suggestion get 'Default Setting' values).
+        # Fail-soft by design: a build without the read surface only loses
+        # repair (apply still works, rejects stay disclosed).
+        def _preset_default_read():
+            coll = orca.host.preset_bundle().prints
+            for i in range(coll.size()):
+                p = coll.preset(i)
+                isdef = p.is_default
+                if callable(isdef):
+                    isdef = isdef()
+                if not isdef:
+                    continue
+                name = p.name
+                name = name() if callable(name) else name
+                keys = p.config_keys
+                if callable(keys):
+                    keys = keys()
+                if "gap_infill_speed" in keys:
+                    sys.stderr.write(
+                        "[stratum-probe] preset default %r: gap_infill_speed=%r\n"
+                        % (name, p.config_value("gap_infill_speed")))
+                else:
+                    sys.stderr.write(
+                        "[stratum-probe] preset default %r: gap_infill_speed absent\n"
+                        % (name,))
+                return True
+            sys.stderr.write("[stratum-probe] preset default: none found\n")
+            return True
+        step("preset-default-read", _preset_default_read)
+
         plater = step("plater()", lambda: orca.host.plater())
         if plater is None:
             return
@@ -1016,7 +1427,7 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
             return
         if command == "apply-global":
             try:
-                values, skipped = _collect_suggestion_values()
+                values, skipped, repair_suffix = _collect_suggestion_values()
             except Exception as exc:  # noqa: BLE001 - toolbar line
                 if _panel is not None:
                     _panel.post({"command": "apply-done", "ok": False,
@@ -1024,7 +1435,7 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
                 return
             threading.Thread(target=_apply_global_worker, daemon=True,
                              name="stratum-orca-apply-global",
-                             args=(values, skipped)).start()
+                             args=(values, skipped, repair_suffix)).start()
             return
         if command == "gcode":
             if _gcoding.is_set():
@@ -1067,6 +1478,26 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
                     _panel.post({"command": "apply-done", "ok": False,
                                  "error": "%s: %s" % (type(exc).__name__, exc)})
             return
+        if command == "apply-global-proposal":
+            # v0.9.1: AI proposal -> GLOBAL process preset (the card's
+            # second target). Same transaction worker as 写入全局预设
+            # (schema-drift drop loop included); NO revert checkpoint —
+            # preset writes are undone by the user's own preset handling.
+            try:
+                raw = (message or {}).get("values")
+                if not isinstance(raw, dict) or not raw:
+                    raise ValueError("提案缺少 values")
+                values = {str(k): _orca_serialize(v) for k, v in raw.items()}
+            except Exception as exc:  # noqa: BLE001 - surfaced in the panel
+                if _panel is not None:
+                    _panel.post({"command": "apply-done", "ok": False,
+                                 "error": "%s: %s" % (type(exc).__name__, exc)})
+                return
+            threading.Thread(
+                target=_apply_global_worker, daemon=True,
+                name="stratum-orca-apply-global",
+                args=(values, [], "（来自 AI 提案，写入全局预设）")).start()
+            return
         if command == "revert-proposal":
             try:
                 old = _proposal_checkpoint.get("old_values") or {}
@@ -1097,12 +1528,11 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
             return  # busy: a pick is already in flight
         _picking.set()
         try:
-            # UI thread: selection + zero-copy mesh reads must not race the
+            # UI thread: selection + host export/mesh reads must not race the
             # GUI model; only packing/upload go to the worker.
             object_idx, obj, note0 = _select_object()
             picked_id = obj.id()  # UI-thread host call (see identity guard in _apply_suggestions)
-            payload, note1 = _collect_mesh_payload(obj)
-            filename = ("%s.stl" % (obj.name or "model")).strip()
+            payload, filename, note1 = _collect_upload_payload(obj, object_idx)
         except Exception as exc:  # noqa: BLE001 - user-facing toolbar line
             _picking.clear()
             import traceback

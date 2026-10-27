@@ -2116,11 +2116,15 @@ function renderGcodeScore(report, consoleText, meta) {
 
 // ---------- v0.25 slice-gcode stress-tune audit card ----------
 // Renders the engine's <out>.tune.json sidecar (coordinate-level stress
-// tuning along the attached slice gcode). Pure display of engine numbers —
-// NO UI-side thresholds: coverage 50%/70% are the ENGINE's own console
-// warning semantics and stay in the console verbatim; here every stat is a
-// plain number. Engine prose (alignment / blind_spots) carries the i18n
-// skip marker like every other engine-authored string.
+// tuning along the attached slice gcode). Stats are plain engine numbers.
+// v0.35: same-source warnings ARE surfaced here (engine iter 878/879
+// guidance — a real non-same-source pairing read fine numbers but tuned 0);
+// thresholds mirror the engine's own console warnings (<70% coverage,
+// <50% patch footprint), nothing invented UI-side. The >2x patch line is a
+// disclosure (brim headroom), not an engine claim. Engine prose (alignment /
+// blind_spots) carries the i18n skip marker like every engine-authored
+// string; warning sentences are UI-authored and dict-translatable, with the
+// measured value in a skip span.
 function renderGcodeTune(tune, token) {
   var box = $("gcode-tune-box");
   if (!box) return;
@@ -2168,6 +2172,33 @@ function renderGcodeTune(tune, token) {
   });
   tbl.appendChild(tb);
   body.appendChild(tbl);
+  // v0.35 same-source warnings: see function header. -1 (or missing) is the
+  // engine's "not applicable" sentinel for pcr — never a real ratio.
+  function warnLine(text, value) {
+    var w = el("div", "hint");
+    w.style.color = "var(--amber)";
+    w.style.fontWeight = "600";
+    w.style.marginTop = "6px";
+    w.appendChild(document.createTextNode(text));
+    if (value != null) {
+      var s = el("span", null, value);
+      s.setAttribute("data-i18n-skip", "1");
+      w.appendChild(s);
+    }
+    body.appendChild(w);
+  }
+  if (typeof t.coverage_pct === "number" && t.coverage_pct < 70) {
+    warnLine("⚠ 应力覆盖率低于 70%：3MF 与 G-code 可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片后再挂载",
+             "（实测 " + num(t.coverage_pct, 1) + "%）");
+  }
+  if (pcr !== -1 && typeof pcr === "number" && pcr < 0.5) {
+    warnLine("⚠ G-code 打印域不足模型的一半：局部片段会被重定位到中心，对齐存疑",
+             "（实测 " + num(pcr * 100, 0) + "%）");
+  }
+  if (pcr !== -1 && typeof pcr === "number" && pcr > 2) {
+    warnLine("⚠ G-code 打印域明显大于模型：通常是裙边/底垫；若未启用则可能是非同源件",
+             "（实测 " + num(pcr, 1) + "×）");
+  }
   // v0.31 mismatch guidance (adjudicated iter 104 C5): tuned===0 is the one
   // honest trigger for "why did nothing change". The engine ships no
   // dedicated mismatch field and the three plausible causes are

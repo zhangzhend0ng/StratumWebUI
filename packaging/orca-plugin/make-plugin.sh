@@ -167,6 +167,48 @@ with io.open(path, "w", encoding="utf-8", newline="") as fh:
 print("bridge injected into", path)
 PYEOF
 
+# v0.8: pre-grant the bundled engine's bin dir as a PROCESS TREE grant
+# ("<dir>/*" — the host audit matches a tree grant against the command
+# line's first token, the executable path; verbatim grants can never cover
+# analyze's per-run temp paths, so without this every fresh install dies
+# on "subprocess.Popen: audit permission required" at the first analyze).
+# $APPDATA is the standard install root on this box; other machines get
+# the empty fallback and approve via the host's own prompt flow.
+# The events/network_socket pre-grants below mirror the set the host
+# itself records once a user approves the plugin (socket.__new__ +
+# bind to 127.0.0.1:0 — the server always binds loopback port 0);
+# without them a fresh full-dir deploy wipes the grants and the server
+# thread dies on the first socket operation. network_http pre-grants the
+# DeepSeek host (the default API backend) so the direct-API conversation
+# works out of the box — host-wide canonical grant, the KEY itself lives
+# only in the machine-local chat_settings.json and never ships in this zip.
+BIN_GRANT=""
+if [ -n "$APPDATA" ]; then
+  # json.dumps emits the path with JSON-escaped backslashes (C:\\Users\\…);
+  # [1:-1] strips the surrounding quotes so the heredoc value stays valid JSON.
+  BIN_GRANT="$(python -c 'import json,os;print(json.dumps(os.path.join(os.environ["APPDATA"],"Snapmaker_Orca","orca_plugins","stratum","app","bin"))[1:-1])')"
+fi
+
+# v0.9: the AI conversation spawns the codex CLI (node.exe <npm>/codex.js, or
+# $CODEX_BIN) — its executable also needs a process tree grant or every
+# assistant turn dies on the same "subprocess.Popen: audit permission
+# required". Node's dir is granted as a tree (the audit matches the first
+# token only); empty when node is not resolvable — that machine approves
+# through the host's own prompt flow.
+NODE_GRANT=""
+if command -v node >/dev/null 2>&1; then
+  NODE_GRANT="$(python -c 'import json,os,shutil;w=shutil.which("node");print(json.dumps(os.path.dirname(w))[1:-1] if w else "")' 2>/dev/null)"
+  [ -z "$NODE_GRANT" ] && NODE_GRANT=""
+fi
+CODEX_GRANT=""
+if [ -n "${CODEX_BIN:-}" ]; then
+  CODEX_GRANT="$(CODEX_BIN="${CODEX_BIN}" python -c 'import json,os;print(json.dumps(os.path.dirname(os.path.abspath(os.environ["CODEX_BIN"])))[1:-1])')"
+fi
+# assembled grant entries — ", \"<dir>/*\"" per extra grant, nothing when empty
+PROC_EXTRA=""
+[ -n "$NODE_GRANT" ] && PROC_EXTRA="$PROC_EXTRA, \"$NODE_GRANT/*\""
+[ -n "$CODEX_GRANT" ] && PROC_EXTRA="$PROC_EXTRA, \"$CODEX_GRANT/*\""
+
 cat > "$dest/.install_state.json" <<EOF
 {
   "installed_from": "local",
@@ -174,15 +216,39 @@ cat > "$dest/.install_state.json" <<EOF
   "plugin_name": "Stratum",
   "enabled": true,
   "permissions": {
+    "events": ["FsRead:open", "Socket:socket.__new__", "FsReadWrite:open"],
     "fs_read": [],
     "fs_readwrite": [],
-    "network_http": [],
-    "network_socket": [],
-    "process": [],
+    "network_http": ["https://api.deepseek.com"],
+    "network_socket": ["('127.0.0.1', 0)"],
+    "process": ["$BIN_GRANT/*"$PROC_EXTRA],
     "threading": ["thread"]
   }
 }
 EOF
+
+# v0.39: chat settings ride in the LOCAL deploy tree (user direction) so a
+# full rm -rf + cp deploy no longer wipes the configured backend. Source
+# priority: the live deployed copy > DeepSeek default from $DEEPSEEK_API_KEY
+# > none. The API key stays in the local tree only — the ZIP step below
+# strips it (distribution artifact must not carry secrets).
+CHAT_SETTINGS_SRC="$APPDATA/Snapmaker_Orca/orca_plugins/stratum/chat_settings.json"
+if [ -n "$APPDATA" ] && [ -f "$CHAT_SETTINGS_SRC" ]; then
+  cp "$CHAT_SETTINGS_SRC" "$dest/chat_settings.json"
+  echo "chat settings: carried from live deployment"
+elif [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+  python - "$dest" <<'PYEOF'
+import json, os, sys
+dest = sys.argv[1]
+s = {"backend": "openai", "codex_bin": "", "cli_args": "",
+     "model": "deepseek-flash",
+     "api_base": "https://api.deepseek.com/v1",
+     "api_key": os.environ["DEEPSEEK_API_KEY"], "extra_json": ""}
+with open(os.path.join(dest, "chat_settings.json"), "w", encoding="utf-8") as fh:
+    json.dump(s, fh, ensure_ascii=False, indent=2)
+print("chat settings: DeepSeek default from DEEPSEEK_API_KEY")
+PYEOF
+fi
 
 python -m py_compile "$dest/stratum.py"
 rm -rf "$dest/__pycache__"
@@ -194,7 +260,7 @@ rm -rf "$dest/__pycache__"
 zip_dir="$here/dist"
 mkdir -p "$zip_dir"
 python - "$dest" "$zip_dir/stratum-orca-$ver.zip" <<'PYZIP'
-import os, sys, zipfile
+import json, os, sys, zipfile
 
 src, zpath = sys.argv[1], sys.argv[2]
 skip_dirs = {"__pycache__", "logs", "__extracted__"}
@@ -208,6 +274,19 @@ with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
                 continue
             full = os.path.join(root, fname)
             arc = os.path.join("stratum", os.path.relpath(full, src))
+            if fname == "chat_settings.json":
+                # The zip is the DISTRIBUTION artifact: strip the API key,
+                # keep the shape (backend/model/base) so a fresh install is
+                # pre-shaped and only asks for the key. The local dist/ tree
+                # (deploy source) keeps the full file untouched.
+                try:
+                    s = json.load(open(full, encoding="utf-8"))
+                    s["api_key"] = ""
+                    zf.writestr(arc, json.dumps(s, ensure_ascii=False, indent=2))
+                    count += 1
+                    continue
+                except (OSError, ValueError):
+                    pass  # unreadable -> fall through to raw copy (keyless default)
             zf.write(full, arc)
             count += 1
 print("zip: %s (%d files)" % (zpath, count))

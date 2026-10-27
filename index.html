@@ -2229,6 +2229,12 @@ function renderNextStep(report) {
   if (state.is3mf && state.writable) {
     box.appendChild(el("div", "hint",
       "下载「按所选档位优化过参数」的 3MF，拖回切片软件直接切片打印。每次下载都会真实跑一次引擎写回（审计随下载披露）。"));
+    if (state.multislot) {
+      // v0.35: engine write-back collapses touched per-slot keys to slot 0
+      // (single-material unaffected) — disclosed beside the download CTA.
+      box.appendChild(el("div", "hint",
+        "多材料板：写回 3MF 时被触碰的槽位键会折叠为槽 0 值（单材料不受影响）。"));
+    }
     var row = el("div", "actions");
     var sel = document.createElement("select");
     sel.id = "next-export-profile";
@@ -2694,10 +2700,17 @@ function applySession(j) {
   // write-back would rc=1; missing key (old responses / sessionStorage before
   // the field existed) → assume writable, the server-side gate still defends
   state.writable = j.writable === false ? false : true;
+  // v0.35 multi-material flag (server detects filament_settings_1+ at
+  // upload): the engine 3MF write-back collapses touched per-slot keys to
+  // slot 0 — disclosed next to every write-back control. Absent (old
+  // responses / non-3mf) reads as false.
+  state.multislot = !!j.multislot;
   var mb = $("model-badge");
   mb.style.display = "";
   mb.textContent = j.is_3mf
-    ? (state.writable ? "3MF（可写回）" : "3MF（无切片设置·不可写回）")
+    ? (state.writable
+       ? (state.multislot ? "3MF（可写回·多材料）" : "3MF（可写回）")
+       : "3MF（无切片设置·不可写回）")
     : ((j.name.split(".").pop() || "").toUpperCase() || "模型") + "（只读分析）";
   $("btn-analyze").disabled = false;
   $("btn-compare").disabled = false;
@@ -2707,7 +2720,10 @@ function applySession(j) {
   $("btn-supports").disabled = true;
   $("btn-stress-modifier").disabled = true;
   $("export-hint").textContent = !j.is_3mf ? "写回需要 .3mf 输入"
-    : (state.writable ? "" : "该 3MF 无切片设置（CAD 裸导出），不可写回");
+    : (state.writable
+       ? (state.multislot
+          ? "多材料板：写回会把触碰的槽位键折叠为槽 0（单材料不受影响）" : "")
+       : "该 3MF 无切片设置（CAD 裸导出），不可写回");
   $("btn-export").disabled = !j.is_3mf || !state.writable;
   $("btn-export-orca").disabled = !j.is_3mf || !state.writable;
   $("btn-preview").disabled = !j.is_3mf;
@@ -4787,6 +4803,19 @@ var LANG_EN = {
     "② Were all extruding segments excluded by feature type? (e.g. infill is not sampled)",
   "③ 热区门槛内是否没有挤出段（应力下限 / 热区百分位）":
     "③ Did no extruding segment fall inside the hot-zone gate? (vm floor / hot percentile)",
+  /* v0.35 multi-material disclosure + tune same-source warnings (engine
+     iter 878/879 alignment) */
+  "3MF（可写回·多材料）": "3MF (writable · multi-material)",
+  "多材料板：写回会把触碰的槽位键折叠为槽 0（单材料不受影响）":
+    "Multi-material plate: write-back collapses touched per-slot keys to slot 0 (single-material unaffected)",
+  "多材料板：写回 3MF 时被触碰的槽位键会折叠为槽 0 值（单材料不受影响）。":
+    "Multi-material plate: touched per-slot keys collapse to slot 0 values in the written 3MF (single-material unaffected).",
+  "⚠ 应力覆盖率低于 70%：3MF 与 G-code 可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片后再挂载":
+    "⚠ Stress coverage below 70%: the 3MF and G-code may not be the same source (rotation/mirror undetectable) — re-slice from the same model and re-attach",
+  "⚠ G-code 打印域不足模型的一半：局部片段会被重定位到中心，对齐存疑":
+    "⚠ G-code footprint is under half the model: partial patches get relocated to the center — alignment is doubtful",
+  "⚠ G-code 打印域明显大于模型：通常是裙边/底垫；若未启用则可能是非同源件":
+    "⚠ G-code footprint is much larger than the model: usually brim/raft; if neither is enabled, this may not be the same source",
   "应力调优：": "stress tune: ", "应力调优：未附加切片":
     "stress tune: no slice attached",
   "已附加切片 ": "attached slice ", "，本次分析将执行应力调优":

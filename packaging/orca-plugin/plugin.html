@@ -28,13 +28,21 @@
 <style>
   :root {
     --accent: #4f46e5; --accent-2: #4338ca;
-    --green: #15803d; --amber: #b45309; --red: #b91c1c;
+    --green: #047857; --amber: #b45309; --red: #dc2626;
     --line: #e2e2e8; --panel: #f7f7fa; --muted: #6b7280;
   }
   * { box-sizing: border-box; }
+  /* keyboard focus visible everywhere (hover-only affordances otherwise) */
+  :focus-visible { outline: 2px solid #c7d2fe; outline-offset: 1px; }
+  button { transition: background .15s, color .15s, border-color .15s, opacity .15s; }
+  /* 高度链钉死在 body：只有 chat-log / report-view 滚动，输入行常驻视野。
+     旧实现 body min-height:100vh 允许整体撑高，聊几轮后输入框被顶出屏幕，
+     且 log.scrollTop 自动滚动从未生效。 */
+  html, body { height: 100%; }
   body {
     margin: 0; font: 13px/1.5 system-ui, "Segoe UI", sans-serif; color: #1f2937;
-    background: #fff; display: flex; flex-direction: column; min-height: 100vh;
+    background: #fff; display: flex; flex-direction: column; height: 100vh;
+    overflow: hidden;
   }
   header {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
@@ -45,13 +53,30 @@
   header .chip {
     font-size: 12px; color: var(--muted); background: #fff;
     border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
-    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  header .round { margin-left: auto; font-size: 12px; color: var(--accent); font-weight: 600; }
-  main { padding: 10px 12px 24px; display: flex; flex-direction: column; gap: 10px; }
+  /* 常驻流程状态条：对话视图也能看到阶段/SF/轮次/瞬态提示（与报告视图
+     步骤条同一套阶段语义）。右端吸 conv-note 瞬态状态——txt() 会把
+     className 重写成 "status [ok|err]"，所以选择器对两种类名都覆盖 */
+  .flowbar {
+    display: flex; align-items: center; gap: 8px; padding: 3px 12px;
+    border-bottom: 1px solid var(--line); background: #fff;
+    font-size: 12px; color: var(--muted);
+  }
+  .flowbar .fb-stage { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .flowbar .fb-sf { font-weight: 700; white-space: nowrap; }
+  .flowbar .fb-round { white-space: nowrap; }
+  .flowbar .fb-note, .flowbar .status {
+    flex: 1; min-width: 0; margin: 0; min-height: 0; text-align: right;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  main {
+    padding: 10px 12px 12px; display: flex; flex-direction: column;
+    gap: 10px; flex: 1; min-height: 0;
+  }
 
-  /* step strip */
-  .steps { display: flex; gap: 4px; }
+  /* step strip — also the top bar (seg + 新会话 + note): center-aligned */
+  .steps { display: flex; align-items: center; gap: 8px; }
   .steps .st {
     flex: 1; text-align: center; font-size: 11px; padding: 4px 2px;
     border: 1px solid var(--line); border-radius: 6px; color: var(--muted);
@@ -80,12 +105,14 @@
     border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px;
     cursor: pointer; width: 100%;
   }
+  button.ghost:hover:not(:disabled) { background: #eef0fe; }
   button.ghost:disabled { opacity: .45; cursor: not-allowed; }
   .status { font-size: 12px; margin-top: 6px; min-height: 16px; }
   .status.ok { color: var(--green); } .status.err { color: var(--red); }
 
   /* preset cards */
-  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+  /* auto-fit：≈330px 以下自动降单列（150px 下限保证卡片可读），宽面板两列 */
+  .presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-top: 6px; }
   .preset {
     text-align: left; border: 1px solid var(--line); border-radius: 8px;
     background: #fff; padding: 8px; cursor: pointer; font: 12px system-ui;
@@ -96,7 +123,7 @@
   .preset .pu { font-weight: 650; font-size: 12px; }
   .preset .pl { color: var(--muted); font-size: 11px; margin-top: 2px; }
   .mat-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
-  .mat-row select { flex: 1; font: 12px system-ui; padding: 3px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+  .mat-row select { flex: 1; font: 12px system-ui; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 
   /* verdict */
   .verdict { border-top: 3px solid var(--line); }
@@ -106,7 +133,7 @@
   .verdict .big { font-size: 14px; font-weight: 650; line-height: 1.5; }
   .sf { display: flex; gap: 10px; font-size: 12px; margin-top: 4px; }
   .sf b { font-size: 15px; }
-  .sf .v-ok { color: var(--green); } .sf .v-mid { color: var(--amber); } .sf .v-low { color: var(--red); }
+  .v-ok { color: var(--green); } .v-mid { color: var(--amber); } .v-low { color: var(--red); }
 
   .warn-line { font-size: 12px; color: var(--amber); font-weight: 600; margin-top: 6px; }
   ul.plain { list-style: none; margin: 6px 0 0; padding: 0; }
@@ -120,10 +147,39 @@
   table.kv td:first-child { color: var(--muted); width: 45%; }
   a.dl { font-size: 12px; color: var(--accent); }
 
-  /* chat (v0.6) */
+  /* conversation view (v0.9) — the conversation IS the product.
+     View switch is a segmented control; 新会话 is a quiet ghost button. */
+  .seg { display: inline-flex; background: #edf0f4; border-radius: 999px;
+         padding: 2px; gap: 2px; }
+  .seg-btn {
+    border: none; background: transparent; font: 12px system-ui;
+    color: var(--muted); padding: 3px 13px; border-radius: 999px;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .seg-btn.on {
+    background: #fff; color: var(--accent); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(16,24,40,.10);
+  }
+  .seg-btn:hover:not(.on) { color: var(--accent); }
+  #btn-gear { padding: 4px 8px; border-radius: 6px; }
+  #btn-gear:hover { color: var(--accent); background: #eef0fe; }
+  #btn-newchat {
+    border: 1px dashed var(--line); background: none; color: var(--muted);
+    border-radius: 999px; padding: 3px 12px; font: 12px system-ui;
+    cursor: pointer; transition: color .15s, border-color .15s;
+  }
+  #btn-newchat:hover { color: var(--accent); border-color: var(--accent);
+                       border-style: solid; }
+  #conv-view { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   #chat-log {
-    max-height: 280px; overflow-y: auto; display: flex;
+    flex: 1; min-height: 0; overflow-y: auto; display: flex;
     flex-direction: column; gap: 6px; padding: 2px 0;
+  }
+  /* 报告视图整列在卡片区内部滚动（body 不再滚）。初始隐藏靠 HTML 里的
+     inline display:none；setView 置空 inline 后回落到这里 */
+  #report-view {
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
   }
   .msg { max-width: 92%; border-radius: 8px; padding: 6px 9px;
          font-size: 12px; white-space: pre-wrap; word-break: break-word; }
@@ -132,13 +188,58 @@
             border: 1px solid var(--line); }
   .msg.err { align-self: flex-start; background: #fef2f2;
              border: 1px solid #fecaca; color: var(--red); }
-  .msg .note { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  .msg .note { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+  /* analysis summary card rendered as a conversation message */
+  .conv-report { max-width: 96%; white-space: normal; }
+  .conv-report .vr-line { font-weight: 600; margin-bottom: 4px; }
+  .conv-report ul { margin: 2px 0 4px 18px; padding: 0; }
+  .conv-report li { font-size: 12px; margin: 1px 0; }
+  .conv-report .vr-more { font-size: 12px; color: var(--accent); cursor: pointer;
+                          background: none; border: none; padding: 2px 0; }
+  .conv-report .vr-more:hover { text-decoration: underline; }
+  /* 完整报告就地展开（手风琴），不再整页切走对话上下文 */
+  .conv-report .vr-full { display: none; margin-top: 6px;
+                          border-top: 1px dashed var(--line); padding-top: 5px; }
+  .conv-report .vr-full.open { display: block; }
+
+  /* 思考中 spinner（prefers-reduced-motion 用户停转） */
+  .spin {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid #c7d2fe; border-top-color: var(--accent);
+    vertical-align: -1px; margin-right: 5px;
+    animation: rot .9s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* 每回合工具活动折叠组：执行中展开逐条滚动（活性），回合结束收起留摘要 */
+  .act-grp { align-self: flex-start; max-width: 92%; padding: 4px 9px;
+             border: 1px dashed var(--line); border-radius: 8px; background: #fff;
+             color: var(--muted); font-size: 12px; }
+  .act-grp .act-sum { cursor: pointer; user-select: none; }
+  .act-grp .act-lines { margin-top: 3px; display: flex; flex-direction: column; gap: 2px; }
+  .act-grp.closed .act-lines { display: none; }
+  .act-grp .act-lines div { font: 11px Consolas, monospace; }
+  .act-grp .act-lines div.bad { color: var(--red); }
+
+  /* 参数提案卡：accent 边框突出 + 待确认徽章；pending-bar 在输入框上方常驻 */
+  .msg.proposal { border: 1px solid var(--accent); background: #fff; max-width: 96%; }
+  .msg.proposal.flash { box-shadow: 0 0 0 3px rgba(79, 70, 229, .3); }
+  .msg.proposal .pp-badge {
+    font-size: 10px; color: #fff; background: var(--accent);
+    border-radius: 4px; padding: 0 5px; margin-left: 6px;
+  }
+  #pending-bar {
+    margin-top: 6px; padding: 4px 10px; text-align: center;
+    border: 1px solid var(--accent); border-radius: 6px; background: #eef0fe;
+    color: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer;
+  }
   .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chip-btn {
     font: 12px system-ui; border: 1px solid var(--accent); color: var(--accent);
-    background: #fff; border-radius: 999px; padding: 2px 10px; cursor: pointer;
+    background: #fff; border-radius: 999px; padding: 4px 12px; cursor: pointer;
   }
-  .chip-btn:hover { background: #eef0fe; }
+  .chip-btn:hover:not(:disabled) { background: #eef0fe; }
+  .chip-btn:disabled { opacity: .45; cursor: not-allowed; }
   .chat-row { display: flex; gap: 6px; margin-top: 8px; }
   .chat-row input {
     flex: 1; font: 12px system-ui; padding: 6px 8px; border: 1px solid var(--line);
@@ -149,23 +250,109 @@
     border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer;
   }
   .chat-row button:disabled { opacity: .45; cursor: not-allowed; }
+
+  button:focus-visible, input:focus-visible, select:focus-visible,
+  textarea:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+  /* 窄停靠面板（约 ≤360px）：步骤条折行 2×2，收边距 */
+  @media (max-width: 360px) {
+    main { padding: 8px 8px 16px; }
+    .steps { flex-wrap: wrap; }
+    .steps .st { flex: 1 1 45%; }
+  }
 </style>
 </head>
 <body>
 <header>
   <span class="title">Stratum</span>
   <span class="chip" id="model-chip">未选取模型</span>
-  <span class="round" id="round-chip"></span>
+  <button id="btn-gear" type="button" style="margin-left:auto;font:13px system-ui;
+    background:none;border:none;cursor:pointer;color:var(--muted)" title="AI 设置">&#9881;&#65038; AI</button>
 </header>
+<!-- 常驻流程状态：阶段（与报告视图步骤条同语义）+ 最新安全系数 + 轮次 +
+     瞬态提示（原 conv-note）。对话为主屏后，流程进度不能只在报告视图可见。 -->
+<div class="flowbar">
+  <span class="fb-stage" id="fb-stage">① 待选取模型</span>
+  <span class="fb-sf" id="fb-sf"></span>
+  <span class="fb-round" id="fb-round"></span>
+  <span class="fb-note" id="conv-note" aria-live="polite"></span>
+</div>
+
+<!-- AI 后端设置（v0.39）：本地 codex 系 CLI 或 OpenAI 兼容 API 直连 -->
+<div id="gear-mask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:40">
+</div>
+<div id="gear-card" class="card" style="display:none;position:fixed;z-index:41;left:50%;top:8%;
+  transform:translateX(-50%);width:min(430px,92vw);max-height:84vh;overflow-y:auto">
+  <h3>AI 设置</h3>
+  <div class="hint">对话后端二选一：本地 codex 系 CLI，或 OpenAI 兼容 API 直连（key 只存本机 chat_settings.json）。</div>
+  <div style="display:flex;gap:8px;margin:8px 0;align-items:center">
+    <label style="font-size:12px">后端</label>
+    <select id="set-backend" style="font:12px system-ui">
+      <option value="codex">本地 CLI（codex 系）</option>
+      <option value="openai">OpenAI 兼容 API</option>
+    </select>
+  </div>
+  <div id="set-cli-box">
+    <div style="font-size:12px;margin:4px 0">CLI 路径（留空=自动探测 node+codex.js）</div>
+    <input id="set-codex-bin" placeholder="例 C:/Users/me/AppData/Roaming/npm/codex.js"
+           style="width:100%;font:12px system-ui;box-sizing:border-box">
+    <div style="font-size:12px;margin:6px 0 2px">CLI 附加参数（空格分隔，追加到 exec）</div>
+    <input id="set-cli-args" placeholder="例 --config reasoning=low"
+           style="width:100%;font:12px system-ui;box-sizing:border-box">
+  </div>
+  <div id="set-api-box" style="display:none">
+    <div style="font-size:12px;margin:4px 0">API Base（含 /v1）</div>
+    <input id="set-api-base" placeholder="https://api.openai.com/v1"
+           style="width:100%;font:12px system-ui;box-sizing:border-box">
+    <div style="font-size:12px;margin:6px 0 2px">API Key</div>
+    <input id="set-api-key" type="password" placeholder="sk-…"
+           style="width:100%;font:12px system-ui;box-sizing:border-box">
+  </div>
+  <div style="font-size:12px;margin:6px 0 2px">模型名（留空=后端默认）</div>
+  <input id="set-model" placeholder="例 gpt-4o-mini"
+         style="width:100%;font:12px system-ui;box-sizing:border-box">
+  <div style="font-size:12px;margin:6px 0 2px">附加请求 JSON（对象，合并进请求体，可选）</div>
+  <textarea id="set-extra" rows="2" placeholder='例 {"temperature":0.2}'
+            style="width:100%;font:12px system-ui;box-sizing:border-box"></textarea>
+  <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+    <button class="cta" id="set-save" type="button" style="font-size:12px">保存</button>
+    <button class="ghost" id="set-test" type="button" style="font-size:12px;width:auto">测试连接</button>
+    <button class="ghost" id="set-close" type="button" style="font-size:12px;width:auto">关闭</button>
+  </div>
+  <div class="status" id="set-status" aria-live="polite"></div>
+</div>
 
 <div class="steps">
-  <div class="st" id="st1">① 选取模型</div>
-  <div class="st" id="st2">② 参数优化</div>
-  <div class="st" id="st3">③ 切片评估</div>
-  <div class="st" id="st4">④ 迭代优化</div>
+  <div class="seg">
+    <button id="vw-chat" class="seg-btn on" type="button">💬 对话</button>
+    <button id="vw-report" class="seg-btn" type="button">📋 报告</button>
+  </div>
+  <button id="btn-newchat" type="button" title="清空对话记录，保留当前模型与分析">＋ 新会话</button>
 </div>
 
 <main>
+  <!-- 对话为主屏（v0.9 形态反转）：一句"帮我看看盘上的件"即可走完选取→分析→建议；
+       报告卡、提案、工具活动都是对话内的展现形式。报告视图保留按钮路径与全量卡片。 -->
+  <div id="conv-view">
+    <div id="chat-log"></div>
+    <div class="chat-chips" id="chat-quick"></div>
+    <!-- 提案待确认常驻提示：提案卡在对话流里容易滚出视野，这里保住入口 -->
+    <div id="pending-bar" role="button" tabindex="0" hidden>📋 有参数提案待确认 — 点击查看</div>
+    <div class="chat-row">
+      <input id="chat-in" placeholder="问我任何打印问题，例如：帮我看看盘上选中的件" maxlength="500">
+      <button id="chat-send" type="button">发送</button>
+    </div>
+  </div>
+
+  <div id="report-view" style="display:none">
+  <div class="steps">
+    <div class="st" id="st1">① 选取模型</div>
+    <div class="st" id="st2">② 参数优化</div>
+    <div class="st" id="st3">③ 切片评估</div>
+    <div class="st" id="st4">④ 迭代优化</div>
+  </div>
   <!-- ① 选取 -->
   <div class="card" id="pick-card">
     <h3>① 从盘选取模型</h3>
@@ -173,7 +360,7 @@
     <div style="margin-top:8px">
       <button class="cta" id="btn-pick" type="button">⇩ 从盘选取</button>
     </div>
-    <div class="status" id="pick-status">选取后自动开始第一轮参数分析</div>
+    <div class="status" id="pick-status" aria-live="polite">选取后自动开始第一轮参数分析</div>
   </div>
 
   <!-- ② 参数优化 -->
@@ -182,7 +369,7 @@
     <div class="hint">基线决定分析的工艺起点；引擎建议（含写回值）以「写回 Orca」应用到对象级覆盖。</div>
     <div class="presets" id="presets"></div>
     <div class="mat-row">材料 <select id="mat-sel" title="盘上耗材（覆盖预设的 PLA 默认；粘性跨预设）"></select></div>
-    <div class="status" id="preset-status"></div>
+    <div class="status" id="preset-status" aria-live="polite"></div>
   </div>
 
   <!-- ③ 切片评估 -->
@@ -192,18 +379,19 @@
     <div style="margin-top:8px">
       <button class="cta" id="btn-slice" type="button">⇦ 切片并评估</button>
     </div>
-    <div class="status" id="slice-status"></div>
+    <div class="status" id="slice-status" aria-live="polite"></div>
   </div>
 
   <!-- 写回 -->
   <div class="card" id="apply-card" style="display:none">
     <h3>写回 Orca — 应用本轮建议</h3>
-    <div class="hint">把报告里的 Orca 建议写成对象级参数覆盖（要求当前选中的仍是选取时的对象）。</div>
+    <div class="hint">把报告里的 Orca 建议写回选取时的对象（按对象身份定位写入；若当前选中的是别的对象，会在结果里提示）。</div>
     <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
-      <button class="ghost" id="btn-apply" type="button" style="width:auto; flex:1">⇫ 写回 Orca</button>
+      <button class="ghost" id="btn-apply" type="button" style="width:auto; flex:1">⇫ 写回对象</button>
+      <button class="ghost" id="btn-applyg" type="button" style="width:auto; flex:1">♻ 写入全局预设</button>
       <a class="dl" id="dl-tuned" href="#" style="display:none">调优 G-code</a>
     </div>
-    <div class="status" id="apply-status"></div>
+    <div class="status" id="apply-status" aria-live="polite"></div>
   </div>
 
   <!-- 结论 -->
@@ -236,22 +424,11 @@
     <ul class="plain" id="hist-list"></ul>
   </div>
 
-  <!-- 对话（v0.6：基于当前报告的接地问答；数字经服务端白名单审计） -->
-  <div class="card" id="chat-card" style="display:none">
-    <h3>对话 — 问这轮报告</h3>
-    <div class="hint">回答只基于上方卡片数据（引擎事实），无来源数字会被自动移除；建议动作用按钮执行，AI 不会直接动盘面。</div>
-    <div id="chat-log"></div>
-    <div class="chat-chips" id="chat-quick"></div>
-    <div class="chat-row">
-      <input id="chat-in" placeholder="例如：这个件能直接打吗？" maxlength="500">
-      <button id="chat-send" type="button">发送</button>
-    </div>
-  </div>
-
   <div class="hint" style="opacity:.8">
     完整调参台（滑杆/档位对比/G-code 工具）在独立 WebUI；插件只做选取→优化→切片评估→迭代的闭环。
     排查：port.txt 与日志位置见 README。
   </div>
+  </div><!-- /report-view -->
 </main>
 
 <script>
@@ -261,6 +438,9 @@ var S = {
   token: null, name: null, preset: null, params: {}, material: "PLA",
   rounds: 0, tuneSeen: false, busy: false, presets: [], materials: ["PLA"],
   chat: [], chatBusy: false, chatAvailable: false,
+  chatBackend: "codex", chatModel: "",
+  lastSf: null,     // {v, cls} — flowbar 的最新安全系数徽章
+  pending: 0,       // 待确认参数提案数（pending-bar 计数）
 };
 var SS_KEY = "stratum-plugin-session";
 
@@ -296,6 +476,11 @@ window.addEventListener("message", function (ev) {
     cb({ ok: !!d.ok, result: d.result, error: d.error });
     return;
   }
+  if (d.type === "stratum-orca-gcode-progress" && typeof d.bytes === "number") {
+    // 宿主轮询导出文件大小时逐次回传（增量即进度）；gcode-done 到来前持续刷新
+    txt("slice-status", "切片导出中… 已 " + (d.bytes / 1048576).toFixed(1) + " MB");
+    return;
+  }
   if (d.type === "stratum-orca-analyze") {   // gcode attached server-side
     txt("slice-status", "G-code 已挂载，重新分析中…");
     analyze("slice");
@@ -305,20 +490,23 @@ window.addEventListener("message", function (ev) {
     txt("apply-status", (d.ok ? "✓ " : "✗ ") + (d.ok ? (d.note || "已写回") : (d.error || "写回失败")),
         d.ok ? "ok" : "err");
     $("btn-apply").disabled = false;
+    $("btn-applyg").disabled = false;
     if (_proposalCard) proposalFeedback(d);
   }
 });
 
 function adoptSession(j, note, suppressAutoAnalyze) {
   S.token = j.token; S.name = j.name; S.preset = null; S.params = {};
-  S.rounds = 0; S.tuneSeen = false;
+  S.rounds = 0; S.tuneSeen = false; S.lastSf = null;
   try {
     sessionStorage.setItem(SS_KEY, JSON.stringify({ token: S.token, name: S.name }));
   } catch (e) { /* private mode etc. — non-fatal */ }
   $("model-chip").textContent = j.name || "（未命名）";
+  renderMsg("ai", "已选取 " + (j.name || "模型") + (note ? "；" + note : "") + "，开始分析。");
   ["preset-card", "slice-card"].forEach(function (id) { $(id).style.display = ""; });
   txt("pick-status", "✓ " + (note || "已选取") + " — 第一轮分析中…", "ok");
   buildPresetButtons();
+  updateFlowbar(); rebuildQuick();
   if (suppressAutoAnalyze) {
     // run_analysis already analyzed server-side — do not double-run
     txt("pick-status", "✓ " + (note || "已选取") + "（分析由 AI 工具完成）", "ok");
@@ -330,8 +518,13 @@ function adoptSession(j, note, suppressAutoAnalyze) {
 // ---- presets ---------------------------------------------------------------
 function loadParamsMeta() {
   fetch("/api/status").then(function (r) { return r.json(); })
-    .then(function (st) { S.chatAvailable = !!st.chat_available; })
-    .catch(function () { /* chat stays hidden — degrade, never block */ });
+    .then(function (st) {
+      S.chatAvailable = !!st.chat_available;
+      S.chatBackend = st.chat_backend || "codex";
+      S.chatModel = st.chat_model || "";
+      convOpening();
+    })
+    .catch(function () { /* degrade, never block */ convOpening(); });
   fetch("/api/params").then(function (r) { return r.json(); }).then(function (j) {
     if (!j.ok) return;
     S.presets = j.presets || [];
@@ -388,6 +581,7 @@ function analyze(kind) {
     return;
   }
   S.busy = true;
+  $("fb-stage").textContent = kind === "slice" ? "③ 切片评估中" : "② 参数分析中";
   var cards = document.querySelectorAll("main .card");
   for (var i = 0; i < cards.length; i++) cards[i].classList.add("busy-dim");
   $("pick-card").classList.remove("busy-dim");
@@ -411,6 +605,18 @@ function fmt(n, d) {
   return Number(n).toFixed(d === undefined ? 1 : d);
 }
 
+// ---- flowbar：常驻流程状态（阶段语义与报告视图步骤条一致） -------------------
+function updateFlowbar() {
+  $("fb-stage").textContent = !S.token ? "① 待选取模型"
+    : !S.rounds ? "② 参数分析中"
+    : !S.tuneSeen ? "③ 待切片评估"
+    : (S.rounds >= 2 ? "④ 迭代闭环" : "③ 已切片评估");
+  $("fb-round").textContent = S.rounds ? "第 " + S.rounds + " 轮" : "";
+  var f = $("fb-sf");
+  if (S.lastSf) { f.textContent = "SF " + S.lastSf.v; f.className = "fb-sf " + S.lastSf.cls; }
+  else { f.textContent = ""; f.className = "fb-sf"; }
+}
+
 function renderRound(j, kind) {
   S.rounds++;
   var r = j.report || {};
@@ -431,9 +637,11 @@ function renderRound(j, kind) {
     sv.className = cls;
     vc.className += sf < 1 ? " bad" : sf <= 3 ? " warn" : " ok";
     band.textContent = sf < 1 ? "（<1 不可用）" : sf <= 3 ? "（1–3 边界）" : "（>3 充足）";
+    S.lastSf = { v: fmt(sf, 1), cls: cls };
   } else {
     sv.textContent = sfEnv ? "≥" + fmt(sfEnv, 1) : "—";
     band.textContent = sfEnv ? "（包络下界）" : "";
+    S.lastSf = sfEnv ? { v: "≥" + fmt(sfEnv, 1), cls: "v-mid" } : null;
   }
 
   // warnings — FULL list (engine iter 881/882 can emit 7 input-shape
@@ -535,7 +743,7 @@ function renderRound(j, kind) {
     + (tune ? "，覆盖 " + fmt(tune.coverage_pct, 0) + "%，调节 " + fmt(tune.tuned, 0) + " 段" : "");
   hl.insertBefore(li, hl.firstChild);
   while (hl.children.length > 8) hl.removeChild(hl.lastChild);
-  $("round-chip").textContent = "第 " + S.rounds + " 轮";
+  updateFlowbar(); rebuildQuick();
   $("loop-hint").textContent = S.tuneSeen
     ? "写回本轮建议 → 回到 ③ 重新切片评估，直到 SF 与覆盖率满意为止。"
     : "完成 ③ 切片评估后，第二轮建议会基于真实挤出路径应力生成。";
@@ -550,7 +758,7 @@ function renderRound(j, kind) {
   else if (S.preset)
     txt("preset-status", "✓ 第 " + S.rounds + " 轮分析完成", "ok");
   $("apply-card").style.display = "";
-  if (S.chatAvailable) $("chat-card").style.display = "";
+  convReportCard(j);  // v0.9: the analysis lands in the conversation too
 }
 
 function setStep(id, cls) { $(id).className = "st" + (cls ? " " + cls : ""); }
@@ -571,10 +779,263 @@ $("btn-apply").onclick = function () {
   txt("apply-status", "正在写回建议参数…");
   bridge("apply");
 };
+$("btn-applyg").onclick = function () {
+  this.disabled = true;
+  txt("apply-status", "正在写入全局预设…");
+  bridge("apply-global");
+};
 
-// ---- chat (v0.6: grounded Q&A over the current report) ---------------------
-var CHAT_ACTION_LABELS = { apply: "⇫ 写回 Orca", slice: "⇦ 切片评估", pick: "⇩ 选取模型" };
-var CHAT_QUICK = ["这个件能直接打吗？", "为什么这么建议？", "下一步该做什么？"];
+// ---- AI backend settings (v0.39) -------------------------------------------
+var SET_FIELDS = ["backend", "codex_bin", "cli_args", "model", "api_base",
+                  "api_key", "extra_json"];
+var SET_INPUTS = {"backend": "set-backend", "codex_bin": "set-codex-bin",
+                  "cli_args": "set-cli-args", "model": "set-model",
+                  "api_base": "set-api-base", "api_key": "set-api-key",
+                  "extra_json": "set-extra"};
+
+function gearOpen(open) {
+  $("gear-mask").style.display = open ? "" : "none";
+  $("gear-card").style.display = open ? "" : "none";
+  if (open) {
+    fetch("/api/settings").then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) return;
+        var s = j.settings || {};
+        SET_FIELDS.forEach(function (k) {
+          var el = $(SET_INPUTS[k]);
+          if (el && s[k] !== undefined) el.value = s[k];
+        });
+        gearBackend();
+      });
+  }
+}
+function gearBackend() {
+  var api = $("set-backend").value === "openai";
+  $("set-cli-box").style.display = api ? "none" : "";
+  $("set-api-box").style.display = api ? "" : "none";
+}
+$("btn-gear").onclick = function () { gearOpen(true); };
+$("set-close").onclick = function () { gearOpen(false); };
+$("gear-mask").onclick = function () { gearOpen(false); };
+$("set-backend").onchange = gearBackend;
+
+$("set-save").onclick = function () {
+  var body = {};
+  SET_FIELDS.forEach(function (k) { body[k] = $(SET_INPUTS[k]).value; });
+  $("set-save").disabled = true;
+  api("/api/settings", body).then(function (j) {
+    $("set-save").disabled = false;
+    txt("set-status", j.ok ? "✓ 已保存（立即生效）"
+      : "✗ " + (j.error || "保存失败"), j.ok ? "ok" : "err");
+    // availability may have flipped (page banner depends on chat_available)
+    fetch("/api/status").then(function (r) { return r.json(); })
+      .then(function (st) {
+        S.chatAvailable = !!st.chat_available;
+        S.chatBackend = st.chat_backend || "codex";
+        S.chatModel = st.chat_model || "";
+      });
+  }).catch(function (e) {
+    $("set-save").disabled = false;
+    txt("set-status", "✗ " + e, "err");
+  });
+};
+$("set-test").onclick = function () {
+  $("set-test").disabled = true;
+  txt("set-status", "测试中…");
+  // test what is currently EDITED only after saving — the backend runs on
+  // persisted settings, so save silently first (key mask keeps stored key)
+  var body = {};
+  SET_FIELDS.forEach(function (k) { body[k] = $(SET_INPUTS[k]).value; });
+  api("/api/settings", body).then(function () {
+    return api("/api/settings/test", {});
+  }).then(function (j) {
+    $("set-test").disabled = false;
+    txt("set-status", j.ok ? "✓ 连通（%d ms）：%s".replace("%d", j.ms).replace("%s", j.reply || "")
+      : "✗ " + (j.error || "失败"), j.ok ? "ok" : "err");
+  }).catch(function (e) {
+    $("set-test").disabled = false;
+    txt("set-status", "✗ " + e, "err");
+  });
+};
+
+// ---- conversation (v0.9: the conversation IS the product; report cards,
+// proposals and tool activity are all presentation forms inside it) ------
+var CHAT_ACTION_LABELS = { apply: "⇫ 写回 Orca", "apply-global": "⇫ 写入全局预设",
+                           slice: "⇦ 切片评估", pick: "⇩ 选取模型" };
+var CHAT_QUICK_BASE = ["帮我看看盘上选中的件", "当前参数有什么风险？", "把非法参数修成合法值"];
+// 快捷短语随流程阶段换血：下一步动作优先，而不是永远的三连问
+function quickChips() {
+  if (!S.token) return CHAT_QUICK_BASE;
+  if (!S.tuneSeen) return ["切片评估真实应力", "这个件能直接打吗？", "写回引擎建议"];
+  return ["再切片评估一轮", "写回本轮建议", "解释一下覆盖率"];
+}
+function rebuildQuick() {
+  var box = $("chat-quick");
+  box.innerHTML = "";
+  quickChips().forEach(function (q) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "chip-btn"; b.textContent = q;
+    b.onclick = function () { chatSend(q); };
+    box.appendChild(b);
+  });
+}
+
+var _convOpened = false;
+function convOpening() {
+  if (_convOpened) return;
+  _convOpened = true;
+  if (S.chatAvailable) {
+    renderMsg("ai",
+      "你好，我是 Stratum 打印助手。\n" +
+      "直接说要做什么：\"帮我看看盘上选中的件\"会自动选取并分析；" +
+      "分析完我用大白话讲风险，再一起决定改哪些参数（写回前都会先给你确认）。\n" +
+      "也可以让我检查参数、修复非法值、切片评估，或随便聊打印问题。");
+  } else {
+    renderMsg("ai",
+      "AI 对话不可用（本机没有 codex CLI）——对话里的快捷入口仍可使用，" +
+      "完整按钮路径在「报告」视图：从盘选取 → 分析 → 写回。", { err: true });
+  }
+}
+
+// view toggle: 对话 default; 报告 keeps the full card stack + button paths
+function setView(v) {
+  S.view = v;
+  var chat = v === "chat";
+  $("conv-view").style.display = chat ? "" : "none";
+  $("report-view").style.display = chat ? "none" : "";
+  $("btn-newchat").style.display = chat ? "" : "none";
+  $("vw-chat").className = "seg-btn" + (chat ? " on" : "");
+  $("vw-report").className = "seg-btn" + (chat ? "" : " on");
+}
+$("vw-chat").onclick = function () { setView("chat"); };
+$("vw-report").onclick = function () { setView("report"); };
+setView("chat");
+
+// 新会话: wipe the dialogue (history + log) back to the opening message.
+// The picked model and its analysis stay — facts are grounded state, not
+// conversational baggage. Two-click confirm (native confirm() is unreliable
+// inside the host webview); busy turns must finish first.
+var _newchatArmed = null;
+$("btn-newchat").onclick = function () {
+  if (S.chatBusy) {
+    txt("conv-note", "对话进行中，稍候再开新会话", "err");
+    return;
+  }
+  if (!_newchatArmed) {
+    this.textContent = "确认清空？";
+    var btn = this;
+    _newchatArmed = setTimeout(function () {
+      _newchatArmed = null;
+      btn.textContent = "＋ 新会话";
+    }, 3000);
+    return;
+  }
+  clearTimeout(_newchatArmed);
+  _newchatArmed = null;
+  this.textContent = "＋ 新会话";
+  S.chat = [];
+  S.pending = 0; syncPending();   // 对话清空后提案卡不复存在
+  $("chat-log").innerHTML = "";
+  _act = null;                    // 活动组引用随 DOM 一并作废
+  _convOpened = false;
+  convOpening();
+  txt("conv-note", "已开始新会话（模型与分析保留）", "ok");
+};
+
+// analysis result as a conversation card — the spoken summary comes from the
+// assistant turn; this card is the grounded data body (verdict / warnings /
+// suggestion count), values copied verbatim from the report the engine made
+function convReportCard(j) {
+  var r = j.report || {};
+  var pb = r.phase_b || {};
+  var warns = (r.warnings || []);
+  var items = ((r.orca_suggestions || {}).items) || [];
+  var sf = pb.safety_factor, sfEnv = pb.safety_factor_envelope;
+  var d = document.createElement("div");
+  d.className = "msg ai conv-report";
+  var line = document.createElement("div");
+  line.className = "vr-line";
+  line.textContent = "📊 " + (pb.assessment || "分析完成")
+    + (typeof sf === "number"
+       ? "（安全系数 " + sf + (sfEnv ? "，包络≥" + sfEnv : "") + "）"
+       : (sfEnv ? "（安全系数包络 ≥" + sfEnv + "）" : ""));
+  d.appendChild(line);
+  var ul = document.createElement("ul");
+  warns.slice(0, 3).forEach(function (w) {
+    var li = document.createElement("li");
+    li.textContent = "⚠ " + String((w && w.message) || w).slice(0, 110);
+    ul.appendChild(li);
+  });
+  if (warns.length > 3) {
+    var li2 = document.createElement("li");
+    li2.textContent = "…另有 " + (warns.length - 3) + " 条提示";
+    ul.appendChild(li2);
+  }
+  if (ul.children.length) d.appendChild(ul);
+  // top suggestions with values — parameters must be readable at a glance,
+  // not buried in prose (values verbatim from the engine report)
+  if (items.length) {
+    var sul = document.createElement("ul");
+    items.slice(0, 6).forEach(function (it) {
+      if (it.recommended_value == null) return;
+      var li = document.createElement("li");
+      var b = document.createElement("b");
+      b.textContent = it.parameter;
+      li.appendChild(b);
+      li.appendChild(document.createTextNode(
+        "  " + (it.current_value != null ? it.current_value : "—")
+        + " → " + it.recommended_value));
+      sul.appendChild(li);
+    });
+    if (sul.children.length) d.appendChild(sul);
+  }
+  var sug = document.createElement("div");
+  sug.textContent = "引擎建议 " + items.length + " 条（写回前会逐项确认）"
+    + (j.gcode_tune && j.gcode_tune.gcode_tune ? "；G-code 已调优" : "");
+  d.appendChild(sug);
+  // 完整报告就地手风琴展开（不整页切走对话上下文）；报告视图降级为次级入口。
+  // 展开区与报告视图同口径：警告全量（≤8 + 计数），建议带置信度与理由。
+  var full = document.createElement("div");
+  full.className = "vr-full";
+  var ful = document.createElement("ul");
+  warns.slice(0, 8).forEach(function (w) {
+    var fli = document.createElement("li");
+    fli.textContent = "⚠ " + String((w && w.message) || w);
+    ful.appendChild(fli);
+  });
+  if (warns.length > 8) {
+    var fmore = document.createElement("li");
+    fmore.textContent = "…另有 " + (warns.length - 8) + " 条提示";
+    ful.appendChild(fmore);
+  }
+  items.forEach(function (it) {
+    if (it.recommended_value == null) return;
+    var fli = document.createElement("li");
+    fli.textContent = (it.parameter || "?")
+      + (it.current_value != null && it.recommended_value != null
+         ? "：" + it.current_value + " → " + it.recommended_value : "")
+      + (it.confidence != null ? "（置信度 " + Math.round(it.confidence * 100) + "%）" : "")
+      + (it.reason ? " — " + it.reason : "");
+    ful.appendChild(fli);
+  });
+  if (ful.children.length) full.appendChild(ful);
+  var openView = document.createElement("button");
+  openView.type = "button"; openView.className = "vr-more";
+  openView.textContent = "在报告视图打开全部 →";
+  openView.onclick = function () { setView("report"); };
+  full.appendChild(openView);
+  var tog = document.createElement("button");
+  tog.type = "button"; tog.className = "vr-more";
+  tog.textContent = "展开完整报告 ▾";
+  tog.onclick = function () {
+    var on = full.classList.toggle("open");
+    tog.textContent = on ? "收起完整报告 ▴" : "展开完整报告 ▾";
+  };
+  d.appendChild(tog);
+  d.appendChild(full);
+  $("chat-log").appendChild(d);
+  $("chat-log").scrollTop = $("chat-log").scrollHeight;
+}
 
 function renderMsg(role, text, extra) {
   var log = $("chat-log");
@@ -596,6 +1057,7 @@ function renderMsg(role, text, extra) {
       b.textContent = CHAT_ACTION_LABELS[a];
       b.onclick = function () {
         if (a === "apply") { $("btn-apply").disabled = true; txt("apply-status", "正在写回建议参数…"); }
+        else if (a === "apply-global") txt("conv-note", "正在写入全局预设…");
         else if (a === "slice") txt("slice-status", "正在切片并导出盘上 G-code…（进度看主窗口）");
         bridge(a === "slice" ? "gcode" : a);
       };
@@ -623,23 +1085,62 @@ function bridgePayload(kind, payload) {
   } catch (e) { /* surfaced via timeout on the wait map */ }
 }
 
-function renderActivity(call, r) {
-  var d = document.createElement("div");
-  d.className = "msg ai";
-  d.style.opacity = ".72";
-  d.textContent = "⚙ " + call.tool +
-    (r && r.ok ? " ✓" : " ✗ " + String((r && r.error) || "").slice(0, 90));
+// 每回合一个活动折叠组：执行中展开逐条滚动（活性），回合结束收起留摘要。
+// 旧行为每调用插一条消息，多轮工具时会刷掉半个对话屏。
+var _act = null;
+function _actEnsure() {
+  if (_act && _act.card.parentNode) return;
+  var card = document.createElement("div");
+  card.className = "msg ai act-grp";
+  var sum = document.createElement("div");
+  sum.className = "act-sum";
+  var lines = document.createElement("div");
+  lines.className = "act-lines";
+  card.appendChild(sum); card.appendChild(lines);
+  sum.onclick = function () { card.classList.toggle("closed"); };
   var log = $("chat-log");
-  log.appendChild(d);
+  log.appendChild(card);
+  _act = { card: card, sum: sum, lines: lines, n: 0, bad: 0 };
+}
+function _actSum() {
+  return "⚙ 工具调用 " + _act.n + " 次" + (_act.bad ? "（" + _act.bad + " 失败）" : "") + " ▾";
+}
+function renderActivity(call, r) {
+  _actEnsure();
+  _act.n++;
+  if (!(r && r.ok)) _act.bad++;
+  var line = document.createElement("div");
+  if (!(r && r.ok)) line.className = "bad";
+  line.textContent = call.tool + (r && r.ok ? " ✓"
+    : " ✗ " + String((r && r.error) || "").slice(0, 90));
+  _act.lines.appendChild(line);
+  _act.sum.textContent = _actSum();
+  var log = $("chat-log");
   log.scrollTop = log.scrollHeight;
 }
+function _actFinish() {
+  if (!_act) return;
+  if (_act.card.parentNode) {
+    _act.card.classList.add("closed");
+    _act.sum.textContent = _actSum().replace(" ▾", " · 点击展开");
+  }
+  _act = null;
+}
 
+function syncPending() {
+  var bar = $("pending-bar");
+  bar.hidden = !S.pending;
+  if (S.pending) bar.textContent = "📋 有 " + S.pending + " 个参数提案待确认 — 点击查看";
+}
 function showProposal(call, res) {
   var old = (res && res.old_values) || {};
   var card = document.createElement("div");
-  card.className = "msg ai";
+  card.className = "msg ai proposal";
   var head = document.createElement("div");
-  head.textContent = "📋 参数修改提案（未写入）：";
+  var badge = document.createElement("span");
+  badge.className = "pp-badge"; badge.textContent = "待确认";
+  head.textContent = "📋 参数修改提案（未写入）";
+  head.appendChild(badge);
   card.appendChild(head);
   var t = document.createElement("table");
   t.className = "kv";
@@ -663,59 +1164,96 @@ function showProposal(call, res) {
     return b;
   }
   var ap = chip("应用到对象");
+  var gp = chip("写入全局预设");
   var rv = chip("撤销");
   rv.style.display = "none";
   var ds = chip("丢弃");
   ap.onclick = function () {
-    ap.disabled = true; ds.disabled = true;
-    stat.textContent = "写入中…";
+    ap.disabled = true; gp.disabled = true; ds.disabled = true;
+    stat.textContent = "写入中…"; badge.textContent = "写入中…";
+    S.pending = Math.max(0, S.pending - 1); syncPending();
+    if (_proposalCard) _proposalCard.target = "object";
     bridgePayload("apply-proposal",
                   { values: call.args.values, old_values: old });
   };
+  gp.onclick = function () {
+    ap.disabled = true; gp.disabled = true; ds.disabled = true;
+    stat.textContent = "写入全局预设中…"; badge.textContent = "写入中…";
+    S.pending = Math.max(0, S.pending - 1); syncPending();
+    if (_proposalCard) _proposalCard.target = "global";
+    bridgePayload("apply-global-proposal", { values: call.args.values });
+  };
   ds.onclick = function () {
     ap.disabled = true; ds.disabled = true; rv.style.display = "none";
-    stat.textContent = "已丢弃提案（未写入）。";
+    stat.textContent = "已丢弃提案（未写入）。"; badge.textContent = "已丢弃";
+    S.pending = Math.max(0, S.pending - 1); syncPending();
   };
-  rv.onclick = function () { rv.disabled = true; stat.textContent = "回滚中…"; bridgePayload("revert-proposal", {}); };
+  rv.onclick = function () { rv.disabled = true; stat.textContent = "回滚中…"; badge.textContent = "回滚中…"; bridgePayload("revert-proposal", {}); };
   row.appendChild(stat);
   card.appendChild(row);
   var log = $("chat-log");
   log.appendChild(card);
   log.scrollTop = log.scrollHeight;
-  _proposalCard = { stat: stat, revert: rv, apply: ap };
+  S.pending++; syncPending();
+  _proposalCard = { stat: stat, revert: rv, apply: ap, badge: badge, target: "object" };
 }
+
+// pending-bar：滚到最近一张提案卡并闪一下（键盘 Enter/Space 同点击）
+$("pending-bar").onclick = function () {
+  var cards = document.querySelectorAll(".msg.proposal");
+  var last = cards[cards.length - 1];
+  if (!last) return;
+  last.scrollIntoView({ block: "center" });
+  last.classList.add("flash");
+  setTimeout(function () { last.classList.remove("flash"); }, 1200);
+};
+$("pending-bar").onkeydown = function (ev) {
+  if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); this.click(); }
+};
 
 function proposalFeedback(d) {
   var pc = _proposalCard;
   if (!pc) return;
   pc.stat.textContent = (d.ok ? "✓ " : "✗ ") + (d.note || d.error || "");
-  if (d.ok) { pc.revert.style.display = ""; pc.revert.disabled = false; }
-  else pc.apply.disabled = false;
+  if (pc.badge) pc.badge.textContent = d.ok ? "已应用" : "写入失败";
+  if (d.ok) {
+    if (pc.target === "global") {
+      // preset writes have no object-override checkpoint — nothing to revert
+      pc.badge.textContent = "已写入全局预设";
+    } else {
+      pc.revert.style.display = ""; pc.revert.disabled = false;
+    }
+  } else pc.apply.disabled = false;
 }
 
 function chatSend(raw) {
   var q = (raw !== undefined ? raw : $("chat-in").value).trim();
-  if (!q || !S.token || S.chatBusy) return;
+  // v0.9: no token needed to TALK — the assistant can start the flow itself
+  // (run_analysis picks from the plate and the pick-done relay sets S.token);
+  // without codex the send button still fires and gets a degrade reply.
+  if (!q || S.chatBusy) return;
   $("chat-in").value = "";
   S.chat.push({ role: "user", text: q });
   renderMsg("user", q);
   S.chatBusy = true;
   $("chat-send").disabled = true;
-  var wait = renderMsgEl("… 思考中（本地 codex，可能多轮调用工具）");
-  var results = [], used = 0;
+  var backendLabel = S.chatBackend === "openai"
+    ? (S.chatModel || "API 模型") : "本地 codex";
+  var wait = document.createElement("div");
+  wait.className = "msg ai";
+  var sp = document.createElement("span"); sp.className = "spin";
+  wait.appendChild(sp);
+  wait.appendChild(document.createTextNode(
+    "思考中（" + backendLabel + "，可能多轮调用工具）…"));
+  $("chat-log").appendChild(wait);
+  $("chat-log").scrollTop = $("chat-log").scrollHeight;
+  var results = [], used = 0, proposeCalls = 0;
 
-  function renderMsgEl(text) {
-    var d = document.createElement("div");
-    d.className = "msg ai";
-    d.textContent = text;
-    $("chat-log").appendChild(d);
-    $("chat-log").scrollTop = $("chat-log").scrollHeight;
-    return d;
-  }
   function done() {
     S.chatBusy = false;
     $("chat-send").disabled = false;
     if (wait.parentNode) wait.remove();
+    _actFinish();
   }
   function final(j) {
     done();
@@ -728,6 +1266,17 @@ function chatSend(raw) {
   }
   function execCall(c) {
     var p;
+    // v0.9.1 anti-dither guard: the model tends to RE-call propose_settings
+    // to fine-tune the value set (observed: 5 stacked proposal cards until
+    // the call cap). One proposal per turn is the contract — extras resolve
+    // immediately with a stop signal instead of rendering another card.
+    if (c.tool === "propose_settings") {
+      proposeCalls++;
+      if (proposeCalls > 1) {
+        return Promise.resolve({ ok: true, result: {
+          note: "本轮已有一张提案卡待用户确认，不再重复生成。请直接给最终回答（告诉用户卡片待确认即可），不要再调 propose_settings。" } });
+      }
+    }
     if (TOOL_SIDE[c.tool] === "server") {
       p = api("/api/assistant/tool", { token: S.token, tool: c.tool, args: c.args });
     } else {
@@ -767,6 +1316,15 @@ function chatSend(raw) {
         renderMsg("ai", "AI 暂不可用：" + (j.error || "未知错误"), { err: true });
         return;
       }
+      if (j.stale_token) {
+        // server no longer knows our token (restart/eviction) — drop it so
+        // the loop runs tokenless (assistant advises re-pick) instead of
+        // erroring on every turn until a manual re-pick
+        S.token = null;
+        try { sessionStorage.removeItem(SS_KEY); } catch (e) { /* ignore */ }
+        $("model-chip").textContent = "（待选取）";
+        txt("pick-status", "上次会话已失效（服务重启/过期）——请重新「从盘选取」", "err");
+      }
       if (j.type === "final") { final(j); return; }
       var calls = j.calls || [];
       if (!calls.length) { done(); return; }
@@ -793,13 +1351,7 @@ $("chat-send").onclick = function () { chatSend(); };
 $("chat-in").addEventListener("keydown", function (ev) {
   if (ev.key === "Enter") chatSend();
 });
-CHAT_QUICK.forEach(function (q) {
-  var b = document.createElement("button");
-  b.type = "button"; b.className = "chip-btn"; b.textContent = q;
-  b.onclick = function () { chatSend(q); };
-  $("chat-quick").appendChild(b);
-});
-
+rebuildQuick();
 // ---- session restore (panel reopen) -----------------------------------------
 try {
   var saved = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
@@ -811,6 +1363,7 @@ try {
     ["preset-card", "slice-card"].forEach(function (id) { $(id).style.display = ""; });
     txt("pick-status", "已恢复上次会话（" + (S.name || "?") + "）——点预设重新分析继续");
     setStep("st1", "done"); setStep("st2", "cur");
+    updateFlowbar();
   }
 } catch (e) { /* corrupt storage — ignore */ }
 
