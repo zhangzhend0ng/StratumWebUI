@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratum · Orca 插件</title>
+<!--
+  Stratum Orca 插件专用页 v0.6.0 —— 与独立 WebUI（index.html + report.js）是
+  两个产品面：本页只承载插件工作流
+
+      ① 选取模型 → ② 参数优化（引擎建议 → 写回对象）
+      → ③ 切片评估（真实重切片 → 挂载 → 沿挤出路径应力评估）
+      → ④ 迭代优化（第 2 轮建议 → 再写回 → 再切片 …）
+
+  本页由 make-plugin.sh 拷入 app/，经 server.py 的 /plugin.html 白名单供出；
+  只在插件面板 iframe 里被引用。独立运行的 WebUI 不受影响。
+
+  与宿主的桥（全部经 window.parent.postMessage，顶层文档转发给插件）：
+    出: stratum-orca-pick / stratum-orca-gcode / stratum-orca-apply
+    入: stratum-orca-session（选取完成，含会话）/ stratum-orca-analyze
+        （G-code 已挂载，重跑分析）/ stratum-orca-apply-done（写回结果）
+  分析请求与页面同源（http://127.0.0.1:<port>/plugin.html），fetch 直达
+  /api/*，带 X-Stratum-UI: 1 头（服务端 POST 门）。
+
+  刻意不做（留在独立 WebUI）：参数滑杆全量、档位对比、批量运行、G-code
+  对比工具、3MF 导出、历史趋势图。插件参数基线 = 四个预设卡 + 材料选择。
+-->
+<style>
+  :root {
+    --accent: #4f46e5; --accent-2: #4338ca;
+    --green: #15803d; --amber: #b45309; --red: #b91c1c;
+    --line: #e2e2e8; --panel: #f7f7fa; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 13px/1.5 system-ui, "Segoe UI", sans-serif; color: #1f2937;
+    background: #fff; display: flex; flex-direction: column; min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 2;
+  }
+  header .title { font-weight: 700; }
+  header .chip {
+    font-size: 12px; color: var(--muted); background: #fff;
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  header .round { margin-left: auto; font-size: 12px; color: var(--accent); font-weight: 600; }
+  main { padding: 10px 12px 24px; display: flex; flex-direction: column; gap: 10px; }
+
+  /* step strip */
+  .steps { display: flex; gap: 4px; }
+  .steps .st {
+    flex: 1; text-align: center; font-size: 11px; padding: 4px 2px;
+    border: 1px solid var(--line); border-radius: 6px; color: var(--muted);
+    background: #fff; overflow: hidden; white-space: nowrap;
+  }
+  .steps .st.cur { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .steps .st.done { border-color: var(--green); color: var(--green); }
+  .steps .st.done::after { content: " ✓"; }
+
+  .card {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    background: #fff;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .card .hint { font-size: 12px; color: var(--muted); }
+  .card.busy-dim { opacity: .55; pointer-events: none; }
+
+  button.cta {
+    font: 13px system-ui; font-weight: 600; color: #fff; background: var(--accent);
+    border: none; border-radius: 6px; padding: 7px 14px; cursor: pointer; width: 100%;
+  }
+  button.cta:hover:not(:disabled) { background: var(--accent-2); }
+  button.cta:disabled { opacity: .45; cursor: not-allowed; }
+  button.ghost {
+    font: 13px system-ui; color: var(--accent); background: #fff;
+    border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px;
+    cursor: pointer; width: 100%;
+  }
+  button.ghost:disabled { opacity: .45; cursor: not-allowed; }
+  .status { font-size: 12px; margin-top: 6px; min-height: 16px; }
+  .status.ok { color: var(--green); } .status.err { color: var(--red); }
+
+  /* preset cards */
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+  .preset {
+    text-align: left; border: 1px solid var(--line); border-radius: 8px;
+    background: #fff; padding: 8px; cursor: pointer; font: 12px system-ui;
+  }
+  .preset:hover:not(:disabled) { border-color: var(--accent); }
+  .preset.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .preset:disabled { opacity: .5; cursor: not-allowed; }
+  .preset .pu { font-weight: 650; font-size: 12px; }
+  .preset .pl { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .mat-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; }
+  .mat-row select { flex: 1; font: 12px system-ui; padding: 3px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+
+  /* verdict */
+  .verdict { border-top: 3px solid var(--line); }
+  .verdict.ok { border-top-color: var(--green); }
+  .verdict.warn { border-top-color: var(--amber); }
+  .verdict.bad { border-top-color: var(--red); }
+  .verdict .big { font-size: 14px; font-weight: 650; line-height: 1.5; }
+  .sf { display: flex; gap: 10px; font-size: 12px; margin-top: 4px; }
+  .sf b { font-size: 15px; }
+  .sf .v-ok { color: var(--green); } .sf .v-mid { color: var(--amber); } .sf .v-low { color: var(--red); }
+
+  .warn-line { font-size: 12px; color: var(--amber); font-weight: 600; margin-top: 6px; }
+  ul.plain { list-style: none; margin: 6px 0 0; padding: 0; }
+  ul.plain li { font-size: 12px; padding: 2px 0; border-top: 1px dashed var(--line); }
+  ul.plain li:first-child { border-top: 0; }
+  .tier { font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); margin-right: 4px; }
+  .tier.decision { color: var(--accent); border-color: var(--accent); }
+  .mono { font-family: Consolas, monospace; font-size: 11px; }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.kv td { padding: 2px 4px; border-top: 1px dashed var(--line); }
+  table.kv td:first-child { color: var(--muted); width: 45%; }
+  a.dl { font-size: 12px; color: var(--accent); }
+
+  /* chat (v0.6) */
+  #chat-log {
+    max-height: 280px; overflow-y: auto; display: flex;
+    flex-direction: column; gap: 6px; padding: 2px 0;
+  }
+  .msg { max-width: 92%; border-radius: 8px; padding: 6px 9px;
+         font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #eef0fe; color: #1e1b4b; }
+  .msg.ai { align-self: flex-start; background: var(--panel);
+            border: 1px solid var(--line); }
+  .msg.err { align-self: flex-start; background: #fef2f2;
+             border: 1px solid #fecaca; color: var(--red); }
+  .msg .note { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip-btn {
+    font: 12px system-ui; border: 1px solid var(--accent); color: var(--accent);
+    background: #fff; border-radius: 999px; padding: 2px 10px; cursor: pointer;
+  }
+  .chip-btn:hover { background: #eef0fe; }
+  .chat-row { display: flex; gap: 6px; margin-top: 8px; }
+  .chat-row input {
+    flex: 1; font: 12px system-ui; padding: 6px 8px; border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .chat-row button {
+    font: 12px system-ui; font-weight: 600; color: #fff; background: var(--accent);
+    border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer;
+  }
+  .chat-row button:disabled { opacity: .45; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Stratum</span>
+  <span class="chip" id="model-chip">未选取模型</span>
+  <span class="round" id="round-chip"></span>
+</header>
+
+<div class="steps">
+  <div class="st" id="st1">① 选取模型</div>
+  <div class="st" id="st2">② 参数优化</div>
+  <div class="st" id="st3">③ 切片评估</div>
+  <div class="st" id="st4">④ 迭代优化</div>
+</div>
+
+<main>
+  <!-- ① 选取 -->
+  <div class="card" id="pick-card">
+    <h3>① 从盘选取模型</h3>
+    <div class="hint">在 Orca 3D 视图选中一个对象（盘上仅一个时可免选），然后选取。修饰体/负体积忽略，多实例取第 1 个摆放。</div>
+    <div style="margin-top:8px">
+      <button class="cta" id="btn-pick" type="button">⇩ 从盘选取</button>
+    </div>
+    <div class="status" id="pick-status">选取后自动开始第一轮参数分析</div>
+  </div>
+
+  <!-- ② 参数优化 -->
+  <div class="card" id="preset-card" style="display:none">
+    <h3>② 参数优化 — 选基线，引擎给建议</h3>
+    <div class="hint">基线决定分析的工艺起点；引擎建议（含写回值）以「写回 Orca」应用到对象级覆盖。</div>
+    <div class="presets" id="presets"></div>
+    <div class="mat-row">材料 <select id="mat-sel" title="盘上耗材（覆盖预设的 PLA 默认；粘性跨预设）"></select></div>
+    <div class="status" id="preset-status"></div>
+  </div>
+
+  <!-- ③ 切片评估 -->
+  <div class="card" id="slice-card" style="display:none">
+    <h3>③ 切片评估 — 真实 G-code 应力</h3>
+    <div class="hint">按当前盘面真实重切片（进度看主窗口），挂载后沿挤出路径采样应力并输出调优 G-code。上限 64MB；须与选取的模型同源切片。</div>
+    <div style="margin-top:8px">
+      <button class="cta" id="btn-slice" type="button">⇦ 切片并评估</button>
+    </div>
+    <div class="status" id="slice-status"></div>
+  </div>
+
+  <!-- 写回 -->
+  <div class="card" id="apply-card" style="display:none">
+    <h3>写回 Orca — 应用本轮建议</h3>
+    <div class="hint">把报告里的 Orca 建议写成对象级参数覆盖（要求当前选中的仍是选取时的对象）。</div>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+      <button class="ghost" id="btn-apply" type="button" style="width:auto; flex:1">⇫ 写回 Orca</button>
+      <a class="dl" id="dl-tuned" href="#" style="display:none">调优 G-code</a>
+    </div>
+    <div class="status" id="apply-status"></div>
+  </div>
+
+  <!-- 结论 -->
+  <div class="card verdict" id="verdict-card" style="display:none">
+    <h3 id="verdict-title">结论</h3>
+    <div class="big" id="verdict-big">—</div>
+    <div class="sf">
+      <span>安全系数 <b id="sf-val" class="v-ok">—</b></span>
+      <span id="sf-band" class="hint"></span>
+    </div>
+    <ul class="plain" id="warn-list"></ul>
+  </div>
+
+  <!-- 调节卡 -->
+  <div class="card" id="tune-card" style="display:none">
+    <h3>G-code 应力调优</h3>
+    <div id="tune-body"></div>
+  </div>
+
+  <!-- 建议 -->
+  <div class="card" id="sugg-card" style="display:none">
+    <h3>Orca 建议（本轮写回内容）</h3>
+    <ul class="plain" id="sugg-list"></ul>
+  </div>
+
+  <!-- 轮次历史 -->
+  <div class="card" id="hist-card" style="display:none">
+    <h3>优化轮次</h3>
+    <div class="hint" id="loop-hint"></div>
+    <ul class="plain" id="hist-list"></ul>
+  </div>
+
+  <!-- 对话（v0.6：基于当前报告的接地问答；数字经服务端白名单审计） -->
+  <div class="card" id="chat-card" style="display:none">
+    <h3>对话 — 问这轮报告</h3>
+    <div class="hint">回答只基于上方卡片数据（引擎事实），无来源数字会被自动移除；建议动作用按钮执行，AI 不会直接动盘面。</div>
+    <div id="chat-log"></div>
+    <div class="chat-chips" id="chat-quick"></div>
+    <div class="chat-row">
+      <input id="chat-in" placeholder="例如：这个件能直接打吗？" maxlength="500">
+      <button id="chat-send" type="button">发送</button>
+    </div>
+  </div>
+
+  <div class="hint" style="opacity:.8">
+    完整调参台（滑杆/档位对比/G-code 工具）在独立 WebUI；插件只做选取→优化→切片评估→迭代的闭环。
+    排查：port.txt 与日志位置见 README。
+  </div>
+</main>
+
+<script>
+"use strict";
+// ---- state ---------------------------------------------------------------
+var S = {
+  token: null, name: null, preset: null, params: {}, material: "PLA",
+  rounds: 0, tuneSeen: false, busy: false, presets: [], materials: ["PLA"],
+  chat: [], chatBusy: false, chatAvailable: false,
+};
+var SS_KEY = "stratum-plugin-session";
+
+function $(id) { return document.getElementById(id); }
+function txt(id, s, cls) {
+  var e = $(id); e.textContent = s || ""; e.className = "status" + (cls ? " " + cls : "");
+}
+
+// ---- server API (same origin; POST gate needs the UI header) -------------
+function api(path, body) {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Stratum-UI": "1" },
+    body: JSON.stringify(body || {}),
+  }).then(function (r) { return r.json(); });
+}
+
+// ---- plugin bridge --------------------------------------------------------
+function bridge(kind) {
+  try { window.parent.postMessage({ type: "stratum-orca-" + kind }, "*"); }
+  catch (e) { txt("pick-status", "桥调用失败: " + e, "err"); }
+}
+window.addEventListener("message", function (ev) {
+  var d = ev.data;
+  if (!d || !d.type) return;
+  if (d.type === "stratum-orca-session" && d.session && d.session.token) {
+    adoptSession(d.session, d.note, d.suppress_auto_analyze);
+    return;
+  }
+  if (d.type === "stratum-orca-tool-result" && d.id && _toolWait[d.id]) {
+    var cb = _toolWait[d.id];
+    delete _toolWait[d.id];
+    cb({ ok: !!d.ok, result: d.result, error: d.error });
+    return;
+  }
+  if (d.type === "stratum-orca-analyze") {   // gcode attached server-side
+    txt("slice-status", "G-code 已挂载，重新分析中…");
+    analyze("slice");
+    return;
+  }
+  if (d.type === "stratum-orca-apply-done") {
+    txt("apply-status", (d.ok ? "✓ " : "✗ ") + (d.ok ? (d.note || "已写回") : (d.error || "写回失败")),
+        d.ok ? "ok" : "err");
+    $("btn-apply").disabled = false;
+    if (_proposalCard) proposalFeedback(d);
+  }
+});
+
+function adoptSession(j, note, suppressAutoAnalyze) {
+  S.token = j.token; S.name = j.name; S.preset = null; S.params = {};
+  S.rounds = 0; S.tuneSeen = false;
+  try {
+    sessionStorage.setItem(SS_KEY, JSON.stringify({ token: S.token, name: S.name }));
+  } catch (e) { /* private mode etc. — non-fatal */ }
+  $("model-chip").textContent = j.name || "（未命名）";
+  ["preset-card", "slice-card"].forEach(function (id) { $(id).style.display = ""; });
+  txt("pick-status", "✓ " + (note || "已选取") + " — 第一轮分析中…", "ok");
+  buildPresetButtons();
+  if (suppressAutoAnalyze) {
+    // run_analysis already analyzed server-side — do not double-run
+    txt("pick-status", "✓ " + (note || "已选取") + "（分析由 AI 工具完成）", "ok");
+  } else {
+    analyze("params");
+  }
+}
+
+// ---- presets ---------------------------------------------------------------
+function loadParamsMeta() {
+  fetch("/api/status").then(function (r) { return r.json(); })
+    .then(function (st) { S.chatAvailable = !!st.chat_available; })
+    .catch(function () { /* chat stays hidden — degrade, never block */ });
+  fetch("/api/params").then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) return;
+    S.presets = j.presets || [];
+    for (var i = 0; i < (j.params || []).length; i++)
+      if (j.params[i].name === "material") { S.materials = j.params[i].options || S.materials; break; }
+    var sel = $("mat-sel");
+    sel.innerHTML = "";
+    S.materials.forEach(function (m) {
+      var o = document.createElement("option");
+      o.value = m; o.textContent = m; sel.appendChild(o);
+    });
+    sel.value = S.material;
+    sel.onchange = function () {
+      S.material = sel.value;
+      // sticky material overrides the preset default (same semantics as the
+      // standalone WebUI's preset panel)
+      if (S.params.material !== undefined || S.preset) {
+        S.params.material = S.material;
+        if (S.token && !S.busy) analyze("params");
+      }
+    };
+    buildPresetButtons();
+  }).catch(function () { /* presets stay disabled; analyze uses engine defaults */ });
+}
+
+function buildPresetButtons() {
+  var box = $("presets");
+  box.innerHTML = "";
+  S.presets.forEach(function (p) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "preset" + (S.preset === p.name ? " on" : "");
+    b.disabled = !S.token;
+    var u = document.createElement("div"); u.className = "pu";
+    u.textContent = p.use || p.label || p.name;
+    var l = document.createElement("div"); l.className = "pl";
+    l.textContent = (p.label || p.name) + (p.desc ? " · " + p.desc : "");
+    b.appendChild(u); b.appendChild(l);
+    b.onclick = function () {
+      if (!S.token || S.busy) return;
+      S.preset = p.name;
+      S.params = Object.assign({}, p.params, { material: S.material });
+      buildPresetButtons();
+      txt("preset-status", "「" + (p.label || p.name) + "」基线 — 分析中…");
+      analyze("params");
+    };
+    box.appendChild(b);
+  });
+}
+
+// ---- analyze & render ------------------------------------------------------
+function analyze(kind) {
+  if (!S.token || S.busy) {
+    if (S.busy) txt(kind === "slice" ? "slice-status" : "preset-status", "上一轮分析还在进行中…", "err");
+    return;
+  }
+  S.busy = true;
+  var cards = document.querySelectorAll("main .card");
+  for (var i = 0; i < cards.length; i++) cards[i].classList.add("busy-dim");
+  $("pick-card").classList.remove("busy-dim");
+  api("/api/analyze", { token: S.token, params: S.params }).then(function (j) {
+    S.busy = false;
+    for (var k = 0; k < cards.length; k++) cards[k].classList.remove("busy-dim");
+    if (!j.ok) {
+      txt(kind === "slice" ? "slice-status" : "preset-status", "✗ " + (j.error || "分析失败"), "err");
+      return;
+    }
+    renderRound(j, kind);
+  }).catch(function (e) {
+    S.busy = false;
+    for (var k2 = 0; k2 < cards.length; k2++) cards[k2].classList.remove("busy-dim");
+    txt(kind === "slice" ? "slice-status" : "preset-status", "✗ " + e, "err");
+  });
+}
+
+function fmt(n, d) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return Number(n).toFixed(d === undefined ? 1 : d);
+}
+
+function renderRound(j, kind) {
+  S.rounds++;
+  var r = j.report || {};
+  var pb = r.phase_b || {};
+  var tune = j.gcode_tune && j.gcode_tune.gcode_tune;
+
+  // verdict card (SF band colors are a display mapping of the engine number)
+  var sf = pb.safety_factor;
+  var sfEnv = pb.safety_factor_envelope;
+  var vc = $("verdict-card");
+  vc.style.display = "";
+  vc.className = "card verdict";
+  $("verdict-big").textContent = pb.assessment || "引擎未给出结论短语 — 见各项数值。";
+  var sv = $("sf-val"), band = $("sf-band");
+  if (typeof sf === "number") {
+    sv.textContent = fmt(sf, 1);
+    var cls = sf < 1 ? "v-low" : sf <= 3 ? "v-mid" : "v-ok";
+    sv.className = cls;
+    vc.className += sf < 1 ? " bad" : sf <= 3 ? " warn" : " ok";
+    band.textContent = sf < 1 ? "（<1 不可用）" : sf <= 3 ? "（1–3 边界）" : "（>3 充足）";
+  } else {
+    sv.textContent = sfEnv ? "≥" + fmt(sfEnv, 1) : "—";
+    band.textContent = sfEnv ? "（包络下界）" : "";
+  }
+
+  // warnings — FULL list (engine iter 881/882 can emit 7 input-shape
+  // guardrail lines at once; a top-3 cap would silently hide them, and the
+  // engine explicitly routes these to warnings[] for display, not noise)
+  var wl = $("warn-list");
+  wl.innerHTML = "";
+  var warns = (r.warnings || []);
+  warns.slice(0, 8).forEach(function (w) {
+    var li = document.createElement("li");
+    li.textContent = "⚠ " + String((w && w.message) || w);
+    wl.appendChild(li);
+  });
+  if (warns.length > 8) {
+    var more = document.createElement("li");
+    more.textContent = "…另有 " + (warns.length - 8) + " 条提示";
+    wl.appendChild(more);
+  }
+
+  // suggestions (the write-back payload)
+  var items = ((r.orca_suggestions || {}).items) || [];
+  var sc = $("sugg-card"), sl = $("sugg-list");
+  sc.style.display = "";
+  sl.innerHTML = "";
+  if (!items.length) {
+    var li0 = document.createElement("li");
+    li0.textContent = "报告未含 Orca 建议。"; sl.appendChild(li0);
+  }
+  items.forEach(function (it) {
+    var li = document.createElement("li");
+    var t = document.createElement("span");
+    t.className = "tier" + (it.tier === "decision" ? " decision" : "");
+    t.textContent = it.tier || "—";
+    li.appendChild(t);
+    li.appendChild(document.createTextNode(
+      (it.parameter || "?") + (it.parameter_cn ? "（" + it.parameter_cn + "）" : "") +
+      (it.current_value != null && it.recommended_value != null
+        ? "：" + it.current_value + " → " + it.recommended_value : "") +
+      (it.confidence != null ? "（置信度 " + Math.round(it.confidence * 100) + "%）" : "")));
+    if (it.reason) {
+      var rr = document.createElement("div");
+      rr.className = "hint"; rr.textContent = it.reason;
+      li.appendChild(rr);
+    }
+    sl.appendChild(li);
+  });
+
+  // tune card (gcode-attached rounds)
+  var tc = $("tune-card"), tb = $("tune-body");
+  if (tune) {
+    S.tuneSeen = true;
+    tc.style.display = "";
+    tb.innerHTML = "";
+    var pcr = tune.patch_coverage_ratio;
+    var pcrValid = pcr !== -1 && typeof pcr === "number";
+    var rows = [
+      ["热区候选", fmt(tune.candidates, 0)], ["已调节", fmt(tune.tuned, 0)],
+      ["应力覆盖率", fmt(tune.coverage_pct, 1) + "%"],
+      ["E 漂移", (tune.e_drift_pct >= 0 ? "+" : "") + fmt(tune.e_drift_pct, 2) + "%"],
+      ["热区覆盖比", pcrValid ? fmt(pcr, 2) : "—"],
+    ];
+    var tbl = document.createElement("table"); tbl.className = "kv";
+    rows.forEach(function (rw) {
+      var tr = tbl.insertRow(-1);
+      tr.insertCell(0).textContent = rw[0];
+      tr.insertCell(1).textContent = rw[1];
+    });
+    tb.appendChild(tbl);
+    // same-source warnings — thresholds mirror the engine's own console
+    // lines (iter 878/879); the >2x line is a brim-headroom disclosure.
+    function warn(s) {
+      var d = document.createElement("div");
+      d.className = "warn-line"; d.textContent = s;
+      tb.appendChild(d);
+    }
+    if (typeof tune.coverage_pct === "number" && tune.coverage_pct < 70)
+      warn("⚠ 应力覆盖率低于 70%：3MF/G-code 与模型可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片");
+    if (pcrValid && pcr < 0.5)
+      warn("⚠ G-code 打印域不足模型的一半：局部片段会被重定位到中心，对齐存疑");
+    if (pcrValid && pcr > 2)
+      warn("⚠ G-code 打印域明显大于模型：通常是裙边/底垫；若未启用则可能是非同源件");
+    if (tune.tuned === 0) {
+      var d0 = document.createElement("div");
+      d0.className = "hint"; d0.style.marginTop = "6px";
+      d0.textContent = "本次未改写任何挤出段——常见原因：非同源切片 / 挤出段全被特征排除 / 热区门槛内无挤出段。";
+      tb.appendChild(d0);
+    }
+    var dl = $("dl-tuned");
+    dl.style.display = "";
+    dl.href = "/api/gcode-tuned?token=" + encodeURIComponent(S.token);
+  }
+
+  // rounds history + loop guidance
+  var hc = $("hist-card"), hl = $("hist-list");
+  hc.style.display = "";
+  var li = document.createElement("li");
+  li.innerHTML = "第 " + S.rounds + " 轮（" + (kind === "slice" ? "切片评估" : "参数分析") + "）"
+    + " — SF " + (typeof sf === "number" ? fmt(sf, 1) : "—")
+    + (tune ? "，覆盖 " + fmt(tune.coverage_pct, 0) + "%，调节 " + fmt(tune.tuned, 0) + " 段" : "");
+  hl.insertBefore(li, hl.firstChild);
+  while (hl.children.length > 8) hl.removeChild(hl.lastChild);
+  $("round-chip").textContent = "第 " + S.rounds + " 轮";
+  $("loop-hint").textContent = S.tuneSeen
+    ? "写回本轮建议 → 回到 ③ 重新切片评估，直到 SF 与覆盖率满意为止。"
+    : "完成 ③ 切片评估后，第二轮建议会基于真实挤出路径应力生成。";
+
+  // step strip
+  setStep("st1", "done");
+  setStep("st2", S.rounds >= 1 ? "done" : "cur");
+  setStep("st3", S.tuneSeen ? "done" : "cur");
+  setStep("st4", S.rounds >= 2 ? "cur" : "");
+  if (kind === "slice")
+    txt("slice-status", "✓ 第 " + S.rounds + " 轮评估完成" + (tune ? "（G-code 已调优）" : ""), "ok");
+  else if (S.preset)
+    txt("preset-status", "✓ 第 " + S.rounds + " 轮分析完成", "ok");
+  $("apply-card").style.display = "";
+  if (S.chatAvailable) $("chat-card").style.display = "";
+}
+
+function setStep(id, cls) { $(id).className = "st" + (cls ? " " + cls : ""); }
+
+// ---- buttons ----------------------------------------------------------------
+$("btn-pick").onclick = function () {
+  this.disabled = true;
+  txt("pick-status", "正在导出选中模型…");
+  bridge("pick");
+  var b = this; setTimeout(function () { b.disabled = false; }, 800);
+};
+$("btn-slice").onclick = function () {
+  txt("slice-status", "正在切片并导出盘上 G-code…（进度看主窗口）");
+  bridge("gcode");
+};
+$("btn-apply").onclick = function () {
+  this.disabled = true;
+  txt("apply-status", "正在写回建议参数…");
+  bridge("apply");
+};
+
+// ---- chat (v0.6: grounded Q&A over the current report) ---------------------
+var CHAT_ACTION_LABELS = { apply: "⇫ 写回 Orca", slice: "⇦ 切片评估", pick: "⇩ 选取模型" };
+var CHAT_QUICK = ["这个件能直接打吗？", "为什么这么建议？", "下一步该做什么？"];
+
+function renderMsg(role, text, extra) {
+  var log = $("chat-log");
+  var d = document.createElement("div");
+  d.className = "msg " + (role === "user" ? "user" : (extra && extra.err) ? "err" : "ai");
+  d.textContent = text;
+  if (extra && extra.note) {
+    var n = document.createElement("span");
+    n.className = "note"; n.textContent = extra.note;
+    d.appendChild(n);
+  }
+  if (extra && extra.actions && extra.actions.length) {
+    var row = document.createElement("div");
+    row.className = "chat-chips";
+    extra.actions.forEach(function (a) {
+      if (!CHAT_ACTION_LABELS[a]) return;
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "chip-btn";
+      b.textContent = CHAT_ACTION_LABELS[a];
+      b.onclick = function () {
+        if (a === "apply") { $("btn-apply").disabled = true; txt("apply-status", "正在写回建议参数…"); }
+        else if (a === "slice") txt("slice-status", "正在切片并导出盘上 G-code…（进度看主窗口）");
+        bridge(a === "slice" ? "gcode" : a);
+      };
+      row.appendChild(b);
+    });
+    if (row.children.length) d.appendChild(row);
+  }
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ---- assistant agent loop (v0.7: page-driven TOOL_CALLS loop) -------------
+var _toolWait = {};      // host tool id -> resolve callback
+var _proposalCard = null; // active proposal card feedback hook
+var TOOL_SIDE = {
+  get_print_context: "host", run_analysis: "host", propose_settings: "host",
+  get_analysis: "server", read_gcode: "server",
+};
+var ASST_MAX_STEPS = 6, ASST_MAX_CALLS = 8;
+
+function bridgePayload(kind, payload) {
+  try {
+    window.parent.postMessage(
+      Object.assign({ type: "stratum-orca-" + kind }, payload || {}), "*");
+  } catch (e) { /* surfaced via timeout on the wait map */ }
+}
+
+function renderActivity(call, r) {
+  var d = document.createElement("div");
+  d.className = "msg ai";
+  d.style.opacity = ".72";
+  d.textContent = "⚙ " + call.tool +
+    (r && r.ok ? " ✓" : " ✗ " + String((r && r.error) || "").slice(0, 90));
+  var log = $("chat-log");
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+
+function showProposal(call, res) {
+  var old = (res && res.old_values) || {};
+  var card = document.createElement("div");
+  card.className = "msg ai";
+  var head = document.createElement("div");
+  head.textContent = "📋 参数修改提案（未写入）：";
+  card.appendChild(head);
+  var t = document.createElement("table");
+  t.className = "kv";
+  Object.keys(call.args.values).forEach(function (k) {
+    var tr = t.insertRow(-1);
+    tr.insertCell(0).textContent = k;
+    var o = old[k];
+    tr.insertCell(1).textContent =
+      (o === null || o === undefined ? "（继承预设）" : String(o)) +
+      " → " + call.args.values[k];
+  });
+  card.appendChild(t);
+  var row = document.createElement("div");
+  row.className = "chat-chips";
+  var stat = document.createElement("span");
+  stat.className = "note";
+  function chip(label) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "chip-btn"; b.textContent = label;
+    row.appendChild(b);
+    return b;
+  }
+  var ap = chip("应用到对象");
+  var rv = chip("撤销");
+  rv.style.display = "none";
+  var ds = chip("丢弃");
+  ap.onclick = function () {
+    ap.disabled = true; ds.disabled = true;
+    stat.textContent = "写入中…";
+    bridgePayload("apply-proposal",
+                  { values: call.args.values, old_values: old });
+  };
+  ds.onclick = function () {
+    ap.disabled = true; ds.disabled = true; rv.style.display = "none";
+    stat.textContent = "已丢弃提案（未写入）。";
+  };
+  rv.onclick = function () { rv.disabled = true; stat.textContent = "回滚中…"; bridgePayload("revert-proposal", {}); };
+  row.appendChild(stat);
+  card.appendChild(row);
+  var log = $("chat-log");
+  log.appendChild(card);
+  log.scrollTop = log.scrollHeight;
+  _proposalCard = { stat: stat, revert: rv, apply: ap };
+}
+
+function proposalFeedback(d) {
+  var pc = _proposalCard;
+  if (!pc) return;
+  pc.stat.textContent = (d.ok ? "✓ " : "✗ ") + (d.note || d.error || "");
+  if (d.ok) { pc.revert.style.display = ""; pc.revert.disabled = false; }
+  else pc.apply.disabled = false;
+}
+
+function chatSend(raw) {
+  var q = (raw !== undefined ? raw : $("chat-in").value).trim();
+  if (!q || !S.token || S.chatBusy) return;
+  $("chat-in").value = "";
+  S.chat.push({ role: "user", text: q });
+  renderMsg("user", q);
+  S.chatBusy = true;
+  $("chat-send").disabled = true;
+  var wait = renderMsgEl("… 思考中（本地 codex，可能多轮调用工具）");
+  var results = [], used = 0;
+
+  function renderMsgEl(text) {
+    var d = document.createElement("div");
+    d.className = "msg ai";
+    d.textContent = text;
+    $("chat-log").appendChild(d);
+    $("chat-log").scrollTop = $("chat-log").scrollHeight;
+    return d;
+  }
+  function done() {
+    S.chatBusy = false;
+    $("chat-send").disabled = false;
+    if (wait.parentNode) wait.remove();
+  }
+  function final(j) {
+    done();
+    if (!j) return;
+    S.chat.push({ role: "ai", text: j.reply });
+    renderMsg("ai", j.reply, {
+      actions: j.actions,
+      note: j.stripped ? "已移除 " + j.stripped + " 个无来源数字（防幻觉审计）" : null,
+    });
+  }
+  function execCall(c) {
+    var p;
+    if (TOOL_SIDE[c.tool] === "server") {
+      p = api("/api/assistant/tool", { token: S.token, tool: c.tool, args: c.args });
+    } else {
+      p = new Promise(function (res) {
+        _toolWait[c.id] = res;
+        bridgePayload("tool", { call: c });
+        setTimeout(function () {
+          if (_toolWait[c.id]) {
+            var cb2 = _toolWait[c.id];
+            delete _toolWait[c.id];
+            cb2({ ok: false, error: "工具执行超时（5 分钟）" });
+          }
+        }, 300000);
+      });
+      if (c.tool === "propose_settings")
+        p = p.then(function (r) {
+          if (r && r.ok && r.result) showProposal(c, r.result);
+          return r;
+        });
+    }
+    return p.then(function (r) {
+      results.push({ id: c.id, ok: !!(r && r.ok),
+                     result: (r && (r.result !== undefined ? r.result : r.error)) || String(r) });
+      renderActivity(c, r);
+    }, function (e) {
+      results.push({ id: c.id, ok: false, result: String(e) });
+      renderActivity(c, { ok: false, error: String(e) });
+    });
+  }
+  function step(n) {
+    api("/api/assistant/step", {
+      token: S.token, question: q,
+      history: S.chat.slice(0, -1), results: results,
+    }).then(function (j) {
+      if (!j.ok) {
+        done();
+        renderMsg("ai", "AI 暂不可用：" + (j.error || "未知错误"), { err: true });
+        return;
+      }
+      if (j.type === "final") { final(j); return; }
+      var calls = j.calls || [];
+      if (!calls.length) { done(); return; }
+      var chain = Promise.resolve();
+      calls.forEach(function (c) { chain = chain.then(function () { return execCall(c); }); });
+      chain.then(function () {
+        used += calls.length;
+        if (n + 1 >= ASST_MAX_STEPS || used > ASST_MAX_CALLS) {
+          done();
+          renderMsg("ai", "已达工具调用上限——请基于上方活动结果继续提问。");
+          return;
+        }
+        step(n + 1);
+      });
+    }).catch(function (e) {
+      done();
+      renderMsg("ai", "请求失败: " + e, { err: true });
+    });
+  }
+  step(0);
+}
+
+$("chat-send").onclick = function () { chatSend(); };
+$("chat-in").addEventListener("keydown", function (ev) {
+  if (ev.key === "Enter") chatSend();
+});
+CHAT_QUICK.forEach(function (q) {
+  var b = document.createElement("button");
+  b.type = "button"; b.className = "chip-btn"; b.textContent = q;
+  b.onclick = function () { chatSend(q); };
+  $("chat-quick").appendChild(b);
+});
+
+// ---- session restore (panel reopen) -----------------------------------------
+try {
+  var saved = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
+  if (saved && saved.token) {
+    // token may be stale (server restart / eviction) — adopt quietly and let
+    // the next analyze's 400 clear it; no auto-run on restore.
+    S.token = saved.token; S.name = saved.name;
+    $("model-chip").textContent = S.name || "（未命名）";
+    ["preset-card", "slice-card"].forEach(function (id) { $(id).style.display = ""; });
+    txt("pick-status", "已恢复上次会话（" + (S.name || "?") + "）——点预设重新分析继续");
+    setStep("st1", "done"); setStep("st2", "cur");
+  }
+} catch (e) { /* corrupt storage — ignore */ }
+
+loadParamsMeta();
+</script>
+</body>
+</html>
