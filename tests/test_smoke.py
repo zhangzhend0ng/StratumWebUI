@@ -1107,7 +1107,7 @@ def main():
                            ui_header=False)
         check("T41 report endpoint lifecycle",
               st41a == 200 and j41a.get("report") is None
-              and st41b == 200 and (j41b.get("report") or {}).get("schema_version") in (2, 3)
+              and st41b == 200 and (j41b.get("report") or {}).get("schema_version") in (2, 3, 4)
               and st41c == 200 and cd41 and "stratum-report.json" in cd41
               and st41d == 400,
               "a=%s b=%s c=%s cd=%r d=%s" % (st41a, st41b, st41c, cd41, st41d))
@@ -1409,8 +1409,8 @@ def main():
         rep = an.get("report") or {}
         pb = rep.get("phase_b") or {}
         inp = rep.get("input") or {}
-        check("T62 real engine analyze schema v3 end-to-end",
-              st == 200 and rep.get("schema_version") == 3
+        check("T62 real engine analyze schema v3/v4 end-to-end",
+              st == 200 and rep.get("schema_version") in (3, 4)
               and isinstance(pb.get("safety_factor"), (int, float))
               and isinstance(pb.get("safety_factor_envelope"), dict)
               and isinstance(inp.get("layer_height_mm"), (int, float))
@@ -1568,7 +1568,7 @@ def main():
               and argv_ret[argv_ret.index("--retraction-length") + 1] == "0.8"
               and "--wipe" in argv_ret
               and "--travel-speed" in argv_ret
-              and st == 200 and rep.get("schema_version") == 3
+              and st == 200 and rep.get("schema_version") in (3, 4)
               and "retraction_length" not in (rep.get("input") or {})
               and "wipe" not in (rep.get("input") or {})
               and isinstance((rep.get("orca_suggestions") or {}).get("items"),
