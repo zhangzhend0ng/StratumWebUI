@@ -2119,13 +2119,17 @@ function renderGcodeScore(report, consoleText, meta) {
 // tuning along the attached slice gcode). Stats are plain engine numbers.
 // v0.35: same-source warnings ARE surfaced here (engine iter 878/879
 // guidance — a real non-same-source pairing read fine numbers but tuned 0);
-// thresholds mirror the engine's own console warnings (<70% coverage,
-// <50% patch footprint), nothing invented UI-side. The >2x patch line is a
-// disclosure (brim headroom), not an engine claim. Engine prose (alignment /
-// blind_spots) carries the i18n skip marker like every engine-authored
-// string; warning sentences are UI-authored and dict-translatable, with the
-// measured value in a skip span.
-function renderGcodeTune(tune, token) {
+// v0.41 (ER-7): thresholds come from the report's machine-readable
+// `thresholds` block when the engine ships one (0.27.1+/iter-886 — the
+// engine changes a threshold and these lines follow, no silent drift);
+// the literals are the old-engine fallback and mirror the engine's own
+// console warnings (<70% coverage, <50% patch footprint), nothing invented
+// UI-side. The >2x patch line is a disclosure (brim headroom), not an
+// engine claim. Engine prose (alignment / blind_spots) carries the i18n
+// skip marker like every engine-authored string; warning sentences are
+// UI-authored and dict-translatable, with the measured value in a skip
+// span.
+function renderGcodeTune(tune, token, thresholds) {
   var box = $("gcode-tune-box");
   if (!box) return;
   var body = $("gcode-tune-body");
@@ -2135,6 +2139,14 @@ function renderGcodeTune(tune, token) {
     return;
   }
   var t = tune.gcode_tune;
+  var th = (thresholds && typeof thresholds === "object") ? thresholds : {};
+  function thNum(k) {
+    var v = th[k];
+    return typeof v === "number" ? v : null;
+  }
+  var covWarn = thNum("coverage_pct_warn");
+  var pcrLow = thNum("patch_coverage_ratio_low");
+  var pcrHigh = thNum("patch_coverage_ratio_high");
   box.style.display = "";
   body.innerHTML = "";
   // -1 is the engine's "not applicable" sentinel for patch coverage when
@@ -2187,15 +2199,18 @@ function renderGcodeTune(tune, token) {
     }
     body.appendChild(w);
   }
-  if (typeof t.coverage_pct === "number" && t.coverage_pct < 70) {
-    warnLine("⚠ 应力覆盖率低于 70%：3MF 与 G-code 可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片后再挂载",
+  if (typeof t.coverage_pct === "number"
+      && t.coverage_pct < (covWarn !== null ? covWarn : 70)) {
+    warnLine("⚠ 应力覆盖率低于 " + (covWarn !== null ? covWarn : 70) + "%：3MF 与 G-code 可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片后再挂载",
              "（实测 " + num(t.coverage_pct, 1) + "%）");
   }
-  if (pcr !== -1 && typeof pcr === "number" && pcr < 0.5) {
+  if (pcr !== -1 && typeof pcr === "number"
+      && pcr < (pcrLow !== null ? pcrLow : 0.5)) {
     warnLine("⚠ G-code 打印域不足模型的一半：局部片段会被重定位到中心，对齐存疑",
              "（实测 " + num(pcr * 100, 0) + "%）");
   }
-  if (pcr !== -1 && typeof pcr === "number" && pcr > 2) {
+  if (pcr !== -1 && typeof pcr === "number"
+      && pcr > (pcrHigh !== null ? pcrHigh : 2)) {
     warnLine("⚠ G-code 打印域明显大于模型：通常是裙边/底垫；若未启用则可能是非同源件",
              "（实测 " + num(pcr, 1) + "×）");
   }

@@ -721,18 +721,31 @@ function renderRound(j, kind) {
       tr.insertCell(1).textContent = rw[1];
     });
     tb.appendChild(tbl);
-    // same-source warnings — thresholds mirror the engine's own console
-    // lines (iter 878/879); the >2x line is a brim-headroom disclosure.
+    // same-source warnings — thresholds come from the engine report's
+    // machine-readable `thresholds` block when present (engine 0.27.1/
+    // iter-886+, ER-7: the engine changes a threshold and this line
+    // follows, no silent drift); the literals below are the old-engine
+    // fallback and mirror the engine's own console lines (iter 878/879;
+    // the >2x line is a brim-headroom disclosure).
+    var th = (r && r.thresholds) || {};
+    function thNum(k) {
+      var v = th[k];
+      return typeof v === "number" ? v : null;
+    }
+    var covWarn = thNum("coverage_pct_warn");
+    var pcrLow = thNum("patch_coverage_ratio_low");
+    var pcrHigh = thNum("patch_coverage_ratio_high");
     function warn(s) {
       var d = document.createElement("div");
       d.className = "warn-line"; d.textContent = s;
       tb.appendChild(d);
     }
-    if (typeof tune.coverage_pct === "number" && tune.coverage_pct < 70)
-      warn("⚠ 应力覆盖率低于 70%：3MF/G-code 与模型可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片");
-    if (pcrValid && pcr < 0.5)
+    if (typeof tune.coverage_pct === "number"
+        && tune.coverage_pct < (covWarn !== null ? covWarn : 70))
+      warn("⚠ 应力覆盖率低于 " + (covWarn !== null ? covWarn : 70) + "%：3MF/G-code 与模型可能不是同源件（旋转/镜像不可检测），建议用同一模型重新切片");
+    if (pcrValid && pcr < (pcrLow !== null ? pcrLow : 0.5))
       warn("⚠ G-code 打印域不足模型的一半：局部片段会被重定位到中心，对齐存疑");
-    if (pcrValid && pcr > 2)
+    if (pcrValid && pcr > (pcrHigh !== null ? pcrHigh : 2))
       warn("⚠ G-code 打印域明显大于模型：通常是裙边/底垫；若未启用则可能是非同源件");
     if (tune.tuned === 0) {
       var d0 = document.createElement("div");

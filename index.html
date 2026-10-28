@@ -3272,7 +3272,8 @@ function analyze(compare, auto) {
     reconcileApplied((j.report || {}).input);
     applyHeatmap(j.heatmap || null);
     if (typeof renderGcodeTune === "function")
-      renderGcodeTune(j.gcode_tune || null, state.token);
+      renderGcodeTune(j.gcode_tune || null, state.token,
+                      (j.report || {}).thresholds || null);
     syncGcodeTuneFromResponse(j);
     renderNextStep(j.report);  // v0.27 exit card (simple mode)
     refreshHistory();
