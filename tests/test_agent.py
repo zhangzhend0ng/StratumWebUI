@@ -862,6 +862,62 @@ def test_host_dispatch():
                 sys.modules[k] = v
 
 
+# ==== §9 first-batch server tools over the REAL registry ctx ==============
+
+def _upload_sample_session(srv):
+    """上传 sample STL + 程序化跑一次分析建立基线（persist=True，真引擎）。"""
+    with open(os.path.join(ROOT, "sample", "beam_100x10x4.stl"), "rb") as fh:
+        blob = fh.read()
+    tok = "agenttest" + secrets.token_hex(4)
+    path = os.path.join(srv.WORK_DIR, tok + ".stl")
+    with open(path, "wb") as fh:
+        fh.write(blob)
+    with srv._session_lock:
+        srv._sessions[tok] = {"token": tok, "path": path, "name": "beam.stl",
+                              "is_3mf": False, "writable": None,
+                              "kind": "model"}
+    ok, rep = srv.run_programmatic_analyze(srv._sessions[tok], {}, {},
+                                           persist=True)
+    assert ok, rep
+    return tok
+
+
+def test_first_batch_tools():
+    srv = import_server()
+    srv_agent = srv.agent_tools
+    ok, payload = srv_agent.run_server_tool("get_tier_comparison", {}, None)
+    check("T9 tier 对比表返回 4 档",
+          ok and len(payload["tiers"]) == 4,
+          str(payload)[:120] if ok else payload)
+    ok, err = srv_agent.run_server_tool("what_if", {"params": {"walls": 4}},
+                                        None)
+    check("T9 what_if 无会话可操作错误", not ok and "分析会话" in err, str(err))
+    tok = _upload_sample_session(srv)
+    ok, err = srv_agent.run_server_tool("what_if",
+                                        {"params": {"no_such_param": 1}},
+                                        tok)
+    check("T9 what_if 未知参数白名单拒绝",
+          not ok and "unknown parameter" in err, str(err))
+    ok, err = srv_agent.run_server_tool("what_if",
+                                        {"params": {"infill": 999}}, tok)
+    check("T9 what_if 越界值拒绝", not ok and "超出 UI 域" in err, str(err))
+    with srv._session_lock:
+        baseline_report = srv._sessions[tok].get("last_report")
+    ok, res = srv_agent.run_server_tool("what_if",
+                                        {"env": {"fatigue_cycles": 100000}},
+                                        tok)
+    check("T9 what_if 疲劳工况真实重跑成功",
+          ok and res.get("what_if", {}).get("phase_b") is not None
+          and res.get("baseline", {}).get("phase_b") is not None,
+          str(res)[:160] if ok else str(res))
+    with srv._session_lock:
+        after_report = srv._sessions[tok].get("last_report")
+    check("T9 what_if 不覆写会话报告（persist=False）",
+          after_report is baseline_report)
+    ok, err = srv_agent.run_server_tool("read_object_config", {}, tok)
+    check("T9 read_object_config 服务端拒绝", not ok)
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
@@ -881,6 +937,7 @@ def main():
     test_e2e_fc_loop()
     test_sse_stream()
     test_host_dispatch()
+    test_first_batch_tools()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0
