@@ -177,7 +177,10 @@ def _validated_float(raw, lo, hi):
 #         one-line summary lives there, unlike stratum.exe's stdout).
 # v0.38: /api/assistant/* — page-driven agentic loop (tool registry, host
 # tools via the panel bridge, propose-then-confirm writes).
-UI_VERSION = "0.39.0"
+# 0.40.0 — 内嵌 agent 一期：/api/agent/*（注册表 + python harness + SSE/轮询
+#          事件通道）、OpenAI 兼容 FC 原生工具调用、工具面单一事实源迁入
+#          agent_tools.py（codex 文本轨冻结保留）。
+UI_VERSION = "0.40.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
