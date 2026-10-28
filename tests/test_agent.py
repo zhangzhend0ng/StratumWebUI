@@ -726,6 +726,142 @@ def test_sse_stream():
             pass
 
 
+# ==== §7 plugin-side host dispatch (stubbed orca) ===========================
+
+def test_host_dispatch():
+    tmp = tempfile.mkdtemp(prefix="stratum-agent-plugin-")
+    import shutil as _sh
+    _sh.copy(os.path.join(ROOT, "packaging", "orca-plugin",
+                          "stratum_orca.py"),
+             os.path.join(tmp, "stratum_orca.py"))
+    _sh.copy(os.path.join(ROOT, "agent_tools.py"),
+             os.path.join(tmp, "agent_tools.py"))
+    saved_modules = {k: sys.modules.pop(k, None)
+                     for k in ("orca", "stratum_server",
+                               "stratum_orca_under_test",
+                               "agent_tools_plugin_under_test")}
+    saved_path = list(sys.path)
+    sys.path.insert(0, tmp)
+    try:
+        # --- orca host stub (test_selection.py pattern) ---
+        orca_stub = types.ModuleType("orca")
+        orca_stub.script = types.SimpleNamespace(
+            ScriptPluginCapabilityBase=object)
+        orca_stub.plugin = lambda *a, **k: (lambda f: f)
+        orca_stub.base = object
+        sys.modules["orca"] = orca_stub
+
+        class FakeObject(object):
+            def __init__(self, oid, name):
+                self.oid, self.name = oid, name
+
+            def id(self):
+                return self.oid
+
+            def instance_count(self):
+                return 1
+
+            def volume_count(self):
+                return 2
+
+            def facets_count(self):
+                return 100
+
+            def config_keys(self):
+                return ["gap_infill_speed", "sparse_infill_density"]
+
+            def config_value(self, k):
+                return "20"
+
+        objects = [FakeObject(7, "件A")]
+
+        def fake_plater():
+            return types.SimpleNamespace(
+                model=lambda: types.SimpleNamespace(objects=lambda: objects),
+                selected_object_indices=lambda: [0])
+
+        orca_stub.host = types.SimpleNamespace(plater=fake_plater)
+
+        # --- plugin module ---
+        so = _load_module(os.path.join(tmp, "stratum_orca.py"),
+                          "stratum_orca_under_test")
+        replies = []
+        so._panel = types.SimpleNamespace(
+            post=lambda msg: replies.append(msg))
+
+        # --- stratum_server stub: only .agent_tools is read by the plugin ---
+        at = _load_module(os.path.join(tmp, "agent_tools.py"),
+                          "agent_tools_plugin_under_test")
+        srv_stub = types.SimpleNamespace(
+            agent_tools=at, _sessions={}, _session_lock=threading.Lock())
+        sys.modules["stratum_server"] = srv_stub
+        so._register_host_tools(srv_stub)
+
+        # 1) sync 工具 get_print_context 经注册表分派
+        so._dispatch_host_tool({"id": "c1", "tool": "get_print_context",
+                                "args": {}})
+        check("T7 sync host 工具经注册表分派",
+              replies and replies[-1]["command"] == "tool-done"
+              and replies[-1]["ok"]
+              and replies[-1]["result"]["objects"][0]["name"] == "件A",
+              str(replies[-1] if replies else None))
+        # 2) read_object_config（新工具；keys 显式）
+        so._last_pick.update({"token": "tok", "object_id": 7, "name": "件A"})
+        so._dispatch_host_tool({"id": "c5", "tool": "read_object_config",
+                                "args": {"keys": ["gap_infill_speed"]}})
+        check("T7 read_object_config 返回对象级配置",
+              replies[-1]["ok"]
+              and replies[-1]["result"]["values"] ==
+              {"gap_infill_speed": "20"},
+              str(replies[-1]))
+        # 3) propose_settings 提案结构（R3 红线：read_only=False → 提案结构）
+        so._dispatch_host_tool({"id": "c6", "tool": "propose_settings",
+                                "args": {"values": {"gap_infill_speed": 30}}})
+        res = replies[-1]
+        check("T7 propose_settings 返回提案结构",
+              res["ok"] and "old_values" in res["result"]
+              and "note" in res["result"], str(res))
+        # 4) 未知工具
+        so._dispatch_host_tool({"id": "c2", "tool": "nope", "args": {}})
+        check("T7 未知 host 工具错误回复",
+              replies[-1]["ok"] is False
+              and "unknown host tool" in replies[-1]["error"])
+        # 5) 入参校验拒绝
+        so._dispatch_host_tool({"id": "c3", "tool": "read_object_config",
+                                "args": {"keys": []}})
+        check("T7 host 入参 schema 拒绝",
+              replies[-1]["ok"] is False and "keys" in replies[-1]["error"])
+        # 6) run_analysis threaded 分支：非法选择 → 同步错误（不起线程）
+        started = []
+        orig_thread = so.threading.Thread
+
+        class _T(orig_thread):
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                started.append(a)
+
+        so.threading.Thread = _T
+        orca_stub.host = types.SimpleNamespace(
+            plater=lambda: (_ for _ in ()).throw(ValueError("无选中对象")))
+        so._dispatch_host_tool({"id": "c4", "tool": "run_analysis",
+                                "args": {}})
+        so.threading.Thread = orig_thread
+        check("T7 run_analysis 非法选择→同步错误回复（未起线程）",
+              replies[-1]["ok"] is False and not started,
+              str(replies[-1] if replies else None))
+        # 7) 版本号
+        check("T7 插件版本 0.10.0",
+              re.search(r'^# version = "0\.10\.0"$',
+                        open(os.path.join(ROOT, "packaging", "orca-plugin",
+                                          "stratum_orca.py"),
+                             encoding="utf-8").read(), re.M) is not None)
+    finally:
+        sys.path[:] = saved_path
+        for k, v in saved_modules.items():
+            if v is not None:
+                sys.modules[k] = v
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
@@ -744,6 +880,7 @@ def main():
     test_agent_start_gates()
     test_e2e_fc_loop()
     test_sse_stream()
+    test_host_dispatch()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0

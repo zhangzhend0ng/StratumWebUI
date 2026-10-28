@@ -17,6 +17,7 @@ import importlib.util
 import shutil
 import sys
 import tempfile
+import threading
 import types
 import zipfile
 from pathlib import Path
@@ -38,14 +39,24 @@ def check(name, fn):
 # ---- import the plugin entry with a stubbed orca ---------------------------
 TMP = Path(tempfile.mkdtemp(prefix="stratum-selection-test-"))
 shutil.copy(HERE / "stratum_orca.py", TMP / "stratum_orca.py")
+# v0.10: host dispatch is registry-driven — the harness loads the registry
+# (repo-root agent_tools.py) into a stub stratum_server module and registers
+# the plugin's handlers, exactly like _run_server does in production.
+shutil.copy(HERE.parent.parent / "agent_tools.py", TMP / "agent_tools.py")
 _orca_stub = types.ModuleType("orca")
 _orca_stub.script = types.SimpleNamespace(ScriptPluginCapabilityBase=object)
 _orca_stub.plugin = lambda *a, **k: (lambda f: f)
 _orca_stub.base = object
 sys.modules["orca"] = _orca_stub
+_at_spec = importlib.util.spec_from_file_location("agent_tools_selection_test", TMP / "agent_tools.py")
+_at = importlib.util.module_from_spec(_at_spec)
+_at_spec.loader.exec_module(_at)
+sys.modules["stratum_server"] = types.SimpleNamespace(
+    agent_tools=_at, _sessions={}, _session_lock=threading.Lock())
 _spec = importlib.util.spec_from_file_location("stratum_orca_uut", TMP / "stratum_orca.py")
 mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mod)
+mod._register_host_tools(sys.modules["stratum_server"])
 
 
 # ---- fake host --------------------------------------------------------------

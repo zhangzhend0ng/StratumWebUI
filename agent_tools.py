@@ -254,7 +254,12 @@ def dispatch_host(call, reply):
               error="host tool %s 未注册实现（插件侧未启动？）" % name)
         return
     if decl.host_mode == "threaded":
-        decl.handler(tid, args, reply)  # owns its async reply
+        try:
+            decl.handler(tid, args, reply)  # owns its async reply
+        except Exception as exc:  # noqa: BLE001 - sync-phase failure (e.g.
+            # run_analysis's busy guard / invalid selection) must reach the
+            # model as a tool error, never escape onto the UI thread
+            reply(tid, False, error="%s: %s" % (type(exc).__name__, exc))
         return
     try:
         reply(tid, True, result=decl.handler(args))

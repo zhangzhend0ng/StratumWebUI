@@ -6,10 +6,30 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.9.1"
+# version = "0.10.0"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.10.0 (embedded agent, phase 1):
+  - the agent tool surface is now a REGISTRY (app/agent_tools.py, single
+    source of truth): one declaration generates the FC tools array, the
+    frozen codex text-protocol listing, argument validators and the
+    dispatch metadata. _dispatch_host_tool's if-elif is gone — a generic
+    registry-driven executor with plugin-injected host handlers (sync on
+    the UI thread / threaded for run_analysis) took its place.
+  - the conversation LOOP moved into the python harness (app/
+    agent_harness.py): OpenAI-compatible backends ride NATIVE function
+    calling over /api/agent/start + the /api/agent/events channel (SSE,
+    poll fallback, one-time tickets + cursor replay); host tool calls
+    round-trip harness→event→page bridge→on_message→tool-done→POST
+    /api/agent/host-result (spec §3 v2 direction). The codex text track
+    and its old endpoints stay FROZEN (page picks the track by backend).
+  - new tools: what_if (real engine rerun with param/service overrides,
+    never persists over the user's session), get_tier_comparison,
+    read_object_config (host-side object-level config read). The page's
+    propose_settings anti-dither gate became per_turn_call_cap (enforced
+    harness-side).
 
 v0.9.1 (selected-model check fixes):
   - the write paths (写回对象 / AI proposal apply+revert / propose_settings)
@@ -328,12 +348,20 @@ def _run_server():
         # StratumWebUI\logs) so the two never rotate each other's files.
         os.environ.setdefault("STRATUM_UI_LOG_DIR",
                               os.path.join(_HERE, "logs"))
+        # agent modules ride next to server.py in app/ (repo root in dev) —
+        # server.py's plain `import agent_tools` needs the dir on sys.path
+        # (the exec_module loader does not add it).
+        if _APP_DIR not in sys.path:
+            sys.path.append(_APP_DIR)
         spec = importlib.util.spec_from_file_location("stratum_server", _SERVER_PY)
         module = importlib.util.module_from_spec(spec)
         sys.modules["stratum_server"] = module
         spec.loader.exec_module(module)
         module._setup_file_logging()
         module._sweep_orphan_workdirs()
+        # register the HOST tool handlers into the registry (injection — the
+        # registry never imports plugin symbols; red line R2)
+        _register_host_tools(module)
         # Port 0 = kernel-picked; the actual port is read back below. Not
         # going through module main(): it prints banners, sets a console
         # title and arms a browser timer — all standalone-process concerns.
@@ -1217,53 +1245,121 @@ def _analysis_tool_worker(call_id, payload, filename, object_idx, picked_id,
         reply(False, error="%s: %s" % (type(exc).__name__, exc))
 
 
+def _register_host_tools(srv_module):
+    """Plug the plugin's host handlers into the registry (spec §4.5): the
+    if-elif dispatch is gone — _dispatch_host_tool below is a generic,
+    registry-driven executor. Handlers:
+      sync(args) -> result            (UI-thread read, dispatcher replies)
+      threaded(tid, args, reply)      (UI thread collects, owns async reply)
+    """
+    reg = getattr(srv_module, "agent_tools", None)
+    if reg is None:
+        return
+    reg.register_host_handler("get_print_context", "sync",
+                              lambda args: _print_context())
+    reg.register_host_handler("run_analysis", "threaded", _host_run_analysis)
+    reg.register_host_handler("propose_settings", "sync",
+                              _host_propose_settings)
+    reg.register_host_handler("read_object_config", "sync",
+                              _host_read_object_config)
+
+
+def _agent_registry():
+    srv = sys.modules.get("stratum_server")
+    return getattr(srv, "agent_tools", None) if srv is not None else None
+
+
 def _dispatch_host_tool(call):
-    """UI thread entry for the AI assistant's host tools."""
-    call = call or {}
-    tid = str(call.get("id") or "?")
-    name = call.get("tool")
-    args = call.get("args") if isinstance(call.get("args"), dict) else {}
+    """UI thread entry for the AI assistant's host tools — generic executor,
+    registry-driven since v0.10 (no per-tool branches here)."""
+    reg = _agent_registry()
+    if reg is None:
+        _tool_reply(str((call or {}).get("id") or "?"), False,
+                    error="server module not loaded — host tools unavailable")
+        return
+    reg.dispatch_host(call, _tool_reply)
+
+
+def _host_propose_settings(args):
+    """sync host handler (old elif body, unchanged semantics)."""
+    values = args.get("values")
+    if not isinstance(values, dict) or not values:
+        raise ValueError("propose_settings 需要 args.values 参数字典")
+    if not _last_pick.get("token"):
+        raise ValueError("还没有选取/分析会话——先 run_analysis")
+    # v0.9.1: read current values from the PICKED object (by id), not from
+    # whatever is currently selected — the diff must describe the object the
+    # proposal will be applied to.
+    _idx, obj, _objs = _picked_object_index()
+    keys = list(obj.config_keys())
+    old = {k: (obj.config_value(k) if k in keys else None) for k in values}
+    return {
+        "old_values": old,
+        "note": "提案已生成（只读比对，未写入）；用户在面板确认后才应用"}
+
+
+def _host_run_analysis(tid, args, reply):
+    """threaded host handler (old elif body, unchanged semantics): UI thread
+    collects the payload, the worker uploads + analyzes and replies."""
+    if _picking.is_set():
+        raise ValueError("一项选取/分析已在进行中——稍候再试")
+    _picking.set()
     try:
-        if name == "get_print_context":
-            _tool_reply(tid, True, result=_print_context())
-        elif name == "run_analysis":
-            if _picking.is_set():
-                raise ValueError("一项选取/分析已在进行中——稍候再试")
-            _picking.set()
-            try:
-                object_idx, obj, note0 = _select_object()
-                picked_id = obj.id()
-                payload, filename, note1 = _collect_upload_payload(obj, object_idx)
-            except Exception:
-                _picking.clear()
-                raise
-            threading.Thread(
-                target=_analysis_tool_worker, daemon=True,
-                name="stratum-orca-ai-run",
-                args=(tid, payload, filename, object_idx, picked_id,
-                      "；".join(x for x in (note0, note1) if x))).start()
-        elif name == "propose_settings":
-            values = args.get("values")
-            if not isinstance(values, dict) or not values:
-                raise ValueError("propose_settings 需要 args.values 参数字典")
-            if not _last_pick.get("token"):
-                raise ValueError("还没有选取/分析会话——先 run_analysis")
-            # v0.9.1: read current values from the PICKED object (by id),
-            # not from whatever is currently selected — the diff must
-            # describe the object the proposal will be applied to.
-            _idx, obj, _objs = _picked_object_index()
-            keys = list(obj.config_keys())
-            old = {k: (obj.config_value(k) if k in keys else None)
-                   for k in values}
-            _tool_reply(tid, True, result={
-                "old_values": old,
-                "note": "提案已生成（只读比对，未写入）；用户在面板确认后才应用"})
-        else:
-            raise ValueError("unknown host tool: %r" % name)
-    except Exception as exc:  # noqa: BLE001 - tool result line
-        import traceback
-        traceback.print_exc()
-        _tool_reply(tid, False, error="%s: %s" % (type(exc).__name__, exc))
+        object_idx, obj, note0 = _select_object()
+        picked_id = obj.id()
+        payload, filename, note1 = _collect_upload_payload(obj, object_idx)
+    except Exception:
+        _picking.clear()
+        raise
+    threading.Thread(
+        target=_analysis_tool_worker, daemon=True,
+        name="stratum-orca-ai-run",
+        args=(tid, payload, filename, object_idx, picked_id,
+              "；".join(x for x in (note0, note1) if x))).start()
+
+
+def _default_config_keys():
+    """Conversation-relevant default keys for read_object_config: the last
+    report's suggestion parameters + engine-rejected keys (capped at 24 —
+    a full object config is hundreds of keys, noise for the model)."""
+    keys = []
+    module = sys.modules.get("stratum_server")
+    report = None
+    if module is not None and _last_pick.get("token"):
+        try:
+            with module._session_lock:
+                sess = module._sessions.get(_last_pick["token"]) or {}
+                report = sess.get("last_report")
+        except AttributeError:
+            report = None
+    if report:
+        for it in (((report.get("orca_suggestions") or {}).get("items"))
+                   or []):
+            k = it.get("parameter")
+            if k and k not in keys:
+                keys.append(k)
+        keys += [k for k in _parse_rejected_keys(report) if k not in keys]
+    return keys[:24]
+
+
+def _host_read_object_config(args):
+    """sync host handler (v0.10): current OBJECT-LEVEL config values of the
+    pick-time object (by id). Keys default to the report-relevant slice;
+    null = no object override (inherits the preset) — the same semantics
+    propose_settings' diff uses."""
+    if not _last_pick.get("token"):
+        raise ValueError("还没有选取/分析会话——先 run_analysis")
+    keys = args.get("keys")
+    if not isinstance(keys, list) or not keys \
+            or not all(isinstance(k, str) for k in keys):
+        keys = _default_config_keys()
+        if not keys:
+            raise ValueError("没有默认可读的键（还没有分析报告）——显式传 keys")
+    _idx, obj, _objs = _picked_object_index()
+    have = set(obj.config_keys())
+    return {"values": {k: (obj.config_value(k) if k in have else None)
+                       for k in keys},
+            "note": "null=该键无对象级覆盖（继承预设）；值来自宿主当前状态"}
 
 
 class StratumPanel(orca.script.ScriptPluginCapabilityBase):
