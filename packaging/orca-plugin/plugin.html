@@ -470,11 +470,22 @@ window.addEventListener("message", function (ev) {
     adoptSession(d.session, d.note, d.suppress_auto_analyze);
     return;
   }
-  if (d.type === "stratum-orca-tool-result" && d.id && _toolWait[d.id]) {
-    var cb = _toolWait[d.id];
-    delete _toolWait[d.id];
-    cb({ ok: !!d.ok, result: d.result, error: d.error });
-    return;
+  if (d.type === "stratum-orca-tool-result" && d.id) {
+    if (_agentSt && _agentCalls[d.id]) {
+      // FC track: harness owns the wait — relay the result back via HTTP;
+      // the activity line comes from the harness's tool_done event only.
+      delete _agentCalls[d.id];
+      api("/api/agent/host-result", { conv_id: _agentSt.id, id: d.id,
+                                      ok: !!d.ok, result: d.result,
+                                      error: d.error });
+      return;
+    }
+    if (_toolWait[d.id]) {
+      var cb = _toolWait[d.id];
+      delete _toolWait[d.id];
+      cb({ ok: !!d.ok, result: d.result, error: d.error });
+      return;
+    }
   }
   if (d.type === "stratum-orca-gcode-progress" && typeof d.bytes === "number") {
     // 宿主轮询导出文件大小时逐次回传（增量即进度）；gcode-done 到来前持续刷新
@@ -1226,7 +1237,9 @@ function proposalFeedback(d) {
   } else pc.apply.disabled = false;
 }
 
-function chatSend(raw) {
+// v0.10: renamed — the codex text-track loop keeps this body VERBATIM
+// (frozen track); the dispatcher below picks it only for backend=codex.
+function legacyChatSend(raw) {
   var q = (raw !== undefined ? raw : $("chat-in").value).trim();
   // v0.9: no token needed to TALK — the assistant can start the flow itself
   // (run_analysis picks from the plate and the pick-done relay sets S.token);
@@ -1345,6 +1358,164 @@ function chatSend(raw) {
     });
   }
   step(0);
+}
+
+// ---- v0.10 agent FC track: the loop lives in the python harness; the page
+// is a thin client — submit the turn, stream events, relay host calls. The
+// codex text track (legacyChatSend) stays frozen for backend=codex.
+function chatSend(raw) {
+  var q = (raw !== undefined ? raw : $("chat-in").value).trim();
+  if (!q || S.chatBusy) return;
+  if (S.chatBackend === "openai") {
+    $("chat-in").value = "";
+    agentSend(q);
+  } else {
+    legacyChatSend(raw);
+  }
+}
+
+var AGENT_POLL_MS = 1500;
+var _agentSt = null;   // {id, ticket, cursor, done, es, esOk, pollTimer, wait}
+var _agentCalls = {};  // host call id -> call（页面只中继；超时归 harness）
+
+function _agentOpen(q) {
+  S.chat.push({ role: "user", text: q });
+  renderMsg("user", q);
+  S.chatBusy = true;
+  $("chat-send").disabled = true;
+  var wait = document.createElement("div");
+  wait.className = "msg ai";
+  var sp = document.createElement("span"); sp.className = "spin";
+  wait.appendChild(sp);
+  wait.appendChild(document.createTextNode("思考中（引擎 agent，可能多轮调用工具）…"));
+  $("chat-log").appendChild(wait);
+  $("chat-log").scrollTop = $("chat-log").scrollHeight;
+  return wait;
+}
+
+function agentSend(q) {
+  var wait = _agentOpen(q);
+  api("/api/agent/start", { token: S.token, question: q,
+                            history: S.chat.slice(0, -1) })
+    .then(function (j) {
+      if (!j.ok) {
+        renderMsg("ai", "AI 暂不可用：" + (j.error || "未知错误"), { err: true });
+        _agentDone(wait);
+        return;
+      }
+      _agentSt = { id: j.conv_id, ticket: j.ticket, cursor: 0, done: false,
+                   es: null, esOk: false, pollTimer: 0, wait: wait };
+      _agentStream();
+    })
+    .catch(function (e) {
+      renderMsg("ai", "请求失败: " + e, { err: true });
+      _agentDone(wait);
+    });
+}
+
+function _agentDone(wait) {
+  if (wait && wait.parentNode) wait.remove();
+  if (!_agentSt) { S.chatBusy = false; $("chat-send").disabled = false; return; }
+  S.chatBusy = false;
+  $("chat-send").disabled = false;
+  _actFinish();
+  if (_agentSt.es) { var es = _agentSt.es; _agentSt.es = null; es.close(); }
+  if (_agentSt.pollTimer) clearTimeout(_agentSt.pollTimer);
+  _agentSt = null;
+  _agentCalls = {};
+}
+
+// SSE first; any failure (webview without EventSource, drop, error) falls
+// back to polling — same ticket+cursor channel, identical events (spec §10).
+function _agentStream() {
+  if (typeof EventSource === "undefined") { _agentPoll(); return; }
+  var es = new EventSource("/api/agent/events?ticket=" +
+    encodeURIComponent(_agentSt.ticket) + "&cursor=" + _agentSt.cursor);
+  _agentSt.es = es;
+  es.onmessage = function (m) {
+    if (!_agentSt) return;
+    _agentSt.esOk = true;
+    try { _agentHandle(JSON.parse(m.data)); } catch (e) { /* bad frame: skip */ }
+  };
+  es.onerror = function () {
+    if (!_agentSt) return;
+    var wasOpen = _agentSt.esOk;
+    es.close();
+    _agentSt.es = null;
+    if (!wasOpen) { _agentPoll(); return; }   // SSE unusable here → poll
+    _agentReconnect(0);                        // mid-stream drop → resubscribe
+  };
+}
+
+function _agentReconnect(attempt) {
+  if (!_agentSt || _agentSt.done) return;
+  if (attempt > 5) { _agentPoll(); return; }
+  api("/api/agent/resubscribe", { conv_id: _agentSt.id })
+    .then(function (j) {
+      if (!_agentSt || _agentSt.done) return;
+      if (!j.ok) { _agentReconnect(attempt + 1); return; }
+      _agentSt.ticket = j.ticket;
+      _agentStream();
+    })
+    .catch(function () {
+      if (_agentSt && !_agentSt.done) _agentReconnect(attempt + 1);
+    });
+}
+
+function _agentPoll() {
+  if (!_agentSt || _agentSt.done) return;
+  fetch("/api/agent/events?ticket=" + encodeURIComponent(_agentSt.ticket) +
+        "&cursor=" + _agentSt.cursor + "&poll=1")
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!_agentSt) return;
+      if (j.ok) {
+        (j.events || []).forEach(function (ev) { _agentHandle(ev); });
+        _agentSt.cursor = j.cursor || _agentSt.cursor;
+        _agentSt.ticket = j.next_ticket || _agentSt.ticket;
+        if (j.done && !(j.events || []).length) return; // turn over
+      }
+      _agentSt.pollTimer = setTimeout(_agentPoll, AGENT_POLL_MS);
+    })
+    .catch(function () {
+      if (_agentSt && !_agentSt.done)
+        _agentSt.pollTimer = setTimeout(_agentPoll, AGENT_POLL_MS * 2);
+    });
+}
+
+function _agentHandle(ev) {
+  if (!_agentSt) return;
+  if (ev.seq && ev.seq <= _agentSt.cursor) return; // replay guard
+  if (ev.seq) _agentSt.cursor = ev.seq;
+  if (ev.type === "tool_done") {
+    // harness 的 tool_done 是唯一活性来源（host-result 分支不再重复记）
+    renderActivity({ id: ev.call_id, tool: ev.tool, args: {} },
+                   ev.ok ? { ok: true } : { ok: false, error: ev.error });
+    if (ev.tool === "propose_settings" && ev.ok && ev.result)
+      showProposal(_agentCalls[ev.call_id] ||
+                   { args: { values: ev.result.old_values || {} } }, ev.result);
+    return;
+  }
+  if (ev.type === "host_call" && ev.call && ev.call.id) {
+    _agentCalls[ev.call.id] = ev.call;
+    bridgePayload("tool", { call: ev.call }); // 现状链路（顶文档→on_message）
+    return;
+  }
+  if (ev.type === "final") {
+    S.chat.push({ role: "ai", text: ev.reply });
+    renderMsg("ai", ev.reply, {
+      actions: ev.actions,
+      note: ev.stripped ? "已移除 " + ev.stripped + " 个无来源数字（防幻觉审计）" : null,
+    });
+    _agentDone(_agentSt && _agentSt.wait);
+    return;
+  }
+  if (ev.type === "error") {
+    renderMsg("ai", "AI 暂不可用：" + (ev.error || "未知错误"), { err: true });
+    _agentDone(_agentSt && _agentSt.wait);
+    return;
+  }
+  if (ev.type === "turn_end") { _agentDone(_agentSt && _agentSt.wait); }
 }
 
 $("chat-send").onclick = function () { chatSend(); };
