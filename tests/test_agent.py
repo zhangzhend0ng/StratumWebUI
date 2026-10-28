@@ -228,6 +228,13 @@ def start_server_for_agent(extra_env=None):
                 "STRATUM_UI_LOG_DIR": os.path.join(tempfile.gettempdir(),
                                                     "stratum-agent-test-logs"),
                 "STRATUM_UI_LOG_OPEN": "0"})
+    # isolate from THIS process's unit-test chat settings (import_server
+    # pins STRATUM_UI_CHAT_SETTINGS globally — an inherited openai backend
+    # would flip the degrade gates): default to a nonexistent path, which
+    # _load_chat_settings answers with the codex-backend defaults.
+    if not (extra_env or {}) .get("STRATUM_UI_CHAT_SETTINGS"):
+        env["STRATUM_UI_CHAT_SETTINGS"] = os.path.join(
+            tempfile.gettempdir(), "stratum-agent-nonexistent.json")
     env.update(extra_env or {})
     proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "server.py")],
                             env=env, stdout=subprocess.DEVNULL,
@@ -512,6 +519,213 @@ def test_lock_boundary(ah, at):
         srv.urllib.request.urlopen = orig
 
 
+# ==== §6 end-to-end FC loop over HTTP (stub OpenAI) ==========================
+
+class _StubOpenAI(object):
+    """Serves /chat/completions with a scripted FC sequence."""
+
+    def __init__(self, script=None):
+        self.calls = []
+        self.script = script or [
+            {"choices": [{"message": {
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": "t1", "type": "function",
+                                "function": {"name": "get_tier_comparison",
+                                             "arguments": "{}"}}]}}]},
+            {"choices": [{"message": {
+                "role": "assistant",
+                "content": "安全档壁多填充高，最稳。\nACTIONS: 写回"}}]},
+        ]
+
+    def handle(self, body):
+        self.calls.append(body)
+        return self.script.pop(0) if self.script else \
+            {"choices": [{"message": {"role": "assistant", "content": "结束"}}]}
+
+
+def _serve_stub(stub, port):
+    import http.server
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(n))
+            out = json.dumps(stub.handle(body)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _write_chat_settings(fname, api_base):
+    path = os.path.join(tempfile.gettempdir(), fname)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"backend": "openai", "codex_bin": "", "cli_args": "",
+                   "model": "stub-model", "api_base": api_base,
+                   "api_key": "sk-test", "extra_json": ""}, fh)
+    return path
+
+
+def test_agent_start_gates():
+    proc = port = None
+    try:
+        proc, port = start_server_for_agent()
+        # 未配 OpenAI 后端（默认 codex 无 CLI）→ degrade，不建会话
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/start",
+                     body=json.dumps({"question": "hi"}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        r = conn.getresponse()
+        body = json.loads(r.read())
+        check("T6 start 无后端 degrade",
+              r.status == 200 and body.get("ok") is False
+              and body.get("degrade") is True and body.get("error"))
+        # 空问题 400
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/start",
+                     body=json.dumps({"question": "  "}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        r = conn.getresponse()
+        check("T6 start 空问题 400", r.status == 400)
+        # 缺 UI 头 403
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/start",
+                     body=json.dumps({"question": "hi"}),
+                     headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        check("T6 start 缺 UI 头 403", r.status == 403)
+    finally:
+        if proc:
+            proc.kill()
+
+
+def _poll_turn(port, ticket, cursor=0, timeout=20):
+    events = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+        c.request("GET", "/api/agent/events?ticket=%s&cursor=%d&poll=1"
+                  % (ticket, cursor))
+        j = json.loads(c.getresponse().read())
+        if not j.get("ok"):
+            return events, j, ticket, cursor
+        events += j.get("events") or []
+        cursor = j.get("cursor") or cursor
+        ticket = j.get("next_ticket") or ticket
+        if j.get("done") and not j.get("events"):
+            break
+        time.sleep(0.3)
+    return events, {"ok": True}, ticket, cursor
+
+
+def test_e2e_fc_loop():
+    stub = _StubOpenAI()
+    stub_port = free_port()
+    _serve_stub(stub, stub_port)
+    settings = _write_chat_settings(
+        "stratum-agent-e2e-chat.json", "http://127.0.0.1:%d/v1" % stub_port)
+    proc = port = None
+    try:
+        proc, port = start_server_for_agent(
+            {"STRATUM_UI_CHAT_SETTINGS": settings})
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+        conn.request("POST", "/api/agent/start",
+                     body=json.dumps({"question": "安全档和均衡档差在哪"}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        r = conn.getresponse()
+        start = json.loads(r.read())
+        check("T6 start ok+ticket",
+              start.get("ok") and start.get("conv_id") and start.get("ticket"))
+        events, j, _t, _c = _poll_turn(port, start["ticket"])
+        types = [e["type"] for e in events]
+        check("T6 轮询事件含 tool_done+final+turn_end",
+              "tool_done" in types and "final" in types and "turn_end" in types,
+              str(types))
+        fin = [e for e in events if e["type"] == "final"][0]
+        check("T6 final 动作解析", fin["actions"] == ["apply"], str(fin))
+        check("T6 stub 收到 FC tools 数组",
+              stub.calls and stub.calls[0].get("tools")
+              and any(t["function"]["name"] == "get_tier_comparison"
+                      for t in stub.calls[0]["tools"]))
+        # resubscribe 换新票（游标补拉从 0 重放）
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/resubscribe",
+                     body=json.dumps({"conv_id": start["conv_id"]}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        j2 = json.loads(conn.getresponse().read())
+        check("T6 resubscribe ok", j2.get("ok") and j2.get("ticket"))
+        if j2.get("ok"):
+            replay, _j3, _t2, _c2 = _poll_turn(port, j2["ticket"], cursor=0,
+                                               timeout=5)
+            check("T6 游标补拉重放全量事件", len(replay) == len(events),
+                  "%d vs %d" % (len(replay), len(events)))
+    finally:
+        if proc:
+            proc.kill()
+        try:
+            os.remove(settings)
+        except OSError:
+            pass
+
+
+def test_sse_stream():
+    """SSE: 逐帧 data: 到达，done 后连接关闭（spike 的 HTTP 层验证）。"""
+    stub = _StubOpenAI(script=[{"choices": [{"message": {
+        "role": "assistant", "content": "直接回答：稳。"}}]}])
+    stub_port = free_port()
+    _serve_stub(stub, stub_port)
+    settings = _write_chat_settings(
+        "stratum-agent-sse-chat.json", "http://127.0.0.1:%d/v1" % stub_port)
+    proc = port = None
+    chunk = b""
+    try:
+        proc, port = start_server_for_agent(
+            {"STRATUM_UI_CHAT_SETTINGS": settings})
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+        conn.request("POST", "/api/agent/start",
+                     body=json.dumps({"question": "q"}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        start = json.loads(conn.getresponse().read())
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+        c.request("GET", "/api/agent/events?ticket=%s&cursor=0"
+                  % start["ticket"])
+        r = c.getresponse()
+        check("T6 SSE Content-Type",
+              "text/event-stream" in (r.getheader("Content-Type") or ""))
+        buf = b""
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            chunk = r.read(256)
+            if not chunk:
+                break
+            buf += chunk
+            # keep draining past turn_end until the server closes the stream
+        text = buf.decode("utf-8", "replace")
+        check("T6 SSE 收到 data 帧(final)",
+              "data:" in text and '"final"' in text, text[:200])
+        check("T6 SSE done 后服务端断流", not chunk, "stream still open")
+    finally:
+        if proc:
+            proc.kill()
+        try:
+            os.remove(settings)
+        except OSError:
+            pass
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
@@ -527,6 +741,9 @@ def main():
     test_turn_host_timeout(ah, at)
     test_turn_audit(ah, at)
     test_lock_boundary(ah, at)
+    test_agent_start_gates()
+    test_e2e_fc_loop()
+    test_sse_stream()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0

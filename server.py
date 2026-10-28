@@ -707,6 +707,32 @@ def _openai_complete_fc(messages, tools):
     return msg
 
 
+def _agent_tool_ctx(token):
+    """Visibility ctx: which optional tools make sense for this session."""
+    ctx = {"gcode_attached": False, "has_report": False}
+    if token:
+        with _session_lock:
+            sess = _sessions.get(token)
+            if sess:
+                ctx["gcode_attached"] = bool(sess.get("gcode_path"))
+                ctx["has_report"] = bool(sess.get("last_report"))
+    return ctx
+
+
+def _agent_deps():
+    """Wire the harness to server capabilities (injection, not import —
+    red line R2 keeps the dependency direction one-way)."""
+    return agent_harness.TurnDeps(
+        model_fn=_openai_complete_fc,
+        tools_array_fn=agent_tools.fc_tools_array,
+        tool_ctx_fn=_agent_tool_ctx,
+        facts_fn=_tool_get_analysis,
+        audit_fn=_audit_reply,
+        actions_fn=_parse_actions,
+        run_server_tool=agent_tools.run_server_tool,
+        tools_lookup=agent_tools.TOOLS)
+
+
 def _chat_prompt(question, history, facts):
     convo = ""
     for h in (history or [])[-CHAT_HISTORY_TURNS:]:
@@ -2068,9 +2094,63 @@ def validated_env(env):
     return out
 
 
+def run_programmatic_analyze(session, params, env, locks=(), persist=False):
+    """v0.40: programmatic single analyze for agent tools (what_if). Same
+    argv builder, cancellable runner, marker and schema gates as the HTTP
+    path. persist=False (the what_if contract) leaves the session's
+    last_report and history untouched — a hypothetical rerun must never
+    masquerade as the user's analysis. Returns (True, report) or
+    (False, error_text)."""
+    for name in params:
+        if name not in PARAM_FLAGS:
+            return False, "unknown parameter: %r" % name
+    env = validated_env(env or {})
+    report_path = os.path.join(WORK_DIR, "%s.a%s.agent.json" % (
+        session["token"], secrets.token_hex(4)))
+    args = build_analyze_args(session["path"], params, list(locks), False,
+                              report_path, env=env)
+    with _inflight_lock:
+        _batch_cancel.discard(session["token"])
+    try:
+        rc, out, err = run_analyze_with_fallback(
+            args, run=lambda a: run_analyze_cancelable(a, session["token"]))
+    except _BusyError:
+        return False, "引擎忙（排队已满）——稍等片刻再试 what_if"
+    if rc == CANCELLED_RC:
+        return False, "已取消"
+    if rc != 0:
+        marker = load_report_marker(report_path)
+        if marker is not None:
+            return False, refusal_text(marker)
+        if rc == 124:
+            return False, "分析超时（180s）——模型过大，what_if 无法完成"
+        return False, "stratum.exe 失败 (rc=%d): %s" % (
+            rc, err.decode("utf-8", "replace")[:300])
+    try:
+        with open(report_path, "r", encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return False, "报告解析失败: %s" % exc
+    if isinstance(report, dict) and report.get("status") in REPORT_MARKER_STATUSES:
+        return False, refusal_text(report)
+    if not ALLOW_ANY_SCHEMA and not schema_supported(report):
+        return False, "引擎报告 schema_version 不受支持"
+    if persist:
+        with _session_lock:
+            hist = session.setdefault("history", [])
+            hist.append({"seq": session.get("hist_seq", 0) + 1,
+                         "ts": time.strftime("%H:%M:%S"), "compare": False,
+                         "orient": False, "params": params, "env": env,
+                         "locks": [], "summary": _history_summary(report)})
+            session["hist_seq"] = hist[-1]["seq"]
+            session["last_report"] = report
+            del hist[:-MAX_HISTORY]
+    return True, report
+
+
 # v0.40: registry ctx — the capabilities agent_tools' server handlers may
 # use. Injection (not import-from-agent) keeps the dependency direction
-# one-way. run_analysis (programmatic engine rerun) joins in v0.40 T6.
+# one-way. run_analysis is the programmatic engine rerun above (what_if).
 agent_tools.init_server_ctx({
     "sessions": _sessions,
     "session_lock": _session_lock,
@@ -2079,6 +2159,7 @@ agent_tools.init_server_ctx({
     "presets": lambda: presets_for(MATERIALS, PATTERNS),
     "param_meta": lambda: PARAM_META,
     "validate_env": validated_env,
+    "run_analysis": run_programmatic_analyze,
 })
 
 
@@ -2712,6 +2793,8 @@ class StratumHandler(BaseHTTPRequestHandler):
                 self._assistant_step()
             elif path == "/api/assistant/tool":
                 self._assistant_tool()
+            elif path == "/api/agent/start":
+                self._agent_start()
             elif path == "/api/agent/resubscribe":
                 self._agent_resubscribe()
             elif path == "/api/agent/host-result":
@@ -4095,6 +4178,41 @@ class StratumHandler(BaseHTTPRequestHandler):
         resolved = conv.resolve_host(str(body.get("id")), bool(body.get("ok")),
                                      body.get("result"), body.get("error"))
         _send_json(self, 200, {"ok": resolved})
+
+    def _agent_start(self):
+        """v0.40: submit one conversation turn to the python harness (FC
+        track). Degrade contract mirrors the old endpoints: model problems
+        answer 200 + ok:false + degrade, never a blocked workflow."""
+        body = _read_json_body(self)
+        q = body.get("question")
+        if not isinstance(q, str) or not q.strip():
+            raise ValueError("question 必须是非空字符串")
+        if len(q) > CHAT_QUESTION_MAX:
+            raise ValueError("question 过长（≤%d 字）" % CHAT_QUESTION_MAX)
+        if not CHAT_ENABLED:
+            raise ValueError("AI 对话已被 STRATUM_CHAT=0 关闭")
+        history = body.get("history")
+        if history is not None and (
+                not isinstance(history, list)
+                or any(not isinstance(h, dict) for h in history)):
+            raise ValueError("history 需为 {role,text} 列表")
+        s = _load_chat_settings()
+        if s.get("backend") != "openai" or not (
+                (s.get("api_base") or "").strip()
+                or (s.get("api_key") or "").strip()):
+            _send_json(self, 200, {"ok": False, "degrade": True,
+                                   "error": "内嵌 agent 轨需要 OpenAI 兼容 API"
+                                            "（⚙ 设置里配置并保存）；本地 codex 后端"
+                                            "继续走原对话循环"})
+            return
+        conv = agent_harness.HARNESS_STORE.create(q, body.get("token"), history)
+        agent_harness.HARNESS_STORE.sweep()
+        threading.Thread(
+            target=agent_harness.run_turn, daemon=True,
+            name="stratum-agent-turn",
+            args=(conv, _agent_deps())).start()
+        _send_json(self, 200, {"ok": True, "conv_id": conv.id,
+                               "ticket": agent_harness.HARNESS_STORE.issue_ticket(conv.id)})
 
     def log_message(self, fmt, *args):
         pass  # keep the console clean; use _log for real events
