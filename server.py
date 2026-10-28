@@ -180,7 +180,11 @@ def _validated_float(raw, lo, hi):
 # 0.40.0 — 内嵌 agent 一期：/api/agent/*（注册表 + python harness + SSE/轮询
 #          事件通道）、OpenAI 兼容 FC 原生工具调用、工具面单一事实源迁入
 #          agent_tools.py（codex 文本轨冻结保留）。
-UI_VERSION = "0.40.0"
+# 0.41.0 — 引擎接口迁移批（ER-1/2/4/7）：--capabilities 能力握手优先探针
+#          （/api/status 新增 engine_capabilities）、rejected_values 结构化
+#          修复链（插件侧）、阈值块机读披露（事实块参考阈值行改读报告）、
+#          SUPPORTED_SCHEMA 前瞻接纳 v4（0.28.0 增量）。
+UI_VERSION = "0.41.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -216,11 +220,14 @@ MAX_HISTORY = _validated_int(MAX_HISTORY_RAW, 2, 100)
 # Schema gate: the engine report carries schema_version (0.21.0 emits int 2;
 # 0.22.0+ emits int 3 — v3 moved the five uncertainty fields to scalar +
 # *_envelope twins, docs/schema/report-v3.md; report.js numEnv handles both
-# shapes). Exact numeric match against SUPPORTED_SCHEMA, per request — a
+# shapes). v4 (engine 0.28.0) is ADDITIVE over v3 — new top-level blocks
+# (rejected_values, thresholds, ...) alongside unchanged v3 fields — so the
+# renderer consumes it as v3 with bonus blocks; accepted here ahead of the
+# engine cut. Exact numeric match against SUPPORTED_SCHEMA, per request — a
 # future schema that renames fields must fail loud here, not misrender
 # silently (ROADMAP v0.4c). Missing/None/unparseable → reject (fail-loud
 # default); escape valve for hypothetical pre-schema engines mirrors PHASE_D.
-SUPPORTED_SCHEMA = (2, 3)
+SUPPORTED_SCHEMA = (2, 3, 4)
 ALLOW_ANY_SCHEMA = os.environ.get("STRATUM_UI_ALLOW_ANY_SCHEMA", "0") == "1"
 
 
@@ -473,9 +480,33 @@ def _chat_facts(sess):
                 json.dumps(gt.get("coverage_pct")),
                 json.dumps(gt.get("e_drift_pct")),
                 json.dumps(gt.get("patch_coverage_ratio"))))
-    # static reference thresholds: quoted legitimately by the assistant
-    # (the page's warning lines) — in the whitelist by construction
-    lines.append("参考阈值: 应力覆盖率告警 70，热区覆盖比告警 0.5 与 2，SF 分带 1 与 3")
+    # v0.41 (ER-7): the engine machine-discloses its warning thresholds in
+    # the report's top-level `thresholds` block — when present the line is
+    # built from it, so the numbers are whitelist-eligible BY CONSTRUCTION
+    # (they appear in the facts, hence in the audit's source set) and an
+    # engine-side threshold change flows through instead of silently
+    # drifting from the page's hardcoded lines. Old engines without the
+    # block keep the hardcoded line (values identical as of 0.27.1).
+    th = r.get("thresholds")
+    th = th if isinstance(th, dict) else {}
+
+    def _num(src, k):
+        v = (src or {}).get(k)
+        return (json.dumps(v) if isinstance(v, (int, float))
+                and not isinstance(v, bool) else None)
+
+    cov = _num(th, "coverage_pct_warn")
+    lo = _num(th, "patch_coverage_ratio_low")
+    hi = _num(th, "patch_coverage_ratio_high")
+    fb = _num(th.get("sf_band"), "fail_below")
+    cb = _num(th.get("sf_band"), "caution_below")
+    sa = _num(th.get("sf_band"), "safe_above")
+    if all((cov, lo, hi, fb, cb, sa)):
+        lines.append("参考阈值: 应力覆盖率告警 %s，热区覆盖比告警 %s 与 %s，"
+                     "SF 分带 %s、%s 与 %s" % (cov, lo, hi, fb, cb, sa))
+    else:
+        lines.append("参考阈值: 应力覆盖率告警 70，热区覆盖比告警 0.5 与 2，"
+                     "SF 分带 1 与 3")
     return "\n".join(lines)[:CHAT_FACTS_CAP]
 
 
@@ -1203,24 +1234,27 @@ GCODE_DIFF_BIN = resolve_gcode_diff_binary()
 GCODE_DIFF_REPORT_SCHEMA = "gcode-diff-report/v1"
 
 
-# --schema probe cache (engine 0.22+): `stratum --schema` prints machine-
-# readable flag domains as JSON, rc=0 — value ranges, enum values, lockable
-# parameters and the engine's own version string. The version field beats the
-# SDK VERSION.txt, which describes the bundle the binary SHIPPED in and can
+# Engine capability cache (ER-2 + the older --schema probe). Three probe
+# tiers, first match wins (old-engine coexistence is a hard requirement):
+#   1. `stratum --capabilities` (engine 0.27.1 / iter-886+): one JSON
+#      handshake carrying the authoritative version, every flag with its
+#      kind/domain (value/enum/bool/path), lockable parameters and the
+#      deprecated list — cached under "caps"/"caps_version".
+#   2. `stratum --schema` (engine 0.22+): machine-readable flag domains as
+#      JSON, rc=0 — value ranges, enum values, lockable parameters and the
+#      engine's own version string — cached under "doc"/"version".
+#   3. no-arg usage text regex (pre-0.22 engines; no cache payload).
+# The caps version beats the --schema version, which beats the SDK
+# VERSION.txt — the txt describes the bundle the binary SHIPPED in and can
 # lag a synced binary (repo carried 0.21.0 text next to a 0.24.0 exe — the
 # 2026-08-28 drift this fixes). Filled by _probe_surface (import time and
 # /api/set-binary re-probe).
-_SCHEMA_CACHE = {"binary": None, "doc": None, "version": None}
+_SCHEMA_CACHE = {"binary": None, "doc": None, "version": None,
+                 "caps": None, "caps_version": None}
 
 
-def engine_version(binary):
-    """Engine version string. Preferred source: the --schema probe's own
-    `version` field (exact, matches the running binary). Falls back to the
-    SDK VERSION.txt regex, then 'unknown' — never fails."""
-    if binary and _SCHEMA_CACHE["binary"] == binary and _SCHEMA_CACHE["version"]:
-        return _SCHEMA_CACHE["version"]
-    if not binary:
-        return "unknown"
+def _version_from_txt(binary):
+    """SDK VERSION.txt regex fallback — display-only, never authoritative."""
     candidates = [
         os.path.join(os.path.dirname(binary), "..", "VERSION.txt"),
         os.path.join(os.path.dirname(binary), "VERSION.txt"),
@@ -1235,6 +1269,20 @@ def engine_version(binary):
             except OSError:
                 pass
     return "unknown"
+
+
+def engine_version(binary):
+    """Engine version string. Preferred source: the --capabilities
+    handshake's `version` field (authoritative for the running binary,
+    ER-2), then the --schema probe's version, then the SDK VERSION.txt
+    regex, then 'unknown' — never fails."""
+    if binary and _SCHEMA_CACHE["binary"] == binary:
+        return (_SCHEMA_CACHE.get("caps_version")
+                or _SCHEMA_CACHE.get("version")
+                or _version_from_txt(binary))
+    if not binary:
+        return "unknown"
+    return _version_from_txt(binary)
 
 
 # ---------------------------------------------------------------------------
@@ -1440,7 +1488,11 @@ def cancel_analyze(token):
 # bonus flags: stripped+retried once on old engines that reject them (their
 # error text is "unrecognized argument: <flag>", so the match is on the FULL
 # flag string — a bare "orca"/"orient" substring would false-positive on the
-# engine's own "orientation" output). --progress-json/--heatmap-json are v0.8
+# engine's own "orientation" output). CAPABILITIES-MISSING FALLBACK ONLY
+# (ER-2): an engine with --capabilities declares its whole flag face in one
+# handshake, so this failure-driven strip is purely the degrade path for
+# engines without it; the list stays for old-engine coexistence.
+# --progress-json/--heatmap-json are v0.8
 # bonus channels (0.22+): losing them on an old engine degrades gracefully.
 # --appearance/--rheology join in v0.8.1 (0.24-era diagnostics phases), and
 # the two solver diagnostics likewise; --voxel-vote is an env-path bool but
@@ -1623,6 +1675,79 @@ def probe_schema(binary, timeout=5):
     return doc, (ver if isinstance(ver, str) else None)
 
 
+def probe_capabilities(binary, timeout=5):
+    """Run `stratum --capabilities` (ER-2, engine 0.27.1/iter-886+) and
+    return (doc, version). (None, None) when the binary is missing, the flag
+    is unsupported (pre-0.27.1 engine), or the output is not the expected
+    shape (dict, numeric caps_version >= 1, flags list) — callers fall back
+    to the --schema probe. Semi-trusted input (our own binary's stdout):
+    shape-checked before any use, never exec'd."""
+    if not binary:
+        return None, None
+    try:
+        rc, out, _err = run_stratum(["--capabilities"], timeout=timeout)
+        if rc != 0:
+            return None, None
+        doc = json.loads(out.decode("utf-8", "replace"))
+    except Exception:
+        return None, None
+    if not isinstance(doc, dict):
+        return None, None
+    cv = doc.get("caps_version")
+    if isinstance(cv, bool) or not isinstance(cv, (int, float)) or cv < 1:
+        return None, None
+    if not isinstance(doc.get("flags"), list):
+        return None, None
+    ver = doc.get("version")
+    return doc, (ver if isinstance(ver, str) else None)
+
+
+def _caps_to_doc(caps):
+    """Normalize a --capabilities doc into the --schema doc shape so every
+    downstream consumer (_enum_values, _apply_schema_domains, the
+    lockable-parameters extraction) works unchanged off one handshake.
+    Enum entries keep their `values`; value entries keep min/max."""
+    flags = [f for f in (caps.get("flags") or []) if isinstance(f, dict)]
+    return {"version": caps.get("version"),
+            "value_flags": [f for f in flags if f.get("kind") == "value"],
+            "enum_flags": [f for f in flags if f.get("kind") == "enum"],
+            "lockable_parameters": caps.get("lockable_parameters")}
+
+
+def _enum_from_caps(caps, flag, fallback, default):
+    """Pull one enum list from --capabilities flags (kind=="enum" entries)
+    with the same guards as _enum_from_schema: well-typed strings, must
+    contain the UI default and overlap the fallback by >=2. Returns
+    (values|None, source) — source label distinguishes the handshake."""
+    for f in (caps.get("flags") or []):
+        if isinstance(f, dict) and f.get("name") == flag \
+                and f.get("kind") == "enum":
+            values = f.get("values")
+            if (isinstance(values, list) and len(values) >= 3
+                    and all(isinstance(v, str) for v in values)
+                    and default in values
+                    and len(set(values) & set(fallback)) >= 2):
+                return values, "engine-caps"
+            return None, "fallback"
+    return None, "fallback"
+
+
+def _caps_enum_values(caps, flag):
+    """Lenient enum lookup for the extra select surfaces (>=2 well-typed
+    strings, no default/overlap guard — mirrors _enum_values); None when
+    the doc or entry is missing/malformed."""
+    if not caps:
+        return None
+    for f in (caps.get("flags") or []):
+        if isinstance(f, dict) and f.get("name") == flag \
+                and f.get("kind") == "enum":
+            values = f.get("values")
+            if (isinstance(values, list) and len(values) >= 2
+                    and all(isinstance(v, str) for v in values)):
+                return values
+    return None
+
+
 def _enum_from_schema(doc, flag, fallback, default):
     """Pull one enum list from --schema enum_flags with the same guards as
     the usage probe: well-typed strings, must contain the UI default and
@@ -1643,17 +1768,47 @@ def _enum_from_schema(doc, flag, fallback, default):
 def _probe_surface():
     """One-shot subprocess probe at import. Never raises: a broken binary
     (unexecutable, AV quarantine, ...) must degrade to the fallback lists,
-    not kill the server at startup. Preferred source: `--schema` JSON
-    (0.22+; exact lists, no text parsing). Legacy fallback: no-arg usage
-    text regex (pre-0.22 engines)."""
+    not kill the server at startup. Preferred source: `--capabilities`
+    JSON (0.27.1+/iter-886, ER-2 — one handshake, authoritative version);
+    then `--schema` JSON (0.22+; exact lists, no text parsing); legacy
+    fallback: no-arg usage text regex (pre-0.22 engines)."""
     if BINARY is None:
         return (FALLBACK_PATTERNS, FALLBACK_MATERIALS, FALLBACK_LOADS,
                 "fallback", "fallback", "fallback", [],
                 FALLBACK_EXTRA_LOCKS, "fallback")
     global _SCHEMA_CACHE
+    caps, caps_ver = probe_capabilities(BINARY)
+    if caps is not None:
+        # capabilities present: one handshake rebuilds the whole surface —
+        # no --schema call needed. The normalized doc keeps every
+        # downstream schema consumer working off the caps payload.
+        _SCHEMA_CACHE = {"binary": BINARY, "doc": _caps_to_doc(caps),
+                         "version": caps_ver, "caps": caps,
+                         "caps_version": caps_ver}
+        patterns, psrc = _enum_from_caps(caps, "--pattern",
+                                         FALLBACK_PATTERNS, PATTERN_DEFAULT)
+        materials, msrc = _enum_from_caps(caps, "--material",
+                                          FALLBACK_MATERIALS, MATERIAL_DEFAULT)
+        loads, lsrc = _enum_from_caps(caps, "--load",
+                                      FALLBACK_LOADS, LOAD_DEFAULT)
+        if patterns and materials and loads:
+            locks = caps.get("lockable_parameters")
+            extra = None
+            if (isinstance(locks, list) and len(locks) >= 5
+                    and all(isinstance(n, str) for n in locks)):
+                param_names = set(PARAM_FLAGS) | {"load"}
+                extra = [n for n in locks if n not in param_names]
+            return (patterns, materials, loads, psrc, msrc, lsrc,
+                    [],  # structured JSON: no charset-filtered tokens
+                    extra if extra is not None else FALLBACK_EXTRA_LOCKS,
+                    "engine-caps" if extra is not None else "fallback")
+        # partial caps parse: degrade to the --schema probe below (caps
+        # stays cached — engine_version keeps the authoritative version)
     doc, ver = probe_schema(BINARY)
-    _SCHEMA_CACHE = {"binary": BINARY if doc is not None else None,
-                     "doc": doc, "version": ver}
+    _SCHEMA_CACHE = {"binary": BINARY if (doc is not None or caps is not None)
+                     else None,
+                     "doc": doc, "version": ver,
+                     "caps": caps, "caps_version": caps_ver}
     if doc is not None:
         patterns, psrc = _enum_from_schema(doc, "--pattern",
                                            FALLBACK_PATTERNS, PATTERN_DEFAULT)
@@ -1771,14 +1926,24 @@ def _enum_values(doc, flag, fallback):
 
 
 def _refresh_select_surfaces():
-    """Recompute the schema-derived select surfaces. Returns the new tuple —
-    callers rebind the module globals (import time and /api/set-binary)."""
+    """Recompute the schema-derived select surfaces. Capabilities enum
+    values are preferred when the handshake succeeded (ER-2); the --schema
+    doc is next; hardcoded fallbacks last. Returns the new tuple — callers
+    rebind the module globals (import time and /api/set-binary)."""
+    caps = _SCHEMA_CACHE.get("caps")
     doc = _SCHEMA_CACHE.get("doc")
-    return (_enum_values(doc, "--axis", FALLBACK_AXES),
-            _enum_values(doc, "--machine", FALLBACK_MACHINES),
-            _enum_values(doc, "--validate", FALLBACK_VALIDATE_TIERS),
-            _enum_values(doc, "--precond", FALLBACK_PRECOND),
-            _enum_values(doc, "--hotend", FALLBACK_HOTENDS))
+
+    def pick(flag, fallback):
+        vals = _caps_enum_values(caps, flag)
+        if vals is not None:
+            return vals
+        return _enum_values(doc, flag, fallback)
+
+    return (pick("--axis", FALLBACK_AXES),
+            pick("--machine", FALLBACK_MACHINES),
+            pick("--validate", FALLBACK_VALIDATE_TIERS),
+            pick("--precond", FALLBACK_PRECOND),
+            pick("--hotend", FALLBACK_HOTENDS))
 
 
 (AXIS_VALUES, MACHINE_VALUES, VALIDATE_TIERS, PRECOND_VALUES,
@@ -2426,6 +2591,12 @@ class StratumHandler(BaseHTTPRequestHandler):
                 "ok": True,
                 "ui_version": UI_VERSION,
                 "engine_version": engine_version(BINARY),
+                # v0.41 (ER-2): the --capabilities handshake succeeded for
+                # the CURRENT binary — one-call capability discovery; false
+                # = old engine, probe-degrade path in use (not an error)
+                "engine_capabilities": (
+                    _SCHEMA_CACHE.get("caps") is not None
+                    and _SCHEMA_CACHE.get("binary") == BINARY),
                 "binary": BINARY or None,
                 "binary_found": BINARY is not None,
                 "grid": GRID,

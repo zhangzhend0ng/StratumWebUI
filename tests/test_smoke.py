@@ -263,8 +263,9 @@ def main():
 
         # T12 — REGRESSION (iter 5, re-based v0.8): the pattern select the UI
         # actually builds from (params[].options, NOT the dead top-level
-        # pm.patterns field) must carry the engine's real enum. 0.22+ serves
-        # it from the --schema channel (12 values incl. legacy spellings);
+        # pm.patterns field) must carry the engine's real enum. 0.27.1+
+        # serves it from the --capabilities handshake (ER-2, engine-caps);
+        # 0.22+ from the --schema channel (12 values incl. legacy spellings);
         # pre-0.22 falls back to the usage-regex probe (10 on 0.21.0).
         st, body = request(port, "GET", "/api/params")
         pm = json.loads(body)
@@ -274,7 +275,9 @@ def main():
         check("T12 pattern options synced from engine surface",
               st == 200 and "tri-hexagon" in opts and len(opts) >= 10
               and "gyroid" in opts and pat.get("default") in opts
-              and sf.get("patterns_source") in ("engine-schema", "engine-usage"),
+              and sf.get("patterns_source") in ("engine-caps",
+                                                "engine-schema",
+                                                "engine-usage"),
               "opts=%s src=%r" % (opts, sf.get("patterns_source")))
         check("T12 presets field present (4 entries)",
               len(pm.get("presets") or []) == 4,
@@ -658,14 +661,18 @@ def main():
 
         # T25 — schema gate shapes (strict numeric equality; fail-loud on
         # missing/unparseable). 0.22+ reports are schema 3 (scalar +
-        # *_envelope twins); 2 stays accepted for older engines.
+        # *_envelope twins); 2 stays accepted for older engines. v0.41
+        # pre-accepts 4 (engine 0.28.0, ADDITIVE over v3: rejected_values/
+        # thresholds top-level blocks) — 5 stays the fail-loud edge.
         ck = srv.schema_supported
         check("T25 schema gate shapes",
               ck({"schema_version": 2}) is True
               and ck({"schema_version": 2.0}) is True
               and ck({"schema_version": 3}) is True
               and ck({"schema_version": 3.0}) is True
-              and ck({"schema_version": 4}) is False
+              and ck({"schema_version": 4}) is True
+              and ck({"schema_version": 4.0}) is True
+              and ck({"schema_version": 5}) is False
               and ck({"schema_version": 2.9}) is False
               and ck({"schema_version": "2"}) is False
               and ck({}) is False
@@ -1735,36 +1742,64 @@ def main():
         import shutil as _shutil
         _shutil.rmtree(_mdir, ignore_errors=True)
 
-        # T64 — --schema probe priority: with a real 0.22+ binary the param
-        # surface sources come from the structured schema channel (not the
-        # usage regex), nothing was charset-filtered, and the lock surface is
-        # engine-authoritative — including the retraction family, while
-        # layer_height has graduated to a slider (v0.8) and must NOT appear
-        # in the lock-only extras.
-        check("T64 --schema-driven surface probe",
-              srv.PATTERNS_SOURCE == "engine-schema"
-              and srv.MATERIALS_SOURCE == "engine-schema"
-              and srv.LOADS_SOURCE == "engine-schema"
+        # T64 — capabilities-first probe priority (ER-2, v0.41): with a real
+        # 0.27.1+ binary ONE --capabilities handshake rebuilds the whole
+        # param surface (sources engine-caps, cache slot "caps"); the
+        # --schema channel is the second tier for 0.22+ engines without
+        # capabilities, the usage regex the pre-0.22 third. Either
+        # structured tier must leave nothing charset-filtered and keep the
+        # lock surface engine-authoritative — including the retraction
+        # family, while layer_height has graduated to a slider (v0.8) and
+        # must NOT appear in the lock-only extras.
+        check("T64 capabilities-first surface probe",
+              isinstance(srv._SCHEMA_CACHE.get("caps"), dict)
+              and srv.PATTERNS_SOURCE == "engine-caps"
+              and srv.MATERIALS_SOURCE == "engine-caps"
+              and srv.LOADS_SOURCE == "engine-caps"
               and srv.SURFACE_FILTERED == []
               and "retraction_length" in srv.EXTRA_LOCKS
               and "layer_height" not in srv.EXTRA_LOCKS,
               "patterns=%s filtered=%r locks=%s"
               % (srv.PATTERNS_SOURCE, srv.SURFACE_FILTERED,
                  srv.EXTRA_LOCKS_SOURCE))
+        # parity pin: the caps handshake alone must rebuild the SAME enum
+        # surfaces the --schema channel reports (ER-2 acceptance) — one
+        # probe may drift, two agreeing is contract.
+        _caps64 = srv._SCHEMA_CACHE["caps"]
+        _doc64, _v64 = srv.probe_schema(srv.BINARY)
+        _pat_caps = srv._enum_from_caps(_caps64, "--pattern",
+                                        srv.FALLBACK_PATTERNS,
+                                        srv.PATTERN_DEFAULT)
+        check("T64b caps/schema enum parity (one handshake, same surface)",
+              _pat_caps[1] == "engine-caps"
+              and _pat_caps[0] == srv._enum_from_schema(
+                  _doc64, "--pattern", srv.FALLBACK_PATTERNS,
+                  srv.PATTERN_DEFAULT)[0]
+              and srv._caps_enum_values(_caps64, "--machine") ==
+              srv._enum_values(_doc64, "--machine", srv.FALLBACK_MACHINES),
+              "pattern=%r machine=%r"
+              % (_pat_caps[1],
+                 srv._caps_enum_values(_caps64, "--machine")))
 
-        # T65 — engine_version prefers the --schema `version` field over the
+        # T65 — engine_version prefers the --capabilities `version` field
+        # (authoritative, ER-2), then the --schema `version`, then the
         # bundle VERSION.txt (which can lag a synced binary — 0.21 text vs
-        # 0.24 exe, the 2026-08-28 drift); status endpoint reports it.
+        # 0.24 exe, the 2026-08-28 drift); status endpoint reports both the
+        # version and the capabilities handshake state (v0.41).
         ver = srv.engine_version(srv.BINARY)
         st65, body65 = request(port, "GET", "/api/status")
         j65 = json.loads(body65)
-        check("T65 engine_version from --schema probe",
+        check("T65 engine_version from capabilities handshake",
               re.match(r"^\d+\.\d+\.\d+$", ver) is not None
-              and ver == srv._SCHEMA_CACHE.get("version")
+              and ver == (srv._SCHEMA_CACHE.get("caps_version")
+                          or srv._SCHEMA_CACHE.get("version"))
               and st65 == 200 and j65.get("engine_version") == ver
-              and j65.get("schema_supported") == [2, 3],
-              "ver=%r cache=%r status=%r" % (ver, srv._SCHEMA_CACHE.get("version"),
-                                             j65.get("engine_version")))
+              and j65.get("engine_capabilities") is True
+              and j65.get("schema_supported") == [2, 3, 4],
+              "ver=%r cache=%r caps=%r status=%r"
+              % (ver, srv._SCHEMA_CACHE.get("version"),
+                 srv._SCHEMA_CACHE.get("caps_version"),
+                 j65.get("engine_version")))
 
         # T66 — v0.8 params round-trip (real engine): layer_height/z_ratio/
         # fill_angle reach the engine and echo in the input block.
