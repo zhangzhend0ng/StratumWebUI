@@ -2583,6 +2583,8 @@ class StratumHandler(BaseHTTPRequestHandler):
             # file:None honestly reports the console-only degraded mode.
             _send_json(self, 200, {"ok": True, "dir": LOG_DIR,
                                    "file": LOG_FILE})
+        elif path == "/api/agent/events":
+            self._agent_events()
         else:
             _send_json(self, 404, {"ok": False, "error": "not found"})
 
@@ -2668,6 +2670,10 @@ class StratumHandler(BaseHTTPRequestHandler):
                 self._assistant_step()
             elif path == "/api/assistant/tool":
                 self._assistant_tool()
+            elif path == "/api/agent/resubscribe":
+                self._agent_resubscribe()
+            elif path == "/api/agent/host-result":
+                self._agent_host_result()
             else:
                 _send_json(self, 404, {"ok": False, "error": "not found"})
         except _BusyError:
@@ -3966,6 +3972,87 @@ class StratumHandler(BaseHTTPRequestHandler):
             _send_json(self, 200, {"ok": False, "error": payload})
             return
         _send_json(self, 200, {"ok": True, "result": payload})
+
+    # ---- v0.40 agent harness endpoints (spec §3/§6) -----------------------
+
+    def _agent_events(self):
+        """Event channel: SSE by default, poll=1 degrades to JSON (identical
+        ticket+cursor shape — spec §10 risk 1 fallback). GETs carry no
+        X-Stratum-UI (EventSource cannot); the one-time ticket is the
+        bearer, rotated per poll response."""
+        query = parse_qs(urlparse(self.path).query)
+        ticket = (query.get("ticket") or [""])[0]
+        cursor = _validated_int((query.get("cursor") or ["0"])[0], 0, 10 ** 9)
+        conv = agent_harness.HARNESS_STORE.consume_ticket(ticket)
+        if conv is None or cursor is None:
+            _send_json(self, 404, {"ok": False,
+                                   "error": "ticket 无效或已使用（重连请走 resubscribe）"})
+            return
+        if query.get("poll"):
+            nxt = agent_harness.HARNESS_STORE.issue_ticket(conv.id)
+            with conv.cond:
+                events = conv.events_since(cursor)
+                done = conv.done
+            _send_json(self, 200, {"ok": True, "events": events,
+                                   "cursor": events[-1]["seq"] if events else cursor,
+                                   "next_ticket": nxt, "done": done})
+            return
+        # SSE stream
+        self.close_connection = True  # stream ends → do not await pipelining
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            deadline = time.time() + 700.0  # hard cap: never leak a thread
+            last = cursor
+            while time.time() < deadline:
+                with conv.cond:
+                    events = conv.events_since(last)
+                    if not events and not conv.done:
+                        conv.cond.wait(timeout=15.0)
+                        events = conv.events_since(last)
+                if events:
+                    for ev in events:
+                        last = ev["seq"]
+                        self.wfile.write(("data: %s\n\n" % json.dumps(
+                            ev, ensure_ascii=False)).encode("utf-8"))
+                    self.wfile.flush()
+                    with conv.cond:
+                        if conv.done and not conv.events_since(last):
+                            break
+                else:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+        except (ConnectionError, OSError):
+            return  # client gone / panel closed — reconnect is resubscribe's job
+
+    def _agent_resubscribe(self):
+        """Panel rebuild / SSE drop: a POST (header-gated) mints a fresh
+        ticket for an existing conversation; the page replays from its own
+        last cursor (spec §6 页面重连)."""
+        body = _read_json_body(self)
+        conv = agent_harness.HARNESS_STORE.get(body.get("conv_id"))
+        if conv is None:
+            _send_json(self, 200, {"ok": False,
+                                   "error": "会话不存在或已过期——请重新发送问题"})
+            return
+        _send_json(self, 200, {"ok": True,
+                               "ticket": agent_harness.HARNESS_STORE.issue_ticket(conv.id)})
+
+    def _agent_host_result(self):
+        """The host loop's last hop (spec §3 v2): the page received tool-done
+        from the panel bridge and POSTs it back; the harness's pending
+        Event gets set. Unknown ids answer ok:false and cost nothing — the
+        harness-side timeout owns stranded calls."""
+        body = _read_json_body(self)
+        conv = agent_harness.HARNESS_STORE.get(body.get("conv_id"))
+        if conv is None:
+            _send_json(self, 200, {"ok": False})
+            return
+        resolved = conv.resolve_host(str(body.get("id")), bool(body.get("ok")),
+                                     body.get("result"), body.get("error"))
+        _send_json(self, 200, {"ok": resolved})
 
     def log_message(self, fmt, *args):
         pass  # keep the console clean; use _log for real events

@@ -219,12 +219,88 @@ def test_event_bus(ah):
     check("T3 TTL 清扫过期会话", store.get(conv.id) is None)
 
 
+# ==== §4 events channel gates (SSE + poll) ==================================
+
+def start_server_for_agent(extra_env=None):
+    port = free_port()
+    env = dict(os.environ)
+    env.update({"STRATUM_UI_NO_BROWSER": "1", "STRATUM_UI_PORT": str(port),
+                "STRATUM_UI_LOG_DIR": os.path.join(tempfile.gettempdir(),
+                                                    "stratum-agent-test-logs"),
+                "STRATUM_UI_LOG_OPEN": "0"})
+    env.update(extra_env or {})
+    proc = subprocess.Popen([sys.executable, os.path.join(ROOT, "server.py")],
+                            env=env, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            c.request("GET", "/api/status")
+            if c.getresponse().read():
+                return proc, port
+        except OSError:
+            time.sleep(0.2)
+    proc.kill()
+    raise RuntimeError("agent test server did not come up")
+
+
+def test_http_agent_channel():
+    proc = port = None
+    try:
+        proc, port = start_server_for_agent()
+        # 无效 ticket → 404 JSON（GET 无 UI 头要求，Host 门照常）
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", "/api/agent/events?ticket=deadbeef&cursor=0")
+        r = conn.getresponse()
+        body = json.loads(r.read())
+        check("T4 无效 ticket 404", r.status == 404 and not body.get("ok"))
+        # 非本机 Host → 403（同现有 GET 门）
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("GET", "/api/agent/events?ticket=x",
+                     headers={"Host": "evil.example.com"})
+        r = conn.getresponse()
+        check("T4 非本机 Host 403", r.status == 403)
+        # resubscribe 未知会话 → ok:false
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/resubscribe",
+                     body=json.dumps({"conv_id": "nope"}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        r = conn.getresponse()
+        body = json.loads(r.read())
+        check("T4 resubscribe 未知会话 ok:false",
+              r.status == 200 and not body.get("ok"))
+        # host-result 未知会话 → ok:false（幂等，不炸）
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/host-result",
+                     body=json.dumps({"conv_id": "nope", "id": "x",
+                                      "ok": True}),
+                     headers={"Content-Type": "application/json",
+                              "X-Stratum-UI": "1"})
+        r = conn.getresponse()
+        body = json.loads(r.read())
+        check("T4 host-result 未知会话 ok:false",
+              r.status == 200 and body.get("ok") is False)
+        # POST 门：缺 X-Stratum-UI 403
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.request("POST", "/api/agent/host-result",
+                     body=json.dumps({}),
+                     headers={"Content-Type": "application/json"})
+        r = conn.getresponse()
+        check("T4 host-result 缺 UI 头 403", r.status == 403)
+    finally:
+        if proc:
+            proc.kill()
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
     test_red_lines()
     test_legacy_parity(at)
     test_event_bus(import_agent_harness())
+    test_http_agent_channel()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0
