@@ -294,13 +294,239 @@ def test_http_agent_channel():
             proc.kill()
 
 
+# ==== §5 turn machine (fake model_fn; no engine, no HTTP) ====================
+
+class _FakeModel(object):
+    def __init__(self, script):
+        self.script = list(script)  # one dict consumed per SEND
+        self.seen = []
+
+    def __call__(self, messages, tools):
+        self.seen.append((messages, tools))
+        step = self.script.pop(0) if self.script else {"content": "兜底"}
+        msg = dict(step)
+        msg.setdefault("role", "assistant")
+        return msg
+
+
+def _fc_call(cid, name, args=None):
+    return {"id": cid, "type": "function",
+            "function": {"name": name,
+                         "arguments": json.dumps(args or {})}}
+
+
+_FAKE_ACTIONS = {"写回": "apply", "写入全局预设": "apply-global",
+                 "切片评估": "slice", "选取模型": "pick"}
+
+
+def _fake_actions_fn(text):
+    """Mirror of server._parse_actions for the fake deps — run_turn's job
+    under test is the WIRING (actions_fn output lands in the final event),
+    the real parser stays server-side (covered by legacy parity)."""
+    m = re.search(r"^\s*ACTIONS\s*[:：]\s*(.+)$", text, re.M)
+    if not m:
+        return text, []
+    acts = [_FAKE_ACTIONS[t.strip()]
+            for t in re.split(r"[,，、]", m.group(1).strip())
+            if t.strip() in _FAKE_ACTIONS]
+    return (text[:m.start()] + text[m.end():]).strip(), acts
+
+
+def _mkdeps(ah, at, model):
+    tier_calls = [0]
+
+    def facts(token):
+        return True, "模型: t\n参考阈值: 70 0.5 2 1 3"
+
+    def run_server_tool(name, args, token):
+        # no ctx on the under-test instance — answer the tier stub directly
+        if name == "get_tier_comparison":
+            tier_calls[0] += 1
+            return True, {"tiers": [{"name": "safe"}]}
+        return at.run_server_tool(name, args, token)
+
+    return ah.TurnDeps(
+        model_fn=model,
+        tools_array_fn=lambda ctx: at.fc_tools_array(ctx),
+        tool_ctx_fn=lambda token: {"gcode_attached": False, "has_report": True},
+        facts_fn=facts,
+        audit_fn=lambda text, base: (text, 0),
+        actions_fn=_fake_actions_fn,
+        run_server_tool=run_server_tool,
+        tools_lookup=at.TOOLS,
+        host_timeout_s=0.3)
+
+
+def test_turn_final(ah, at):
+    model = _FakeModel([
+        {"content": None, "tool_calls": [_fc_call("t1", "get_tier_comparison")]},
+        {"content": "结论：安全档最稳。\nACTIONS: 写回"},
+    ])
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+    ah.run_turn(conv, _mkdeps(ah, at, model))
+    types = [e["type"] for e in conv.events]
+    check("T5 事件序: tool_done→final→turn_end",
+          types == ["turn_start", "tool_done", "final", "turn_end"], str(types))
+    fin = [e for e in conv.events if e["type"] == "final"][0]
+    check("T5 final 过 ACTIONS 解析",
+          fin["reply"] == "结论：安全档最稳。" and fin["actions"] == ["apply"],
+          str(fin))
+    check("T5 final 后会话关闭", conv.done)
+
+
+def test_turn_budget(ah, at):
+    model = _FakeModel([{"content": None,
+                         "tool_calls": [_fc_call("t%d" % i,
+                                                 "get_tier_comparison")]}
+                        for i in range(20)])
+
+    def run_server_tool(name, args, token):
+        # no ctx on the under-test instance — answer tier calls directly
+        if name == "get_tier_comparison":
+            return True, {"tiers": [{"name": "safe"}]}
+        return at.run_server_tool(name, args, token)
+
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+    deps = _mkdeps(ah, at, model)
+    deps.run_server_tool = run_server_tool
+    ah.run_turn(conv, deps)
+    done = [e for e in conv.events if e["type"] == "tool_done"]
+    fin = [e for e in conv.events if e["type"] == "final"]
+    check("T5 调用数不超 MAX_CALLS", len(done) <= ah.MAX_CALLS, str(len(done)))
+    check("T5 预算耗尽仍有披露 final",
+          len(fin) == 1 and "上限" in fin[0]["reply"],
+          str([f.get("reply") for f in fin]))
+
+
+def test_turn_cap(ah, at):
+    calls = [0]
+
+    def run_server_tool(name, args, token):
+        if name == "what_if":
+            calls[0] += 1
+            return True, {"note": "ok"}
+        return at.run_server_tool(name, args, token)
+
+    model = _FakeModel([{"content": None, "tool_calls": [
+        _fc_call("a", "what_if"), _fc_call("b", "what_if")]},
+        {"content": "两次都看完了"}])
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+    deps = _mkdeps(ah, at, model)
+    deps.run_server_tool = run_server_tool
+    ah.run_turn(conv, deps)
+    check("T5 per_turn_call_cap=1 只执行一次", calls[0] == 1, str(calls[0]))
+    msgs = model.seen[-1][0]
+    tool_msgs = [m for m in msgs if m.get("role") == "tool"]
+    check("T5 超帽调用收到停叫信号",
+          any("不再重复" in (m.get("content") or "") for m in tool_msgs),
+          json.dumps(tool_msgs, ensure_ascii=False)[:200])
+
+
+def test_turn_host_loop(ah, at):
+    model = _FakeModel([
+        {"content": None, "tool_calls": [_fc_call("h1", "get_print_context")]},
+        {"content": "盘上共 1 件"},
+    ])
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+
+    def resolver():
+        time.sleep(0.05)
+        conv.resolve_host("h1", True, result={"objects": []})
+
+    threading.Thread(target=resolver, daemon=True).start()
+    ah.run_turn(conv, _mkdeps(ah, at, model))
+    check("T5 host 回环置位后走到 final",
+          any(e["type"] == "final" for e in conv.events))
+
+
+def test_turn_host_timeout(ah, at):
+    model = _FakeModel([
+        {"content": None, "tool_calls": [_fc_call("h2", "get_print_context")]},
+        {"content": "工具没回，我先说明"},
+    ])
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+    deps = _mkdeps(ah, at, model)
+    deps.host_timeout_s = 0.15
+    ah.run_turn(conv, deps)
+    msgs = model.seen[-1][0]
+    tool_msgs = [m for m in msgs if m.get("role") == "tool"]
+    check("T5 host 超时返回错误工具结果且会话不悬挂",
+          conv.done and any("超时" in (m.get("content") or "")
+                            for m in tool_msgs))
+
+
+def test_turn_audit(ah, at):
+    model = _FakeModel([{"content": "SF 是 9.9，阈值 70"}])
+    conv = ah.HARNESS_STORE.create("q", "tok", [])
+    deps = _mkdeps(ah, at, model)
+    deps.audit_fn = lambda text, base: (text.replace("9.9", "□"), 1)
+    ah.run_turn(conv, deps)
+    fin = [e for e in conv.events if e["type"] == "final"][0]
+    check("T5 终答走注入审计", "□" in fin["reply"] and fin["stripped"] == 1)
+
+
+def test_lock_boundary(ah, at):
+    """R6: 工具段不持 _CHAT_LOCK；模型段在锁内。工具走 server 侧注册表
+    实例（ctx 只注入在 server.agent_tools 上）。"""
+    srv = import_server()
+    srv_agent = srv.agent_tools
+    ok, payload = srv_agent.run_server_tool("get_tier_comparison", {}, "tok")
+    check("T5 server 工具可执行（前置）", ok and "tiers" in payload)
+    held = srv._CHAT_LOCK.acquire(timeout=1.0)
+    check("T5 测试先抢到 _CHAT_LOCK", held)
+    try:
+        ok, payload = srv_agent.run_server_tool("get_tier_comparison", {},
+                                                "tok")
+        check("T5 持锁状态下 server 工具照常执行（工具段无锁）",
+              ok and payload and "tiers" in payload)
+    finally:
+        srv._CHAT_LOCK.release()
+    # 模型段在锁内：假 urlopen 记录锁态
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["locked"] = srv._CHAT_LOCK.locked()
+
+        class _R(object):
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "ok"}}]}).encode(
+                        "utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        return _R()
+
+    orig = srv.urllib.request.urlopen
+    srv.urllib.request.urlopen = fake_urlopen
+    try:
+        msg = srv._openai_complete_fc([{"role": "user", "content": "x"}],
+                                      None)
+        check("T5 模型 HTTP 段持 _CHAT_LOCK", seen.get("locked") is True)
+        check("T5 FC 返回 message", msg.get("content") == "ok")
+    finally:
+        srv.urllib.request.urlopen = orig
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
     test_red_lines()
     test_legacy_parity(at)
-    test_event_bus(import_agent_harness())
+    ah = import_agent_harness()
+    test_event_bus(ah)
     test_http_agent_channel()
+    test_turn_final(ah, at)
+    test_turn_budget(ah, at)
+    test_turn_cap(ah, at)
+    test_turn_host_loop(ah, at)
+    test_turn_host_timeout(ah, at)
+    test_turn_audit(ah, at)
+    test_lock_boundary(ah, at)
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0

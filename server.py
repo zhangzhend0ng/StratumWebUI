@@ -665,6 +665,48 @@ def _cli_complete(prompt, s):
     return reply
 
 
+def _openai_complete_fc(messages, tools):
+    """v0.40: one OpenAI-compatible chat completion with NATIVE function
+    calling (spec §6 FC track). Returns choices[0].message. _CHAT_LOCK
+    wraps ONLY the HTTP segment (red line R6: never the tool execution /
+    host wait the harness does around this call)."""
+    s = _load_chat_settings()
+    base = (s.get("api_base") or "https://api.openai.com/v1").rstrip("/")
+    url = base if base.endswith("/chat/completions") \
+        else base + "/chat/completions"
+    body = {"model": s.get("model") or "gpt-4o-mini", "messages": messages}
+    if tools:
+        body["tools"] = tools
+        body["tool_choice"] = "auto"
+    extra = s.get("extra_json") or ""
+    if extra.strip():
+        try:
+            patch = json.loads(extra)
+            if isinstance(patch, dict):
+                body.update(patch)
+        except ValueError:
+            pass  # validated on save; ignored at call time like _openai_complete
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer %s" % (s.get("api_key") or "")},
+        method="POST")
+    with _CHAT_LOCK:
+        try:
+            with urllib.request.urlopen(req, timeout=CHAT_TIMEOUT_S) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:200]
+            raise ChatError("API 返回 HTTP %d %s: %s" % (exc.code, url, detail))
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise ChatError("API 请求失败 %s: %s" % (url, exc))
+    try:
+        msg = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError):
+        raise ChatError("API 返回缺少 choices[0].message（检查模型是否支持工具调用）")
+    return msg
+
+
 def _chat_prompt(question, history, facts):
     convo = ""
     for h in (history or [])[-CHAT_HISTORY_TURNS:]:
@@ -677,9 +719,9 @@ def _chat_prompt(question, history, facts):
             + "\n=== 用户问题 ===\n" + question)
 
 
-def _run_chat(question, history, facts):
-    """Single-shot grounded Q&A (v0.37 surface, kept for /api/chat)."""
-    reply = _codex_complete(_chat_prompt(question, history, facts))
+def _parse_actions(reply):
+    """ACTIONS: line -> (clean_text, action_ids). Shared by both tracks
+    (v0.40 extraction from _run_chat; output byte-identical)."""
     actions = []
     m = re.search(r"^\s*ACTIONS\s*[:：]\s*(.+)$", reply, re.M)
     if m:
@@ -688,6 +730,13 @@ def _run_chat(question, history, facts):
             if tok in _CHAT_ACTION_IDS:
                 actions.append(_CHAT_ACTION_IDS[tok])
         reply = (reply[:m.start()] + reply[m.end():]).strip()
+    return reply, actions
+
+
+def _run_chat(question, history, facts):
+    """Single-shot grounded Q&A (v0.37 surface, kept for /api/chat)."""
+    reply = _codex_complete(_chat_prompt(question, history, facts))
+    reply, actions = _parse_actions(reply)
     audited, stripped = _audit_reply(reply, facts)
     return audited, actions, stripped
 
@@ -733,14 +782,7 @@ def _parse_assistant_reply(reply):
             if out:
                 return out, None, []
         return None, None, None  # marker present, nothing recoverable
-    actions = []
-    ma = re.search(r"^\s*ACTIONS\s*[:：]\s*(.+)$", reply, re.M)
-    if ma:
-        for tok in re.split(r"[,，、]", ma.group(1).strip()):
-            tok = tok.strip()
-            if tok in _CHAT_ACTION_IDS:
-                actions.append(_CHAT_ACTION_IDS[tok])
-        reply = (reply[:ma.start()] + reply[ma.end():]).strip()
+    reply, actions = _parse_actions(reply)
     return [], reply, actions
 
 
