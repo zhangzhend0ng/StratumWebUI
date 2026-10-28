@@ -60,6 +60,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 from urllib.parse import parse_qs, quote, urlparse
 
+# v0.40: the agent tool registry lives in agent_tools.py (repo root in dev,
+# app/ next to this file in the plugin — the plugin entry puts that dir on
+# sys.path before exec'ing this module).
+import agent_tools
+
 HOST = "127.0.0.1"
 
 
@@ -358,17 +363,11 @@ _CHAT_INSTRUCTIONS = (
 # happens on the user's Apply click (checkpoint kept for revert).
 ASSISTANT_MAX_STEPS = 6
 ASSISTANT_MAX_CALLS = 8
-ASSISTANT_TOOLS = {
-    "get_print_context": ("host", "盘面对象清单（名称/实例/体积数/选中态）"),
-    "run_analysis": ("host", "对当前选中对象跑完整 Stratum 分析（真实引擎，重；"
-                             "每次提问至多调用 1 次）"),
-    "get_analysis": ("server", "当前会话分析事实块（SF/结论/警告/建议/调优）"),
-    "read_gcode": ("server", "已挂载切片 G-code 的有界摘录，"
-                             "args={head_lines,tail_lines}（0-200）"),
-    "propose_settings": ("host", "生成对象参数修改提案：args={values:{键:值}}。"
-                                 "只读比对不写入；面板向用户展示 diff，"
-                                 "用户点「应用」后才真正写回"),
-}
+# v0.40: the tool surface is declared ONCE in agent_tools.py (single source
+# of truth). The legacy text track keeps its frozen face: text_registry()
+# reproduces the v0.39 dict (names/order/sides/descriptions) byte-for-byte
+# — test-asserted in tests/test_agent.py §2.
+ASSISTANT_TOOLS = agent_tools.text_registry()
 _ASSISTANT_INSTRUCTIONS = (
     "你是 Snapmaker Orca 里 Stratum 可打印性分析插件的 AI 打印助手。"
     "这就是一个正常对话：像懂打印的同事一样说话，不写报告腔。\n"
@@ -474,6 +473,48 @@ def _chat_facts(sess):
     # (the page's warning lines) — in the whitelist by construction
     lines.append("参考阈值: 应力覆盖率告警 70，热区覆盖比告警 0.5 与 2，SF 分带 1 与 3")
     return "\n".join(lines)[:CHAT_FACTS_CAP]
+
+
+def _tool_get_analysis(token):
+    """Shared get_analysis body: legacy /api/assistant/tool endpoint and the
+    FC registry handler both land here (one implementation, two protocols)."""
+    with _session_lock:
+        session = _sessions.get(token)
+    if session is None:
+        return False, "分析会话已失效（服务重启/会话过期）——请重新选取模型并分析"
+    if not session.get("last_report"):
+        return False, "还没有分析报告——先选取模型并分析"
+    return True, _chat_facts(session)
+
+
+def _tool_read_gcode(token, head, tail):
+    """Shared read_gcode body. Error precedence matches the v0.39 endpoint
+    exactly (stale-token 200 → no-gcode 400 → head/tail 400 → read 400);
+    raises ValueError where the legacy endpoint answered 400, returns
+    (False, message) for the stale-token channel."""
+    with _session_lock:
+        session = _sessions.get(token)
+    if session is None:
+        return False, "分析会话已失效（服务重启/会话过期）——请重新选取模型并分析"
+    path = session.get("gcode_path")
+    if not path or not os.path.isfile(path):
+        raise ValueError("该会话未挂载切片 G-code——先完成一次切片评估")
+    head = _validated_int(head, 0, 200)
+    tail = _validated_int(tail, 0, 200)
+    if head is None or tail is None:
+        raise ValueError("head_lines/tail_lines 需为 0-200 整数")
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        raise ValueError("读取 G-code 失败: %s" % exc)
+    excerpt = lines[:head] + (["... (%d 行省略) ...\n" % max(0, len(lines) - head - tail)]
+                              if len(lines) > head + tail else []) \
+        + (lines[-tail:] if tail else [])
+    blob = "".join(excerpt)
+    if len(blob) > 16384:
+        blob = blob[:16384] + "\n... (截断) ..."
+    return True, {"total_lines": len(lines), "excerpt": blob}
 
 
 def _audit_reply(reply, facts):
@@ -1982,6 +2023,20 @@ def validated_env(env):
             value = int(value)
         out[name] = value
     return out
+
+
+# v0.40: registry ctx — the capabilities agent_tools' server handlers may
+# use. Injection (not import-from-agent) keeps the dependency direction
+# one-way. run_analysis (programmatic engine rerun) joins in v0.40 T6.
+agent_tools.init_server_ctx({
+    "sessions": _sessions,
+    "session_lock": _session_lock,
+    "facts": _tool_get_analysis,
+    "gcode_excerpt": _tool_read_gcode,
+    "presets": lambda: presets_for(MATERIALS, PATTERNS),
+    "param_meta": lambda: PARAM_META,
+    "validate_env": validated_env,
+})
 
 
 BASE_PROFILE_MAX_BYTES = 256 * 1024
@@ -3892,50 +3947,24 @@ class StratumHandler(BaseHTTPRequestHandler):
         if ASSISTANT_TOOLS[name][0] != "server":
             raise ValueError("%s 是宿主工具——经面板桥在 Orca 内执行，不走服务端" % name)
         if name == "get_analysis":
-            try:
-                session = self._session(body)
-            except ValueError:
-                # stale token reaches the MODEL as a tool error — make it an
-                # actionable Chinese sentence, not the raw English 400 text
-                _send_json(self, 200, {"ok": False,
-                                       "error": "分析会话已失效（服务重启/会话过期）"
-                                                "——请重新选取模型并分析"})
-                return
-            if not session.get("last_report"):
-                _send_json(self, 200, {"ok": False,
-                                       "error": "还没有分析报告——先选取模型并分析"})
-                return
-            _send_json(self, 200, {"ok": True, "result": _chat_facts(session)})
+            # shared body (also serves the FC registry handler); the stale
+            # token reaches the MODEL as a tool error — an actionable Chinese
+            # sentence, not the raw English 400 text
+            ok, payload = _tool_get_analysis(body.get("token"))
+            if not ok:
+                _send_json(self, 200, {"ok": False, "error": payload})
+            else:
+                _send_json(self, 200, {"ok": True, "result": payload})
             return
         # read_gcode: bounded excerpt of the attached slice (untrusted text
         # to the model — data, never instructions; hard caps both ways)
-        try:
-            session = self._session(body)
-        except ValueError:
-            _send_json(self, 200, {"ok": False,
-                                   "error": "分析会话已失效（服务重启/会话过期）"
-                                            "——请重新选取模型并分析"})
+        ok, payload = _tool_read_gcode(body.get("token"),
+                                       args.get("head_lines", 40),
+                                       args.get("tail_lines", 40))
+        if not ok:
+            _send_json(self, 200, {"ok": False, "error": payload})
             return
-        path = session.get("gcode_path")
-        if not path or not os.path.isfile(path):
-            raise ValueError("该会话未挂载切片 G-code——先完成一次切片评估")
-        head = _validated_int(args.get("head_lines", 40), 0, 200)
-        tail = _validated_int(args.get("tail_lines", 40), 0, 200)
-        if head is None or tail is None:
-            raise ValueError("head_lines/tail_lines 需为 0-200 整数")
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                lines = fh.readlines()
-        except OSError as exc:
-            raise ValueError("读取 G-code 失败: %s" % exc)
-        excerpt = lines[:head] + (["... (%d 行省略) ...\n" % max(0, len(lines) - head - tail)]
-                                  if len(lines) > head + tail else []) \
-            + (lines[-tail:] if tail else [])
-        blob = "".join(excerpt)
-        if len(blob) > 16384:
-            blob = blob[:16384] + "\n... (截断) ..."
-        _send_json(self, 200, {"ok": True, "result": {
-            "total_lines": len(lines), "excerpt": blob}})
+        _send_json(self, 200, {"ok": True, "result": payload})
 
     def log_message(self, fmt, *args):
         pass  # keep the console clean; use _log for real events

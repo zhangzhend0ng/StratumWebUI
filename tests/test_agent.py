@@ -150,9 +150,49 @@ def test_registry(at):
     check("T1 小结果不截断", not cut2 and text2 == '{"x": 1}')
 
 
+# ==== §2 red lines ==========================================================
+
+_FORBIDDEN = [r"stratum_orca", r"\borca\.host\b", r"^\s*import orca\b",
+              r"^\s*from orca", r"^\s*import server\b", r"stratum_server"]
+
+
+def test_red_lines():
+    for fname in ("agent_tools.py", "agent_harness.py"):
+        path = os.path.join(ROOT, fname)
+        if not os.path.isfile(path):
+            check("T2 红线 %s 存在且干净" % fname, False, "file missing")
+            continue
+        src = open(path, encoding="utf-8").read()
+        for pat in _FORBIDDEN:
+            check("T2 红线 %s 无 %s" % (fname, pat),
+                  re.search(pat, src, re.M) is None)
+
+
+_LEGACY_LISTING = """- get_print_context: 盘面对象清单（名称/实例/体积数/选中态）
+- run_analysis: 对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）
+- get_analysis: 当前会话分析事实块（SF/结论/警告/建议/调优）
+- read_gcode: 已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）
+- propose_settings: 生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回"""
+
+
+def test_legacy_parity(at):
+    check("T2 文本清单与 v0.39 字节等价", at.text_listing() == _LEGACY_LISTING,
+          repr(at.text_listing()[:120]))
+    reg = at.text_registry()
+    check("T2 text_registry 形状=旧 ASSISTANT_TOOLS",
+          list(reg.items()) == [
+              ("get_print_context", ("host", "盘面对象清单（名称/实例/体积数/选中态）")),
+              ("run_analysis", ("host", "对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）")),
+              ("get_analysis", ("server", "当前会话分析事实块（SF/结论/警告/建议/调优）")),
+              ("read_gcode", ("server", "已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）")),
+              ("propose_settings", ("host", "生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回"))])
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
+    test_red_lines()
+    test_legacy_parity(at)
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0

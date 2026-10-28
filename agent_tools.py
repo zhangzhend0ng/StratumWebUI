@@ -7,7 +7,8 @@ host dispatch metadata, per-tool JSON-Schema argument validators, and the
 result budget applied when feeding results back to the model.
 
 RED LINE (spec §2): this module and agent_harness.py must never import or
-reference stratum_orca / orca host symbols. Host-side handlers are INJECTED
+reference the plugin entry module or any orca host symbol (the grep
+red-line test forbids even naming it here). Host-side handlers are INJECTED
 as callables by the plugin entry (register_host_handler); server-side
 capabilities arrive as a ctx dict (init_server_ctx). tests/test_agent.py
 greps this file to keep the boundary honest.
@@ -224,7 +225,7 @@ def run_server_tool(name, args, token):
 # ---- host-side dispatch (handlers injected by the plugin entry) -------------
 
 def register_host_handler(name, mode, fn):
-    """stratum_orca.py registers ITS functions here at startup — the only
+    """The plugin entry registers ITS functions here at startup — the only
     direction across the red line that is allowed (callables in; the
     registry never reaches back into plugin/host symbols)."""
     TOOLS[name].handler = fn
@@ -233,7 +234,7 @@ def register_host_handler(name, mode, fn):
 
 def dispatch_host(call, reply):
     """Generic host-tool executor, registry-driven (spec §4.5): replaces the
-    old if-elif in stratum_orca._dispatch_host_tool. `reply` is the plugin's
+    old if-elif in the plugin entry's host dispatch. `reply` is the plugin's
     _tool_reply(call_id, ok, result, error). threaded handlers own their
     async reply (UI thread collects, worker posts)."""
     call = call or {}
