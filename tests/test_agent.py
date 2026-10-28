@@ -188,11 +188,43 @@ def test_legacy_parity(at):
               ("propose_settings", ("host", "生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回"))])
 
 
+# ==== §3 event bus / tickets ================================================
+
+def test_event_bus(ah):
+    store = ah.Store()
+    conv = store.create("q", None, [])
+    check("T3 conv 创建可查", conv.id and store.get(conv.id) is conv)
+    t1 = store.issue_ticket(conv.id)
+    check("T3 ticket 一次性：首次消费成功", store.consume_ticket(t1) is conv)
+    check("T3 ticket 一次性：二次消费失败", store.consume_ticket(t1) is None)
+    t2 = store.issue_ticket(conv.id)
+    check("T3 新票可用", store.consume_ticket(t2) is conv)
+    e1 = conv.publish("turn_start", question="q")
+    e2 = conv.publish("tool_done", tool="x", ok=True)
+    check("T3 seq 单调", e2["seq"] == e1["seq"] + 1 == 2)
+    check("T3 游标补拉只给更新的",
+          [e["seq"] for e in conv.events_since(1)] == [2])
+    check("T3 游标补拉全量",
+          [e["seq"] for e in conv.events_since(0)] == [1, 2])
+    slot = conv.reserve_host("call-1")
+    check("T3 host 槽位初始无结果", slot["result"] is None)
+    got = conv.resolve_host("call-1", True, result={"a": 1})
+    check("T3 host 结果置位",
+          got and slot["event"].is_set()
+          and slot["result"] == {"ok": True, "result": {"a": 1}, "error": None})
+    check("T3 未知 call_id 解析失败", conv.resolve_host("nope", True) is False)
+    conv.created = time.time() - ah.CONV_TTL_S - 1
+    conv.done = True
+    store.sweep()
+    check("T3 TTL 清扫过期会话", store.get(conv.id) is None)
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
     test_red_lines()
     test_legacy_parity(at)
+    test_event_bus(import_agent_harness())
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0

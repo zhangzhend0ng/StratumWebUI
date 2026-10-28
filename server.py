@@ -62,8 +62,9 @@ from urllib.parse import parse_qs, quote, urlparse
 
 # v0.40: the agent tool registry lives in agent_tools.py (repo root in dev,
 # app/ next to this file in the plugin — the plugin entry puts that dir on
-# sys.path before exec'ing this module).
+# sys.path before exec'ing this module). agent_harness owns the turn loop.
 import agent_tools
+import agent_harness
 
 HOST = "127.0.0.1"
 
