@@ -95,8 +95,11 @@ def test_registry(at):
                                       "has_report": True})]
     expected = set(legacy) | {"what_if", "get_tier_comparison",
                               "read_object_config"}
-    check("T1 FC 数组=legacy+3 新工具（fc 轨）", set(fc) == expected,
-          str(sorted(set(fc) ^ expected)))
+    # superset semantics: the phase-1 tools must be present; the registry
+    # grows by design (one declaration per new tool) so a closed equality
+    # would break on every legitimate addition
+    check("T1 FC 数组含 legacy+3 新工具（fc 轨，超集）",
+          expected <= set(fc), str(sorted(expected - set(fc))))
     listing = at.text_listing()
     for n in legacy:
         check("T1 文本清单含 %s" % n, ("- %s: " % n) in listing)
@@ -148,6 +151,16 @@ def test_registry(at):
           and "截断" in text)
     text2, cut2 = at.truncate_result("get_tier_comparison", {"x": 1})
     check("T1 小结果不截断", not cut2 and text2 == '{"x": 1}')
+    # T10 acceptance assertions (red until the demo commit lands the tool)
+    check("T10 get_report_section 已声明", "get_report_section" in tools)
+    fc_all = [t["function"]["name"]
+              for t in at.fc_tools_array({"gcode_attached": True,
+                                          "has_report": True})]
+    check("T10 FC 数组含 get_report_section", "get_report_section" in fc_all)
+    ok, err = at.validate_args("get_report_section", {"section": "phase_b"})
+    check("T10 get_report_section 合法枚举过", ok, err)
+    ok, err = at.validate_args("get_report_section", {"section": "nope"})
+    check("T10 get_report_section 非法枚举被拒", not ok, err)
 
 
 # ==== §2 red lines ==========================================================
@@ -918,6 +931,26 @@ def test_first_batch_tools():
     check("T9 read_object_config 服务端拒绝", not ok)
 
 
+def test_report_section_tool():
+    srv = import_server()
+    srv_agent = srv.agent_tools
+    ok, payload = srv_agent.run_server_tool("get_report_section",
+                                            {"section": "phase_b"}, None)
+    check("T10 get_report_section 无会话可操作错误",
+          not ok and "还没有分析报告" in str(payload), str(payload))
+    tok = _upload_sample_session(srv)
+    ok, payload = srv_agent.run_server_tool("get_report_section",
+                                            {"section": "phase_b"}, tok)
+    check("T10 get_report_section 返回分节原文",
+          ok and "phase_b" in payload and payload["phase_b"],
+          str(payload)[:120] if ok else str(payload))
+    ok, payload = srv_agent.run_server_tool("get_report_section",
+                                            {"section": "calibration"}, tok)
+    check("T10 get_report_section 缺节走可操作错误或整节返回",
+          (not ok and "没有分节" in str(payload))
+          or (ok and "calibration" in payload), str(payload)[:120])
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
@@ -938,6 +971,7 @@ def main():
     test_sse_stream()
     test_host_dispatch()
     test_first_batch_tools()
+    test_report_section_tool()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
     return 1 if FAILURES else 0
