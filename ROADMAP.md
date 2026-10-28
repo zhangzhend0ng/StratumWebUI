@@ -1128,6 +1128,50 @@
   类组合+CSS 代码审阅覆盖）；「换」按钮的 pinned 态跨分析保留语义
   （未单独 E2E）；W19 首屏高度守卫 1600 为本机口径（同 E13h 判例）
 
+### v0.41.0 — 引擎接口迁移批 ER-1/2/4/7（iter-886 引擎配套，2026-10-29）
+
+> 引擎 0.27.1（bin/ 同步 iter-886）落地了 `docs/engine-interface-
+> requirements-2026-10-28.md` 的四条：本批是 UI 侧的配套迁移。全部
+> 新字段带消费测试（需求书 §4.2），老引擎共存路径逐条保留。
+
+- [x] **ER-1 rejected_values 结构化**（`stratum_orca.py` `_parse_rejected_keys`）：
+      删 `_RE_REJECT` 正则主路径，改读报告顶层
+      `rejected_values:[{key,value,reason,source}]`（全 source 透传——
+      project_settings/base-profile 一视同仁，source 是披露不是过滤器）；
+      字段在场即权威（空表=无拒收），缺场（<iter-886 引擎）回退
+      `_RE_REJECT_LEGACY` 正则。`_collect_suggestion_values` 同步消费
+      ER-4 `recommended_text`（set 项 null 值的机器可用 token，如
+      brim_type→"auto_brim"，逐字写回不再跳过）
+- [x] **ER-2 --capabilities 能力握手**（`server.py`）：探针链变
+      capabilities → --schema → usage 正则 → 静态表（老引擎共存硬要求）。
+      新 `probe_capabilities` + `_caps_to_doc` 归一化（下游
+      _enum_values/_apply_schema_domains 零改动消费）；`_SCHEMA_CACHE`
+      增 caps/caps_version 槽；`engine_version` 优先级 caps > schema >
+      VERSION.txt；`_refresh_select_surfaces` 优先 caps 枚举；
+      `/api/status` 新增 `engine_capabilities`；`_FALLBACK_FLAGS` 标注
+      「capabilities-missing fallback only」。对拍：caps 单次握手重建的
+      枚举面/值域/lockable 与 --schema 探针逐项一致（T64b 钉住）
+- [x] **ER-7 阈值机读披露**：报告顶层 `thresholds` 块（sf_band 三界 +
+      coverage_pct_warn + patch_coverage_ratio_low/high）三处消费——
+      `_chat_facts` 参考阈值行改由报告构造（白名单 by construction 保持：
+      数字本就出自 facts）、plugin.html 调优卡三条警告线、report.js
+      renderGcodeTune 同族三线（第三处硬编码点，同批收编）；字面量全部
+      降为老引擎回退
+- [x] **ER-4 提案键集断言**（`tests/test_agent.py` §8/T8）：
+      `set(提案键) == (recommended_value 非空 ∪ recommended_text 在场)
+      ∪ rejected_values 键`——经 `_collect_suggestion_values` 真代码路径
+      对合成 fixture 与真引擎报告（对拍）双验；合法偏离（rejected 键
+      无出厂默认可修→披露不提案）在测试注释中文档化
+- [x] **SUPPORTED_SCHEMA (2,3,4)**：v4（引擎 0.28.0）对 v3 纯增量
+      （新顶层块 rejected_values/thresholds），前瞻接纳；T25 的
+      fail-loud 边界移到 5
+- 配套：UI_VERSION 0.41.0；make-plugin.sh 重出 dist（vendored
+      server.py/agent_tools.py/plugin.html byte-identical）
+- 验证：smoke **158/158**（原 157+T64b 1；T12/T25/T64/T65 随契约迁移
+      重订——源集合加 engine-caps、schema 4 转正、T65 改钉 caps 版本与
+      engine_capabilities）；agent **122/122**（原 116+T8 6）；repair
+      **20/20**（原 18+结构化解析 2）；selection **15/15**
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 
