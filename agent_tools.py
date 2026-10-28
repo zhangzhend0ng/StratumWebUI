@@ -325,6 +325,21 @@ tool("get_tier_comparison", "server",
      "用它，不要凭记忆报数。",
      tracks=("fc",))
 
+tool("get_report_section", "server",
+     "读取当前会话最近分析报告的指定分节原文：args={section}，可选 "
+     "input/phase_a/phase_b/phase_d/warnings/recommendations/orca_suggestions/"
+     "calibration/machine_limits/process_optimization。需要事实块之外的"
+     "细节数据时用它，数字必须逐字引用返回值。",
+     input_schema={
+         "type": "object",
+         "properties": {"section": {"type": "string", "enum": [
+             "input", "phase_a", "phase_b", "phase_d", "warnings",
+             "recommendations", "orca_suggestions", "calibration",
+             "machine_limits", "process_optimization"]}},
+         "required": ["section"], "additionalProperties": False},
+     result_budget=4000, per_turn_call_cap=2,
+     tracks=("fc",))
+
 tool("read_object_config", "host",
      "读取选取对象当前的对象级参数配置：args={keys:[参数名]}（可选，缺省="
      "最近报告涉及的建议/非法键，至多 50 个）。返回 {键: 值}，null 表示该"
@@ -358,6 +373,18 @@ def _srv_read_gcode(ctx, args, token):
 
 def _srv_tier_comparison(ctx, args, token):
     return {"tiers": ctx["presets"]()}
+
+
+def _srv_report_section(ctx, args, token):
+    with ctx["session_lock"]:
+        sess = (ctx["sessions"] or {}).get(token) or {}
+        report = sess.get("last_report")
+    if not report:
+        raise ValueError("还没有分析报告——先选取模型并分析")
+    section = report.get(args["section"])
+    if section is None:
+        raise ValueError("报告没有分节 %s（该次分析未产出该节）" % args["section"])
+    return {args["section"]: section}
 
 
 def _param_in_range(meta_row, value):
@@ -418,4 +445,5 @@ def _srv_what_if(ctx, args, token):
 TOOLS["get_analysis"].handler = _srv_get_analysis
 TOOLS["read_gcode"].handler = _srv_read_gcode
 TOOLS["get_tier_comparison"].handler = _srv_tier_comparison
+TOOLS["get_report_section"].handler = _srv_report_section
 TOOLS["what_if"].handler = _srv_what_if
