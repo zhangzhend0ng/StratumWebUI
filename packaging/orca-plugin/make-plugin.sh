@@ -50,6 +50,9 @@ cp "$repo/server.py" "$repo/index.html" "$repo/report.js" "$repo/stl-preview.js"
 # (/plugin.html); the panel iframe points here. The standalone WebUI files
 # above still ship for browser-tab debugging.
 cp "$here/plugin.html" "$dest/app/plugin.html"
+# v0.10: the agent modules ride next to server.py (its plain imports resolve
+# via sys.path — stratum.py appends app/ in the server thread).
+cp "$repo/agent_tools.py" "$repo/agent_harness.py" "$dest/app/"
 # v0.7.2: bundled dependency wheels. NOT at the plugin root — discovery
 # treats any root .whl next to the .py entry as a second entry and rejects
 # the plugin ("contains both .py and .whl entry files", PluginFsUtils). The
@@ -250,8 +253,8 @@ print("chat settings: DeepSeek default from DEEPSEEK_API_KEY")
 PYEOF
 fi
 
-python -m py_compile "$dest/stratum.py"
-rm -rf "$dest/__pycache__"
+python -m py_compile "$dest/stratum.py" "$dest/app/agent_tools.py" "$dest/app/agent_harness.py"
+rm -rf "$dest/__pycache__" "$dest/app/__pycache__"
 
 # Distributable zip: stratum/ at the archive root (unzip into orca_plugins/
 # or use the Plugins dialog's local-install). port.txt/logs can only exist
