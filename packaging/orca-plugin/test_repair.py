@@ -44,6 +44,9 @@ _spec.loader.exec_module(mod)
 
 # Real engine output (iter 883, format_ignored_keys_warning — physical and
 # advisory rejects share this wording; the rejected list is uncapped).
+# Engine iter 886+ discloses the same rejects STRUCTURED in the report's
+# top-level rejected_values field, so this prose line is now only the
+# pre-iter-886 fallback fixture (see t_parse_legacy_fallback).
 REAL_WARN = ("3mf project_settings: key 'gap_infill_speed' value '2504' "
              "rejected (out of range or unparsable); value not applied; "
              "key 'reduce_crossing_wall' value 'maybe' rejected "
@@ -51,9 +54,46 @@ REAL_WARN = ("3mf project_settings: key 'gap_infill_speed' value '2504' "
              "key 'skirt_loops' value '99' rejected (out of range or "
              "unparsable); value not applied;")
 
+# Real engine output (iter 886, ER-1): rejected_values carries every reject
+# the warnings prose discloses, with a machine-readable source. Sources
+# observed: "project_settings" (3MF metadata) and "base-profile" (the
+# server-side base-profile channel) — ALL are forwarded by the parser.
+REAL_REJECTED = [
+    {"key": "gap_infill_speed", "value": "2504",
+     "reason": "above max 1000", "source": "project_settings"},
+    {"key": "skirt_loops", "value": "99",
+     "reason": "above max 10", "source": "project_settings"},
+    {"key": "wall_loops", "value": "77",
+     "reason": "out of range or unparsable (engine loader check)",
+     "source": "base-profile"},
+]
+
 
 # ---- pure: parser ----------------------------------------------------------
-def t_parse_real():
+def t_parse_structured():
+    # ER-1 primary path: every entry forwarded, ALL sources included
+    # (base-profile rejects are repaired like any other — the source is
+    # disclosure, not a filter).
+    got = mod._parse_rejected_keys({"rejected_values": REAL_REJECTED})
+    assert got == {"gap_infill_speed": "2504", "skirt_loops": "99",
+                   "wall_loops": "77"}, got
+
+
+def t_parse_structured_shapes():
+    # malformed entries are skipped fail-soft; a non-string value coerces
+    # (the engine spells values as strings; numbers tolerated)
+    got = mod._parse_rejected_keys({"rejected_values": [
+        {"key": "skirt_loops", "value": "99"},
+        {"key": None, "value": "1"}, "junk", {"value": "2"},
+        {"key": "wall_loops", "value": 77}]})
+    assert got == {"skirt_loops": "99", "wall_loops": "77"}, got
+    # present-but-empty field is authoritative: no rejects, no prose fallback
+    assert mod._parse_rejected_keys(
+        {"rejected_values": [], "warnings": [REAL_WARN]}) == {}
+
+
+def t_parse_legacy_fallback():
+    # pre-iter-886 engines lack rejected_values -> warnings-regex fallback
     got = mod._parse_rejected_keys({"warnings": [REAL_WARN]})
     assert got == {"gap_infill_speed": "2504",
                    "reduce_crossing_wall": "maybe",
@@ -61,6 +101,7 @@ def t_parse_real():
 
 
 def t_parse_dict_warning():
+    # legacy fallback also accepts dict-shaped warnings
     got = mod._parse_rejected_keys({"warnings": [
         {"message": "key 'skirt_loops' value '99' rejected (x)"}]})
     assert got == {"skirt_loops": "99"}, got

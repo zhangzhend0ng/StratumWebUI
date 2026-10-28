@@ -875,6 +875,155 @@ def test_host_dispatch():
                 sys.modules[k] = v
 
 
+# ==== §8 ER-4 proposal key-set invariant (engine iter-886 contract) ========
+
+def _plugin_with_report(report, preset_cfg):
+    """Load stratum_orca.py under the orca stub with `report` installed as
+    the pick session's last_report (the same surface §7 builds) and a fake
+    factory-default preset (test_repair.py shape) so rejected-key repairs
+    can source defaults. Returns (module, restore_fn)."""
+    tmp = tempfile.mkdtemp(prefix="stratum-agent-er4-")
+    import shutil as _sh
+    _sh.copy(os.path.join(ROOT, "packaging", "orca-plugin",
+                          "stratum_orca.py"),
+             os.path.join(tmp, "stratum_orca.py"))
+    saved_modules = {k: sys.modules.pop(k, None)
+                     for k in ("orca", "stratum_server",
+                               "stratum_orca_er4")}
+    saved_path = list(sys.path)
+    sys.path.insert(0, tmp)
+
+    class _Preset(object):
+        def __init__(self, name, is_default, cfg):
+            self._n, self._d, self._c = name, is_default, cfg
+
+        def name(self):
+            return self._n
+
+        def is_default(self):
+            return self._d
+
+        def config_keys(self):
+            return list(self._c)
+
+        def config_value(self, key):
+            return self._c[key]
+
+    class _Coll(object):
+        def __init__(self, presets):
+            self._p = presets
+
+        def size(self):
+            return len(self._p)
+
+        def preset(self, i):
+            return self._p[i]
+
+    orca_stub = types.ModuleType("orca")
+    orca_stub.script = types.SimpleNamespace(
+        ScriptPluginCapabilityBase=object)
+    orca_stub.plugin = lambda *a, **k: (lambda f: f)
+    orca_stub.base = object
+    orca_stub.host = types.SimpleNamespace(
+        preset_bundle=lambda: types.SimpleNamespace(prints=_Coll([
+            _Preset("0.06 Standard", False, {}),
+            _Preset("Default Setting", True, preset_cfg)])))
+    sys.modules["orca"] = orca_stub
+    so = _load_module(os.path.join(tmp, "stratum_orca.py"),
+                      "stratum_orca_er4")
+    srv_stub = types.SimpleNamespace(
+        _sessions={"er4tok": {"last_report": report}},
+        _session_lock=threading.Lock())
+    sys.modules["stratum_server"] = srv_stub
+    so._last_pick.update({"token": "er4tok", "object_id": 1,
+                          "name": "er4"})
+
+    def restore():
+        sys.path[:] = saved_path
+        for k, v in saved_modules.items():
+            if v is not None:
+                sys.modules[k] = v
+    return so, restore
+
+
+def test_proposal_keyset():
+    """ER-4 acceptance: 提案键集 = 有实值建议 ∪ rejected 键。
+
+    The invariant asserted over _collect_suggestion_values (the write-back
+    proposal collector): set(proposed keys) == (orca_suggestions items with
+    recommended_value != null OR recommended_text present) ∪ (report
+    rejected_values keys). LEGITIMATE DIVERGENCE (documented, not asserted
+    here): a rejected key that cannot be sourced a factory default is
+    disclosed in the repair note suffix and NOT proposed — never guessed —
+    so the fixture makes every rejected key repairable and the equality is
+    exact; the real-engine part below re-derives the expected side from
+    the engine's own output (对拍)."""
+    report = {
+        "orca_suggestions": {"items": [
+            {"parameter": "brim_width", "action": "set",
+             "recommended_value": 20.0},
+            {"parameter": "brim_type", "action": "set",
+             "recommended_value": None,
+             "recommended_text": "auto_brim"},
+            {"parameter": "pressure_advance", "action": "note",
+             "recommended_value": None},
+        ]},
+        "rejected_values": [
+            {"key": "skirt_loops", "value": "99",
+             "reason": "above max 10", "source": "project_settings"},
+            {"key": "gap_infill_speed", "value": "2504",
+             "reason": "above max 1000", "source": "base-profile"},
+        ],
+    }
+    preset_cfg = {"skirt_loops": 10, "gap_infill_speed": "150,150"}
+    so, restore = _plugin_with_report(report, preset_cfg)
+    try:
+        values, skipped, note = so._collect_suggestion_values()
+        expected = ({"brim_width", "brim_type"}   # 有实值建议（值或 token）
+                    | {"skirt_loops", "gap_infill_speed"})  # rejected 键
+        check("T8 提案键集 = 有实值建议 ∪ rejected 键",
+              set(values) == expected,
+              "%s vs %s" % (sorted(values), sorted(expected)))
+        check("T8 recommended_text 进提案（值逐字）",
+              values.get("brim_type") == "auto_brim",
+              repr(values.get("brim_type")))
+        check("T8 note 项不进提案（披露为跳过）",
+              skipped == ["pressure_advance"]
+              and "pressure_advance" not in values, str(skipped))
+        check("T8 rejected 键修复取出厂默认值",
+              values.get("skirt_loops") == "10"
+              and values.get("gap_infill_speed") == "150,150",
+              "%r %r" % (values.get("skirt_loops"),
+                         values.get("gap_infill_speed")))
+        check("T8 修复披露进 note（不静默）",
+              "skirt_loops 99→10" in note and "gap_infill_speed" in note,
+              note)
+    finally:
+        restore()
+    # 与引擎输出对拍：同一不变式对真引擎报告成立（sample STL 无拒收值，
+    # rejected 侧为空 → 等式退化为建议侧，期望集逐项来自真报告）
+    srv = import_server()
+    tok = _upload_sample_session(srv)
+    with srv._session_lock:
+        real = srv._sessions[tok].get("last_report") or {}
+    so, restore = _plugin_with_report(real, {})
+    try:
+        # point the plugin at the REAL server module + session
+        sys.modules["stratum_server"] = srv
+        so._last_pick["token"] = tok
+        values, _skipped, _note = so._collect_suggestion_values()
+        items = ((real.get("orca_suggestions") or {}).get("items")) or []
+        expected = {i["parameter"] for i in items
+                    if isinstance(i, dict) and i.get("parameter")
+                    and (i.get("recommended_value") is not None
+                         or i.get("recommended_text"))}
+        expected |= set(so._parse_rejected_keys(real))
+        check("T8 真引擎报告提案键集不变式", set(values) == expected,
+              "%s vs %s" % (sorted(values), sorted(expected)))
+    finally:
+        restore()
+
+
 # ==== §9 first-batch server tools over the REAL registry ctx ==============
 
 def _upload_sample_session(srv):
@@ -970,6 +1119,7 @@ def main():
     test_e2e_fc_loop()
     test_sse_stream()
     test_host_dispatch()
+    test_proposal_keyset()
     test_first_batch_tools()
     test_report_section_tool()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,

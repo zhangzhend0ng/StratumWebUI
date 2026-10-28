@@ -877,27 +877,54 @@ def _start_gcode_flow():
 
 # ---- v0.8 rejected-value repair (engine iter 883 consumption) -----------
 #
-# The engine's legality gate rejects illegal values at 3MF load and
-# discloses them in warnings[] via format_ignored_keys_warning — one
-# wording for physical and advisory keys alike, and the rejected list is
-# NOT capped, so every reject is parseable from the report. Suggestions
+# The engine's legality gate rejects illegal values at 3MF load. Since
+# engine iter 886 (ER-1) the rejects are disclosed STRUCTURED in the
+# report's top-level rejected_values field ({key, value, reason, source});
+# before that they were only parseable from warnings[] prose (one wording
+# for physical and advisory keys alike, uncapped). _parse_rejected_keys
+# reads the field first and keeps the prose regex only as the pre-iter-886
+# fallback. Suggestions
 # already carry legal values for the keys they touch; the repair closes
 # the remaining gap: a rejected key WITHOUT a suggestion gets the
 # factory-default preset's serialized value written back VERBATIM. No
 # parsing, no range table, no defaults hardcoded here — the legality
 # authority stays inside Orca itself ('Default Setting', is_default).
 
-_RE_REJECT = re.compile(r"key '([^']+)' value '([^']+)' rejected")
+# Engine iter 886 (ER-1): rejected values are disclosed STRUCTURED at the
+# report top level — rejected_values: [{key, value, reason, source}] — and
+# warnings[] keeps a human-worded line whose wording is free to change. The
+# regex below parses that wording and is ONLY the fallback for engines
+# built before iter 886 (old-engine coexistence).
+_RE_REJECT_LEGACY = re.compile(r"key '([^']+)' value '([^']+)' rejected")
 
 
 def _parse_rejected_keys(report):
-    """Report -> {key: raw illegal value} from the engine's reject
-    disclosure lines. Fail-soft: any warnings[] shape; no match -> {}."""
+    """Report -> {key: raw illegal value}.
+
+    Primary source (ER-1): the structured report field `rejected_values`
+    ([{key, value, reason, source}]). ALL sources are forwarded —
+    project_settings / base-profile / parse / advisory / legality — the
+    repair fixes the KEY and the source is disclosure only, never a filter.
+    The field is authoritative whenever present (empty list = no rejects);
+    when absent (engine < iter 886) we fall back to the legacy warnings-text
+    regex. Fail-soft: any shape; no match -> {}."""
+    report = report or {}
+    if "rejected_values" in report:
+        out = {}
+        for e in (report.get("rejected_values") or []):
+            if not isinstance(e, dict):
+                continue
+            key = e.get("key")
+            if not isinstance(key, str) or not key:
+                continue
+            raw = e.get("value")
+            out[key] = raw if isinstance(raw, str) else str(raw)
+        return out
     out = {}
-    for w in ((report or {}).get("warnings") or []):
+    for w in (report.get("warnings") or []):
         text = w if isinstance(w, str) else str(
             (w.get("message") if isinstance(w, dict) else w) or "")
-        for key, raw in _RE_REJECT.findall(text):
+        for key, raw in _RE_REJECT_LEGACY.findall(text):
             out[key] = raw
     return out
 
@@ -1009,10 +1036,16 @@ def _collect_suggestion_values():
         key = item.get("parameter")
         if not key:
             continue
-        if item.get("recommended_value") is None:
+        if item.get("recommended_value") is not None:
+            values[key] = _orca_serialize(item["recommended_value"])
+        elif item.get("recommended_text"):
+            # ER-4 (engine iter 886): machine-usable value token for set
+            # items whose recommended_value is null (e.g. brim_type ->
+            # "auto_brim") — written back verbatim, never skipped.
+            values[key] = str(item["recommended_text"])
+        else:
             skipped.append(key)
             continue
-        values[key] = _orca_serialize(item["recommended_value"])
     rejected = _parse_rejected_keys(report)
     repairs, unrepairable = _factory_default_repairs(rejected, values)
     for key, _raw, val in repairs:
