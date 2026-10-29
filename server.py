@@ -63,8 +63,11 @@ from urllib.parse import parse_qs, quote, urlparse
 # v0.40: the agent tool registry lives in agent_tools.py (repo root in dev,
 # app/ next to this file in the plugin — the plugin entry puts that dir on
 # sys.path before exec'ing this module). agent_harness owns the turn loop.
+# v0.42: stratum_session is the engine session client (0.28.0+ warm-rerun
+# path, capabilities-gated).
 import agent_tools
 import agent_harness
+import stratum_session
 
 HOST = "127.0.0.1"
 
@@ -184,7 +187,9 @@ def _validated_float(raw, lo, hi):
 #          （/api/status 新增 engine_capabilities）、rejected_values 结构化
 #          修复链（插件侧）、阈值块机读披露（事实块参考阈值行改读报告）、
 #          SUPPORTED_SCHEMA 前瞻接纳 v4（0.28.0 增量）。
-UI_VERSION = "0.41.0"
+# 0.42.0 — 引擎 0.28.0 接线：what_if 会话温跑（capabilities 门控）+ quick
+#          估价档；gcode_score/gcode_diff agent 工具经统一门面。
+UI_VERSION = "0.42.0"
 
 # PORT is consumed by the bind call (int); GRID is consumed by argv (kept as
 # the original string — a list argv with an int element raises TypeError and
@@ -2262,21 +2267,83 @@ def validated_env(env):
     return out
 
 
-def run_programmatic_analyze(session, params, env, locks=(), persist=False):
+_ENGINE_SESSION = None
+_ENGINE_SESSION_LOCK = threading.Lock()
+
+
+def engine_session():
+    """The shared engine session (None when the engine predates session
+    support — capabilities-gated via ER-2). Spawned lazily on first use;
+    StratumSession self-heals after the engine's idle timeout."""
+    global _ENGINE_SESSION
+    caps = _SCHEMA_CACHE.get("caps") or {}
+    sess_caps = caps.get("session")
+    if not (BINARY and isinstance(sess_caps, dict) and sess_caps.get("supported")):
+        return None
+    with _ENGINE_SESSION_LOCK:
+        if _ENGINE_SESSION is None:
+            _ENGINE_SESSION = stratum_session.StratumSession(BINARY)
+        return _ENGINE_SESSION
+
+
+def _persist_programmatic(session, params, env, report):
+    """Shared persist tail of the programmatic analyze paths (schema gate
+    already passed by the callers)."""
+    with _session_lock:
+        hist = session.setdefault("history", [])
+        hist.append({"seq": session.get("hist_seq", 0) + 1,
+                     "ts": time.strftime("%H:%M:%S"), "compare": False,
+                     "orient": False, "params": params, "env": env,
+                     "locks": [], "summary": _history_summary(report)})
+        session["hist_seq"] = hist[-1]["seq"]
+        session["last_report"] = report
+        del hist[:-MAX_HISTORY]
+
+
+def run_programmatic_analyze(session, params, env, locks=(), persist=False,
+                             estimate=False):
     """v0.40: programmatic single analyze for agent tools (what_if). Same
     argv builder, cancellable runner, marker and schema gates as the HTTP
     path. persist=False (the what_if contract) leaves the session's
     last_report and history untouched — a hypothetical rerun must never
     masquerade as the user's analysis. Returns (True, report) or
-    (False, error_text)."""
+    (False, error_text).
+
+    v0.42 (ER-3): the WARM path goes first — the engine session (0.28.0+,
+    capabilities-gated) keeps geometry+voxelization warm across what_if
+    reruns and answers with the SAME schema report (input.estimate_mode
+    marks estimate runs). estimate=True maps to the session 'estimate' op /
+    CLI --estimate (analytic tier-only judgment — fast, directionally
+    reliable, not a precision number). Falls back to the CLI argv path on
+    session failure or pre-0.28 engines."""
     for name in params:
         if name not in PARAM_FLAGS:
             return False, "unknown parameter: %r" % name
     env = validated_env(env or {})
+    # warm path: one shared session, replace-not-stack query semantics.
+    # FLAG-PARITY GATE (probed 2026-10-29): the session op projects params/
+    # env only — no bonus channels (--orca-suggest et al.), so a report that
+    # PERSISTS into the session (facts block / write-back face) must come
+    # from the CLI argv path. The session serves what_if's即时对比
+    # (phase_b/warnings present) and the estimate tier.
+    sess = engine_session()
+    if sess is not None and not locks and not persist:
+        rep = sess.call("estimate" if estimate else "analyze",
+                        model_path=session["path"], params=params, env=env)
+        if rep.get("ok") and schema_supported(rep.get("report")):
+            report = rep["report"]
+            if persist:
+                _persist_programmatic(session, params, env, report)
+            return True, report
+        # session failure (or schema surprise) -> fall through to the CLI
+        # path below; if that fails too its error text reaches the caller
     report_path = os.path.join(WORK_DIR, "%s.a%s.agent.json" % (
         session["token"], secrets.token_hex(4)))
     args = build_analyze_args(session["path"], params, list(locks), False,
                               report_path, env=env)
+    if estimate:
+        # insert before the trailing --json <path> pair
+        args = args[:-2] + ["--estimate"] + args[-2:]
     with _inflight_lock:
         _batch_cancel.discard(session["token"])
     try:
@@ -2304,16 +2371,70 @@ def run_programmatic_analyze(session, params, env, locks=(), persist=False):
     if not ALLOW_ANY_SCHEMA and not schema_supported(report):
         return False, "引擎报告 schema_version 不受支持"
     if persist:
-        with _session_lock:
-            hist = session.setdefault("history", [])
-            hist.append({"seq": session.get("hist_seq", 0) + 1,
-                         "ts": time.strftime("%H:%M:%S"), "compare": False,
-                         "orient": False, "params": params, "env": env,
-                         "locks": [], "summary": _history_summary(report)})
-            session["hist_seq"] = hist[-1]["seq"]
-            session["last_report"] = report
-            del hist[:-MAX_HISTORY]
+        _persist_programmatic(session, params, env, report)
     return True, report
+
+
+def run_gcode_tool(mode, files, lightweight=False):
+    """v0.42 (ER-8/ER-10): agent-facing gcode score/diff. Routes through
+    the MAIN engine's facade flags (--gcode-score/--gcode-diff) when
+    capabilities declare them (single binary entry, rc notes unified); the
+    companion binary is located via STRATUM_GCODE_DIFF_BIN for the facade's
+    passthrough (our layout is not one the facade auto-discovers, probed
+    2026-10-29). Pre-facade engines fall back to the companion directly.
+    rc=2 (fail-closed verdict) is a LEGAL outcome — the report returns
+    with ok=True, mirroring _gcode_score. Returns (ok, report|error)."""
+    if mode not in ("score", "diff"):
+        return False, "mode 必须是 score|diff"
+    caps = _SCHEMA_CACHE.get("caps") or {}
+    gcaps = caps.get("gcode") or {}
+    facade = BINARY if ("--gcode-%s" % mode in (gcaps.get("facade") or [])) else None
+    companion = GCODE_DIFF_BIN
+    if facade is None and companion is None:
+        return False, ("gcode 工具不可用（stratum.exe 门面未声明且 "
+                       "gcode-diff.exe 未找到）")
+    run_hex = secrets.token_hex(4)
+    json_path = os.path.join(WORK_DIR, "agent.g%s.%s.json" % (run_hex, mode))
+    html_path = json_path[:-5] + ".html"
+    env = dict(os.environ)
+    if facade is not None:
+        argv = [facade, "--gcode-" + mode] + list(files) + \
+            ["--json", json_path, "--html", html_path]
+        if companion is not None:
+            env["STRATUM_GCODE_DIFF_BIN"] = companion
+    else:
+        argv = [companion] + \
+            (["--score", files[0]] if mode == "score" else list(files)) + \
+            ["--json", json_path, "--html", html_path]
+    if mode == "score":
+        argv.append("--no-overhang-viz")  # keep the deep-link payload light
+    if mode == "diff" and lightweight:
+        argv.append("--lightweight-geometry")
+    try:
+        with _engine_slot():
+            proc = subprocess.run(argv, capture_output=True, timeout=180,
+                                  env=env, creationflags=_NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        return False, "gcode 工具超时（180s）"
+    except OSError as exc:
+        return False, "无法启动 gcode 工具: %s" % exc
+    report = None
+    try:
+        with open(json_path, "r", encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError):
+        report = None
+    finally:
+        for p in (json_path, html_path):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    if proc.returncode in (0, 2) and isinstance(report, dict):
+        return True, report
+    return False, "gcode 工具失败 (rc=%d): %s" % (
+        proc.returncode, (proc.stderr or proc.stdout or b"")
+        .decode("utf-8", "replace")[:300])
 
 
 # v0.40: registry ctx — the capabilities agent_tools' server handlers may
@@ -2328,6 +2449,7 @@ agent_tools.init_server_ctx({
     "param_meta": lambda: PARAM_META,
     "validate_env": validated_env,
     "run_analysis": run_programmatic_analyze,
+    "gcode_tool": run_gcode_tool,
 })
 
 

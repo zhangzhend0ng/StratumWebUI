@@ -834,6 +834,15 @@ def test_host_dispatch():
         check("T7 propose_settings 返回提案结构",
               res["ok"] and "old_values" in res["result"]
               and "note" in res["result"], str(res))
+        # 3b) v0.11 提案值闸门：null/none/空串 文案值被拒（可操作错误）
+        so._dispatch_host_tool({"id": "c7", "tool": "propose_settings",
+                                "args": {"values": {"gap_infill_speed": "null"}}})
+        check("T7 propose null 值被拒",
+              replies[-1]["ok"] is False
+              and "null" in replies[-1]["error"], str(replies[-1]))
+        so._dispatch_host_tool({"id": "c8", "tool": "propose_settings",
+                                "args": {"values": {"gap_infill_speed": " "}}})
+        check("T7 propose 空串值被拒", replies[-1]["ok"] is False)
         # 4) 未知工具
         so._dispatch_host_tool({"id": "c2", "tool": "nope", "args": {}})
         check("T7 未知 host 工具错误回复",
@@ -863,8 +872,8 @@ def test_host_dispatch():
               replies[-1]["ok"] is False and not started,
               str(replies[-1] if replies else None))
         # 7) 版本号
-        check("T7 插件版本 0.10.0",
-              re.search(r'^# version = "0\.10\.0"$',
+        check("T7 插件版本 0.11.0",
+              re.search(r'^# version = "0\.11\.0"$',
                         open(os.path.join(ROOT, "packaging", "orca-plugin",
                                           "stratum_orca.py"),
                              encoding="utf-8").read(), re.M) is not None)
@@ -1100,6 +1109,81 @@ def test_report_section_tool():
           or (ok and "calibration" in payload), str(payload)[:120])
 
 
+# ==== §11 engine 0.28.0 wiring: session warm path, estimate, gcode tools ====
+
+def test_engine_session_warm():
+    srv = import_server()
+    sess = srv.engine_session()
+    check("T11 会话可用（capabilities 门控通过，引擎 0.28.0）", sess is not None)
+    if sess is None:
+        return
+    r = sess.call("hello")
+    check("T11 hello ok", bool(r.get("ok")), str(r)[:120])
+    M = os.path.join(ROOT, "sample", "beam_100x10x4.stl")
+    r1 = sess.call("analyze", model_path=M, params={}, env={})
+    check("T11 会话分析 ok+schema4",
+          r1.get("ok") and (r1.get("report") or {}).get("schema_version") == 4,
+          str(r1)[:150])
+    r2 = sess.call("analyze", model_path=M, params={"infill": 40}, env={})
+    pb = (r2.get("report") or {}).get("phase_b") or {}
+    check("T11 温跑第二次 ok+SF 在场",
+          r2.get("ok") and pb.get("safety_factor") is not None)
+    rb = sess.call("analyze", model_path="NOPE.stl", params={}, env={})
+    check("T11 坏查询结构化错误且会话存活",
+          (not rb.get("ok")) and isinstance(rb.get("error"), dict)
+          and sess.call("hello").get("ok"))
+
+
+def test_what_if_estimate_and_warm():
+    srv = import_server()
+    srv_agent = srv.agent_tools
+    tok = _upload_sample_session(srv)
+    ok, res = srv_agent.run_server_tool(
+        "what_if", {"params": {"infill": 10}, "quick": True}, tok)
+    check("T11 what_if quick 走估价档",
+          ok and "估价" in str(res.get("note")), str(res)[:140])
+    ok, res = srv_agent.run_server_tool(
+        "what_if", {"params": {"infill": 40}}, tok)
+    check("T11 what_if 全跑（会话温跑路径）",
+          ok and "全量 FEM" in str(res.get("note")), str(res)[:140])
+
+
+def _mk_gcode_upload_session(srv, fixture):
+    import shutil as _sh
+    t = "agentgc" + secrets.token_hex(4)
+    p = os.path.join(srv.WORK_DIR, t + ".gcode")
+    _sh.copy(os.path.join(ROOT, "test_data", "gcode", fixture), p)
+    with srv._session_lock:
+        srv._sessions[t] = {"token": t, "path": p, "name": fixture,
+                            "is_3mf": False, "writable": None, "kind": "gcode"}
+    return t
+
+
+def test_gcode_agent_tools():
+    srv = import_server()
+    srv_agent = srv.agent_tools
+    ok, err = srv_agent.run_server_tool("gcode_score", {}, None)
+    check("T11 gcode_score 无会话可操作错误",
+          not ok and "G-code" in str(err), str(err))
+    # 模型会话 + 挂载切片 → score（缺省 token=对话会话）
+    tok = _upload_sample_session(srv)
+    with srv._session_lock:
+        srv._sessions[tok]["gcode_path"] = os.path.join(
+            ROOT, "test_data", "gcode", "a.gcode")
+        srv._sessions[tok]["gcode_name"] = "a.gcode"
+    ok, res = srv_agent.run_server_tool("gcode_score", {}, tok)
+    check("T11 gcode_score 门面评分返回",
+          ok and isinstance(res.get("overall_score"), (int, float)),
+          str(res)[:150] if ok else str(res))
+    # kind=gcode 上传会话 × 2 → diff
+    ta = _mk_gcode_upload_session(srv, "a.gcode")
+    tb = _mk_gcode_upload_session(srv, "b.gcode")
+    ok, res = srv_agent.run_server_tool(
+        "gcode_diff", {"token_a": ta, "token_b": tb}, None)
+    check("T11 gcode_diff 门面差异返回", ok and isinstance(res, dict),
+          str(res)[:150] if ok else str(res))
+
+
 def main():
     at = import_agent_tools()
     test_registry(at)
@@ -1122,9 +1206,19 @@ def main():
     test_proposal_keyset()
     test_first_batch_tools()
     test_report_section_tool()
+    test_engine_session_warm()
+    test_what_if_estimate_and_warm()
+    test_gcode_agent_tools()
     print("\n%d/%d checks passed%s" % (TOTAL - len(FAILURES), TOTAL,
           "" if not FAILURES else " — failed: %s" % ", ".join(FAILURES)))
-    return 1 if FAILURES else 0
+    rc = 1 if FAILURES else 0
+    # tear down the shared engine session (spawned subprocess) on exit
+    try:
+        if _SRV is not None and _SRV._ENGINE_SESSION is not None:
+            _SRV._ENGINE_SESSION.shutdown()
+    except Exception:
+        pass
+    return rc
 
 
 if __name__ == "__main__":

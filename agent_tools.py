@@ -19,6 +19,7 @@ the fc track only).
 """
 
 import json
+import os
 
 
 class ToolDecl(object):
@@ -305,19 +306,45 @@ tool("propose_settings", "host",
 
 # -- phase-1 batch (fc track only; the codex text track is frozen)
 tool("what_if", "server",
-     "参数/服役条件假设重跑：args={params:{参数名:值}, env:{环境名:值}}，在"
-     "最近一次分析的基线上叠加覆盖后真实重跑引擎（不是推算），返回前后对比"
-     "（SF/结论/警告数）。改填充率/壁数/疲劳周期/服役温度/湿度等「会怎样」"
-     "的问题用它；params 键与 env 键必须来自事实块或工具结果，不要虚构。",
+     "参数/服役条件假设重跑：args={params:{参数名:值}, env:{环境名:值}, quick:true?}"
+     "，在最近一次分析的基线上叠加覆盖后真实重跑引擎（不是推算），返回前后"
+     "对比（SF/结论/警告数）。quick=true 走估价档位（解析法，快，只判断"
+     "够/边界/不够，数值不精确——探索方向用；要精确数字用全跑）。改填充率/"
+     "壁数/疲劳周期/服役温度/湿度等「会怎样」的问题用它；params 键与 env 键"
+     "必须来自事实块或工具结果，不要虚构。",
      input_schema={
          "type": "object",
          "properties": {
              "params": {"type": "object"},
-             "env": {"type": "object"}},
+             "env": {"type": "object"},
+             "quick": {"type": "boolean"}},
          "additionalProperties": False},
      per_turn_call_cap=1,
      tracks=("fc",),
      visibility=lambda ctx: bool(ctx.get("has_report")))
+
+tool("gcode_score", "server",
+     "对一份 G-code 做质量评分（19 维，gcode-diff 引擎）：args={token?}——"
+     "挂载了切片 G-code 的模型会话 token（缺省=当前对话会话），或 G-code "
+     "上传会话的 token。返回总分、已评分维度数与最弱维度；overall_score 为 "
+     "0 或 dimensions_scored 为 0 表示不可评估（fail-closed），不是低分。",
+     input_schema={
+         "type": "object",
+         "properties": {"token": {"type": "string"}},
+         "additionalProperties": False},
+     result_budget=2500, per_turn_call_cap=2, tracks=("fc",))
+
+tool("gcode_diff", "server",
+     "对比两份 G-code（如参数修改前后的两版切片）：args={token_a, token_b}"
+     "（两个 G-code 上传会话的 token）。返回 gcode-diff 引擎的差异报告"
+     "（逐维度对比）；数字逐字来自返回值。",
+     input_schema={
+         "type": "object",
+         "properties": {"token_a": {"type": "string"},
+                        "token_b": {"type": "string"}},
+         "required": ["token_a", "token_b"],
+         "additionalProperties": False},
+     result_budget=3000, per_turn_call_cap=1, tracks=("fc",))
 
 tool("get_tier_comparison", "server",
      "四个基线档位（安全/均衡/高速/外观）的参数对比表：各档 walls/infill/"
@@ -387,6 +414,52 @@ def _srv_report_section(ctx, args, token):
     return {args["section"]: section}
 
 
+def _gcode_file_for(ctx, token, what):
+    """Resolve a gcode path from a token: a model session's ATTACHED slice
+    (gcode_path) or a kind=gcode upload's own file. Actionable error when
+    neither exists."""
+    with ctx["session_lock"]:
+        sess = (ctx["sessions"] or {}).get(token) or {}
+        gpath = sess.get("gcode_path")
+        upath = sess.get("path") if sess.get("kind") == "gcode" else None
+    for p in (gpath, upath):
+        if p and os.path.isfile(p):
+            return p
+    raise ValueError("%s 对应的会话没有 G-code（先切片评估，或在 G-code 工具"
+                     "面板上传 .gcode/.gco）" % what)
+
+
+def _srv_gcode_score(ctx, args, token):
+    target = args.get("token") or token
+    path = _gcode_file_for(ctx, target, "token")
+    ok, rep = ctx["gcode_tool"]("score", [path])
+    if not ok:
+        raise ValueError(rep)
+    dims = [d for d in (rep.get("dimensions") or [])
+            if isinstance(d, dict)
+            and isinstance(d.get("score"), (int, float))
+            and not isinstance(d.get("score"), bool)]
+    dims.sort(key=lambda d: d["score"])
+    return {"overall_score": rep.get("overall_score"),
+            "assessable": rep.get("assessable"),
+            "dimensions_scored": rep.get("dimensions_scored"),
+            "schema_version": rep.get("schema_version"),
+            "weakest": [{"name": d.get("name") or d.get("dimension") or "?",
+                         "score": d.get("score")}
+                        for d in dims[:6]],
+            "note": "数字逐字来自 gcode-diff 引擎；overall_score 为 0 或 "
+                    "dimensions_scored 为 0 = 不可评估（fail-closed），不是低分"}
+
+
+def _srv_gcode_diff(ctx, args, token):
+    pa = _gcode_file_for(ctx, args["token_a"], "token_a")
+    pb = _gcode_file_for(ctx, args["token_b"], "token_b")
+    ok, rep = ctx["gcode_tool"]("diff", [pa, pb])
+    if not ok:
+        raise ValueError(rep)
+    return rep
+
+
 def _param_in_range(meta_row, value):
     if meta_row["kind"] == "select":
         return value if value in meta_row["options"] else None
@@ -428,17 +501,20 @@ def _srv_what_if(ctx, args, token):
                 "safety_factor_envelope": pb.get("safety_factor_envelope"),
                 "assessment": pb.get("assessment")}
 
+    quick = bool(args.get("quick"))
     base = {"params": params, "env": env,
             "phase_b": _pb(report), "warnings": len(report.get("warnings") or [])}
-    ok, payload = ctx["run_analysis"](sess, params, env)
+    ok, payload = ctx["run_analysis"](sess, params, env, estimate=quick)
     if not ok:
         raise ValueError(payload if isinstance(payload, str)
                          else json.dumps(payload, ensure_ascii=False))
     after = {"params": params, "env": env, "phase_b": _pb(payload),
              "warnings": len(payload.get("warnings") or []),
              "new_warnings": [w for w in (payload.get("warnings") or [])[:5]]}
+    mode_note = ("估价档位（解析法，方向可靠、数值不精确）"
+                 if quick else "全量 FEM")
     return {"baseline": base, "what_if": after,
-            "note": "真实重跑引擎（非推算）；数字逐字来自两次报告"}
+            "note": "真实重跑引擎（%s，非推算）；数字逐字来自两次报告" % mode_note}
 
 
 # bind server-tool handlers to their declarations
@@ -447,3 +523,5 @@ TOOLS["read_gcode"].handler = _srv_read_gcode
 TOOLS["get_tier_comparison"].handler = _srv_tier_comparison
 TOOLS["get_report_section"].handler = _srv_report_section
 TOOLS["what_if"].handler = _srv_what_if
+TOOLS["gcode_score"].handler = _srv_gcode_score
+TOOLS["gcode_diff"].handler = _srv_gcode_diff

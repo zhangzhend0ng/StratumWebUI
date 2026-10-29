@@ -6,10 +6,21 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.10.0"
+# version = "0.11.0"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.11.0 (engine 0.28.0 interface wiring):
+  - what_if rides the engine SESSION (capabilities-gated): warm reruns —
+    geometry/voxelization paid once per model, per-question cost collapses;
+    quick=true maps to the analytic estimate tier (direction-only).
+  - gcode_score / gcode_diff agent tools through the unified engine facade
+    (--gcode-score/--gcode-diff; companion located via env for the
+    passthrough) — the conversation can now answer slice-quality questions.
+  - proposal content gate: literal null/none values bounce with an
+    actionable message (wild finding 2026-10-28: nine "（继承预设）→ null"
+    rows from the model copying null recommendations verbatim).
 
 v0.10.0 (embedded agent, phase 1):
   - the agent tool surface is now a REGISTRY (app/agent_tools.py, single
@@ -1320,6 +1331,22 @@ def _host_propose_settings(args):
         raise ValueError("propose_settings 需要 args.values 参数字典")
     if not _last_pick.get("token"):
         raise ValueError("还没有选取/分析会话——先 run_analysis")
+    # v0.11 content gate (observed in the wild 2026-10-28: a proposal card
+    # of nine "（继承预设） → null" rows — the model copied null
+    # recommendations from the facts block verbatim). A proposal value must
+    # be an actual setting; the literal null/none prose bounces here with
+    # an actionable message so the model recovers in one turn. Key sets are
+    # deliberately NOT gated: a user-directed change ("把 skirt_loops 设 4")
+    # is a legitimate proposal for keys outside the report's suggestion
+    # set — the write gate (identity guard + user confirm) stays the real
+    # protection there.
+    for k, v in values.items():
+        if v is None or (isinstance(v, str)
+                         and v.strip().lower() in ("null", "none", "")):
+            raise ValueError(
+                "values.%s 的值是 %r——不是可写入的参数值。事实块里推荐值为 "
+                "null 的建议项不要照抄进提案；只提案有具体数值或推荐文本的键，"
+                "或按用户明确点名的参数与值生成。" % (k, v))
     # v0.9.1: read current values from the PICKED object (by id), not from
     # whatever is currently selected — the diff must describe the object the
     # proposal will be applied to.

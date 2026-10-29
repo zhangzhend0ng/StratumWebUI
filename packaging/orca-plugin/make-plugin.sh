@@ -51,8 +51,9 @@ cp "$repo/server.py" "$repo/index.html" "$repo/report.js" "$repo/stl-preview.js"
 # above still ship for browser-tab debugging.
 cp "$here/plugin.html" "$dest/app/plugin.html"
 # v0.10: the agent modules ride next to server.py (its plain imports resolve
-# via sys.path — stratum.py appends app/ in the server thread).
-cp "$repo/agent_tools.py" "$repo/agent_harness.py" "$dest/app/"
+# via sys.path — stratum.py appends app/ in the server thread). v0.11 adds
+# stratum_session (engine session client).
+cp "$repo/agent_tools.py" "$repo/agent_harness.py" "$repo/stratum_session.py" "$dest/app/"
 # v0.7.2: bundled dependency wheels. NOT at the plugin root — discovery
 # treats any root .whl next to the .py entry as a second entry and rejects
 # the plugin ("contains both .py and .whl entry files", PluginFsUtils). The
@@ -253,7 +254,7 @@ print("chat settings: DeepSeek default from DEEPSEEK_API_KEY")
 PYEOF
 fi
 
-python -m py_compile "$dest/stratum.py" "$dest/app/agent_tools.py" "$dest/app/agent_harness.py"
+python -m py_compile "$dest/stratum.py" "$dest/app/agent_tools.py" "$dest/app/agent_harness.py" "$dest/app/stratum_session.py"
 rm -rf "$dest/__pycache__" "$dest/app/__pycache__"
 
 # Distributable zip: stratum/ at the archive root (unzip into orca_plugins/
