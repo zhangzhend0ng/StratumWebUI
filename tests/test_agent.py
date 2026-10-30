@@ -181,24 +181,94 @@ def test_red_lines():
                   re.search(pat, src, re.M) is None)
 
 
-_LEGACY_LISTING = """- get_print_context: 盘面对象清单（名称/实例/体积数/选中态）
-- run_analysis: 对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）
-- get_analysis: 当前会话分析事实块（SF/结论/警告/建议/调优）
-- read_gcode: 已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）
-- propose_settings: 生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回"""
+# v0.12.0 ambient grounding: descriptions intentionally THAWED once to the
+#「何时用我」routing tone (spec §6) — this pinned copy was updated in the
+# same change, so the byte-parity freeze itself is intact.
+_LEGACY_LISTING = """- get_print_context: 盘面对象清单（名称/实例/体积数/选中态）。何时用：要核对盘上有哪些对象、当前选中哪个时
+- run_analysis: 对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）。何时用：用户要检查/分析模型，或工具报「还没有报告/会话失效」时先补跑
+- get_analysis: 当前会话分析事实块（SF/结论/警告/建议/调优）。何时用：要上次分析的结论/警告/建议现值时先看它
+- read_gcode: 已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）。何时用：要引用切片文件原文行时
+- propose_settings: 生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回。何时用：要推荐具体参数修改时"""
 
 
 def test_legacy_parity(at):
-    check("T2 文本清单与 v0.39 字节等价", at.text_listing() == _LEGACY_LISTING,
+    check("T2 文本清单与钉死版字节等价（v0.12 解冻后）",
+          at.text_listing() == _LEGACY_LISTING,
           repr(at.text_listing()[:120]))
     reg = at.text_registry()
     check("T2 text_registry 形状=旧 ASSISTANT_TOOLS",
           list(reg.items()) == [
-              ("get_print_context", ("host", "盘面对象清单（名称/实例/体积数/选中态）")),
-              ("run_analysis", ("host", "对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）")),
-              ("get_analysis", ("server", "当前会话分析事实块（SF/结论/警告/建议/调优）")),
-              ("read_gcode", ("server", "已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）")),
-              ("propose_settings", ("host", "生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回"))])
+              ("get_print_context", ("host", "盘面对象清单（名称/实例/体积数/选中态）。何时用：要核对盘上有哪些对象、当前选中哪个时")),
+              ("run_analysis", ("host", "对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）。何时用：用户要检查/分析模型，或工具报「还没有报告/会话失效」时先补跑")),
+              ("get_analysis", ("server", "当前会话分析事实块（SF/结论/警告/建议/调优）。何时用：要上次分析的结论/警告/建议现值时先看它")),
+              ("read_gcode", ("server", "已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）。何时用：要引用切片文件原文行时")),
+              ("propose_settings", ("host", "生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；面板向用户展示 diff，用户点「应用」后才真正写回。何时用：要推荐具体参数修改时"))])
+
+
+# ==== §12 v0.12.0 ambient grounding: single source + prompt five rules =====
+
+_SECTION_KEYS = ["input", "phase_a", "phase_b", "phase_d", "warnings",
+                 "recommendations", "orca_suggestions", "calibration",
+                 "machine_limits", "process_optimization"]
+
+
+def test_ambient_grounding(at, ah):
+    # §6 single source: the enum DERIVES from REPORT_SECTIONS and the ten
+    # values are unchanged (existing legal/illegal enum anchors in §1 stay
+    # green, which is the behavioural half of the proof)
+    check("T12 REPORT_SECTIONS 键集恰为十节（值集不变）",
+          list(at.REPORT_SECTIONS.keys()) == _SECTION_KEYS,
+          str(list(at.REPORT_SECTIONS.keys())))
+    check("T12 REPORT_SECTIONS 释义全部非空",
+          all(isinstance(v, str) and v.strip()
+              for v in at.REPORT_SECTIONS.values()))
+    fc_all = at.fc_tools_array({"gcode_attached": True, "has_report": True})
+    sec = [t["function"] for t in fc_all
+           if t["function"]["name"] == "get_report_section"]
+    enum = (sec[0]["parameters"]["properties"]["section"]["enum"]
+            if sec else None)
+    check("T12 drift guard: enum == list(REPORT_SECTIONS.keys())",
+          enum == list(at.REPORT_SECTIONS.keys()), str(enum))
+    ok, err = at.validate_args("get_report_section", {"section": "input"})
+    check("T12 enum 派生后 input 仍合法", ok, err)
+    # §9 env-key mapping tables: same-place declaration, same anchor
+    check("T12 ENV_KEY_LABELS 与 ENV_KEY_MAP 同键集",
+          set(at.ENV_KEY_LABELS) == set(at.ENV_KEY_MAP),
+          str(set(at.ENV_KEY_LABELS) ^ set(at.ENV_KEY_MAP)))
+    rep = json.load(open(os.path.join(
+        ROOT, "test_data", "real3mf-results", "report-v3.json"),
+        encoding="utf-8"))
+    input_keys = set((rep.get("input") or {}).keys())
+    check("T12 ENV_KEY_MAP 目标键都在引擎 input 节",
+          set(at.ENV_KEY_MAP.values()) <= input_keys,
+          str(set(at.ENV_KEY_MAP.values()) - input_keys))
+    # parity after the thaw: FC declarations and text_registry carry the
+    # SAME copy (one declaration feeds both tracks; permissive ctx so the
+    # visibility-gated five (read_gcode) are all present)
+    fc_desc = {t["function"]["name"]: t["function"]["description"]
+               for t in at.fc_tools_array({"gcode_attached": True,
+                                           "has_report": True})}
+    reg = at.text_registry()
+    check("T12 双侧一致：FC 声明文案 = text_registry 文案",
+          all(fc_desc.get(n) == d for n, (_s, d) in reg.items()))
+    # §7 five prompt rules anchored into fc_instructions
+    ins = ah.fc_instructions("- x: 测试")
+    for kw in ("数据优先", "防火墙", "内部机制词", "自愈", "盘面(实时)",
+               "冷启动"):
+        check("T12 fc_instructions 含规则锚「%s」" % kw, kw in ins)
+    check("T12 fc_instructions 格式串仍生效（预算注入不破坏）",
+          str(ah.MAX_STEPS) in ins and str(ah.MAX_CALLS) in ins)
+    check("T12 fc_instructions 编号 1-14 连续",
+          all(("\n%d. " % i) in ins for i in range(1, 15)))
+    # refresh_env_card: declared host/fc tool, visible in the FC array,
+    # and kept off the frozen text track
+    check("T12 refresh_env_card 已声明（host 侧/fc 轨）",
+          "refresh_env_card" in at.TOOLS
+          and at.TOOLS["refresh_env_card"].side == "host"
+          and at.TOOLS["refresh_env_card"].tracks == ("fc",))
+    check("T12 refresh_env_card 在 FC 数组", "refresh_env_card" in fc_desc)
+    check("T12 refresh_env_card 不进冻结文本轨",
+          "refresh_env_card" not in at.text_listing())
 
 
 # ==== §3 event bus / tickets ================================================
@@ -872,8 +942,8 @@ def test_host_dispatch():
               replies[-1]["ok"] is False and not started,
               str(replies[-1] if replies else None))
         # 7) 版本号
-        check("T7 插件版本 0.11.1",
-              re.search(r'^# version = "0\.11\.1"$',
+        check("T7 插件版本 0.12.0",
+              re.search(r'^# version = "0\.12\.0"$',
                         open(os.path.join(ROOT, "packaging", "orca-plugin",
                                           "stratum_orca.py"),
                              encoding="utf-8").read(), re.M) is not None)
@@ -1203,6 +1273,7 @@ def main():
     test_legacy_parity(at)
     ah = import_agent_harness()
     test_event_bus(ah)
+    test_ambient_grounding(at, ah)
     test_http_agent_channel()
     test_turn_final(ah, at)
     test_turn_budget(ah, at)

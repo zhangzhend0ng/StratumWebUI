@@ -6,10 +6,26 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.11.1"
+# version = "0.12.0"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.12.0 (agent ambient grounding, plugin side / A line):
+  - the AI assistant no longer has to ASK "是不是 PLA?" — the plugin pushes
+    an ambient plate ENV CARD (objects/selection, ~10 normalized process
+    values, filament slots, plate overview, slice state word) to the local
+    server on lifecycle events, so a cold-start conversation already knows
+    the plate's live values (spec 2026-10-30-agent-ambient-grounding §4).
+  - on_lifecycle_event filters card-relevant events (preset/object/plate/
+    project; slicing/device/upload excluded by keyword), a ~500ms merge
+    window coalesces event STORMS into one fire-and-forget
+    POST /api/env_card (assembly on the UI thread, HTTP on a worker;
+    drops are fine — the card is an idempotent full refresh and the next
+    event or the bootstrap push self-heals).
+  - a bootstrap push rides the existing _probe_when_ready hook, and a new
+    sync host tool refresh_env_card assembles + pushes + returns the card
+    (the no-card self-heal hop, spec §5).
 
 v0.11.1 (L145 gcode companion fusion):
   - the gcode companion (0.28-paired, ER-9 fields live: score carries
@@ -1220,8 +1236,10 @@ def _tool_reply(call_id, ok, result=None, error=None):
                      "result": result, "error": error})
 
 
-def _print_context():
-    plater = orca.host.plater()
+def _plate_objects_summary(plater):
+    """Object list + selection summary read from the given plater (v0.12:
+    split out of _print_context so the env-card assembly — which gets its
+    plater injected for offline tests — shares the exact same read)."""
     model = plater.model()
     objects = model.objects()
     getter = getattr(plater, "selected_object_indices", None)
@@ -1234,6 +1252,10 @@ def _print_context():
          "selected": i in idxs}
         for i, obj in enumerate(objects)],
         "selected_count": len(idxs)}
+
+
+def _print_context():
+    return _plate_objects_summary(orca.host.plater())
 
 
 def _analysis_tool_worker(call_id, payload, filename, object_idx, picked_id,
@@ -1315,6 +1337,18 @@ def _register_host_tools(srv_module):
                               _host_propose_settings)
     reg.register_host_handler("read_object_config", "sync",
                               _host_read_object_config)
+    # v0.12 ambient grounding: the refresh_env_card DECLARATION lives in
+    # agent_tools.py (registry single source — spec §6, parallel change).
+    # An older vendored registry without the declaration raises KeyError
+    # here; degrade with a log line so lifecycle/bootstrap pushes keep
+    # working either way (the card channel never depends on the tool).
+    try:
+        reg.register_host_handler("refresh_env_card", "sync",
+                                  _host_refresh_env_card)
+    except (KeyError, TypeError):
+        sys.stderr.write("[stratum] refresh_env_card absent from the tool "
+                         "registry (older agent_tools) — handler not "
+                         "registered; env-card pushes continue\n")
 
 
 def _agent_registry():
@@ -1431,6 +1465,467 @@ def _host_read_object_config(args):
             "note": "null=该键无对象级覆盖（继承预设）；值来自宿主当前状态"}
 
 
+# ---- v0.12 ambient grounding (env card, spec §4) ---------------------------
+#
+# The incident (2026-10-30): the AI assistant asked the user "是不是 PLA?"
+# while the engine could read material PLA / 220 / 65 all along. Fix: the
+# plugin pushes an ambient plate ENV CARD to the local server on lifecycle
+# events, so a cold-start conversation already knows the plate's live
+# values. Shared contract (all three spec lines): POST /api/env_card,
+# header X-Stratum-UI: 1, body {"card": {...}, "event": "<code|bootstrap>"}.
+
+# card_key (left side — exactly these ten, the shared contract's ENV_KEY_MAP)
+# -> candidate Orca effective-config source keys, first hit wins. The
+# process-side names are anchored to the fork's PrintConfig (bac6fd5c1:
+# filament_type / nozzle_temperature / bed_temperature / layer_height /
+# wall_loops / sparse_infill_density / sparse_infill_pattern verified in
+# src/libslic3r/PrintConfig.cpp); print_speed and cooling_fan have NO single
+# canonical key in that source (运行期核对: verify against a live host's
+# get_effective_config() keys; missing source keys omit the card key).
+ENV_KEY_MAP = {
+    "material": ("filament_type",),
+    "nozzle_temperature": ("nozzle_temperature",),
+    "bed_temperature": ("bed_temperature", "bed_temperature_initial_layer"),
+    "nozzle_diameter": ("nozzle_diameter",),
+    "layer_height": ("layer_height",),
+    "walls": ("wall_loops", "perimeters"),
+    "infill_density": ("sparse_infill_density", "fill_density"),
+    "infill_pattern": ("sparse_infill_pattern", "fill_pattern"),
+    "print_speed": ("default_print_speed", "inner_wall_speed"),  # 运行期核对
+    "cooling_fan": ("cooling_fan_speed", "fan_max_speed"),  # 运行期核对
+}
+
+
+def _member_or_call(obj, names) -> object | None:
+    """First existing attribute among `names`, resolved through the
+    property-or-method discipline (the is_default precedent at the v0.8
+    repair read): a bound method gets CALLED, a plain value passes through.
+    Returns None when no candidate exists or the call raises (host surface
+    drift degrades, never raises)."""
+    for name in names:
+        v = getattr(obj, name, None)
+        if v is None:
+            continue
+        if callable(v):
+            try:
+                v = v()
+            except Exception:  # noqa: BLE001 - surface drift -> degrade
+                continue
+        return v
+    return None
+
+
+def _mapping_get(src, key) -> object | None:
+    """One key from a dict-like host return (.get preferred, subscript
+    fallback, anything else degrades to None). Values stay VERBATIM — the
+    contract pins 'config 值保持宿主返回的原样'."""
+    get = getattr(src, "get", None)
+    if callable(get):
+        try:
+            return get(key)
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        return src[key]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _as_int(v) -> int | None:
+    """int-coerce a host scalar; None on any mismatch (never a guess)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _effective_config(plater) -> object | None:
+    """plater.get_effective_config() behind a getattr guard (运行期核对:
+    the binding name is from API_REFERENCE §3). None when absent/raising —
+    callers fall back to the preset read side."""
+    getter = getattr(plater, "get_effective_config", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _bundle_value_reader(bundle):
+    """读侧兜底 for card config values when get_effective_config is absent
+    (read-side precedent: the v0.8 factory-default read). Filament presets
+    first — filament-scope keys (nozzle_temperature, bed_temperature,
+    filament_type) live there — then the selected process preset; the
+    config_keys guard precedes every config_value exactly like the repair
+    read. Returns key->value callable, or None when no preset surface."""
+    presets = []
+    for coll_name in ("filaments", "prints"):
+        coll = getattr(bundle, coll_name, None)
+        if coll is None:
+            continue
+        # 运行期核对: PresetCollection selection accessor name
+        # (selected_preset is the C++ name; get_edited_preset covers builds
+        # exposing only the edited view).
+        preset = _member_or_call(coll, ("selected_preset",
+                                        "get_edited_preset"))
+        if preset is not None:
+            presets.append(preset)
+
+    def read(key):
+        for p in presets:
+            try:
+                keys = p.config_keys
+                if callable(keys):
+                    keys = keys()
+                if key not in (keys or ()):
+                    continue
+                return p.config_value(key)
+            except Exception:  # noqa: BLE001 - one preset failing degrades
+                continue
+        return None
+
+    return read if presets else None
+
+
+def _card_config(eff, bundle) -> dict:
+    """The card's ~10 normalized config keys: effective config first, then
+    the preset read side PER KEY (a source missing one key still serves the
+    others). Missing source keys OMIT the card key — never null."""
+    reader = _bundle_value_reader(bundle)
+    out = {}
+    for card_key, candidates in ENV_KEY_MAP.items():
+        v = None
+        if eff is not None:
+            for k in candidates:
+                v = _mapping_get(eff, k)
+                if v is not None:
+                    break
+        if v is None and reader is not None:
+            for k in candidates:
+                v = reader(k)
+                if v is not None:
+                    break
+        if v is not None:
+            out[card_key] = v
+    return out
+
+
+def _card_filaments(bundle, eff) -> list | None:
+    """Filament SLOT list — preset_bundle().filaments 复数 (spec §4: a
+    multi-material plate analyzed with only slot 1 goes blind). Slot order
+    preserved; values normalized through _serialize_orca_value. Fallback:
+    the effective config's vectorized serialization ("PLA,PLA" — 运行期核对
+    multi-slot semantics). None when no slot surface reads (key omitted)."""
+    coll = getattr(bundle, "filaments", None)
+    if coll is not None:
+        # 运行期核对: multi-selection accessor on the filaments collection
+        # (selected_presets plural is the expected shape; single
+        # selected_preset keeps single-extruder hosts honest).
+        presets = _member_or_call(coll, ("selected_presets",))
+        if presets is None:
+            one = _member_or_call(coll, ("selected_preset",))
+            presets = [one] if one is not None else None
+        material_keys = ENV_KEY_MAP["material"]  # one alias table — the
+        # slot read never spells the source key a second time to drift
+        slots = []
+        for p in (presets or []):
+            v = None
+            try:
+                keys = p.config_keys
+                if callable(keys):
+                    keys = keys()
+                have = set(keys or ())
+                for k in material_keys:
+                    if k in have:
+                        v = p.config_value(k)
+                        break
+            except Exception:  # noqa: BLE001
+                v = None
+            if v is not None:
+                slots.append(_serialize_orca_value(v))
+        if slots:
+            return slots
+    raw = None
+    if eff is not None:
+        for k in ENV_KEY_MAP["material"]:
+            raw = _mapping_get(eff, k)
+            if raw is not None:
+                break
+    if isinstance(raw, str) and raw:
+        return [s.strip() for s in raw.split(",") if s.strip()]
+    return None
+
+
+def _card_plate() -> dict | None:
+    """Current plate index + per-plate object counts from the orca.host.
+    plate module (getattr-defensive; spec §4 'plate 模块现成'). 运行期核对:
+    accessor names are best-effort candidates against API_REFERENCE §3 —
+    every miss omits the sub-key, count derives from objects_per_plate when
+    available. None when nothing reads (key omitted)."""
+    mod = getattr(getattr(orca, "host", None), "plate", None)
+    if mod is None:
+        return None
+    current = _as_int(_member_or_call(
+        mod, ("get_curr_plate_index", "get_current_plate_index",
+              "curr_plate_index")))
+    per_plate = None
+    raw_counts = _member_or_call(
+        mod, ("get_plate_object_counts", "get_objects_per_plate",
+              "plate_object_counts"))
+    if isinstance(raw_counts, (list, tuple)):
+        coerced = [_as_int(n) for n in raw_counts]
+        if all(n is not None for n in coerced):
+            per_plate = coerced
+    count = (len(per_plate) if per_plate is not None else _as_int(
+        _member_or_call(mod, ("get_plate_count", "get_plate_counts",
+                              "get_plates_count"))))
+    if current is None and count is None:
+        return None
+    card = {}
+    if current is not None:
+        card["current"] = current
+    if count is not None:
+        card["count"] = count
+    if per_plate is not None:
+        card["objects_per_plate"] = per_plate
+    return card
+
+
+def _card_slice_state(plater) -> str | None:
+    """One-word slice status — 'idle' or 'slicing', never a progress number
+    (progress belongs to the UI, not grounding). 运行期核对: Plater
+    slice-state query name (first hit wins; bool/str/int all mapped).
+    None when no readable surface (key omitted)."""
+    # read-shaped query names ONLY — never a bare "slicing" attr: if the
+    # host exposed a slicing() COMMAND, the defensive call would fire it
+    for name in ("is_slicing", "get_slice_state", "slice_state",
+                 "is_background_slicing"):
+        v = getattr(plater, name, None)
+        if v is None:
+            continue
+        if callable(v):
+            try:
+                v = v()
+            except Exception:  # noqa: BLE001
+                continue
+        if isinstance(v, bool):
+            return "slicing" if v else "idle"
+        if isinstance(v, str):
+            t = v.strip().lower()
+            if not t or t in ("idle", "false", "none", "0"):
+                return "idle"
+            if "slic" in t:
+                return "slicing"
+            continue
+        n = _as_int(v)
+        if n is not None:
+            return "slicing" if n else "idle"
+    return None
+
+
+def _assemble_env_card(plater, bundle) -> dict:
+    """v0.12: read the plate's ambient state into the env card (the POST
+    /api/env_card body's "card" object — shared contract, spec §5).
+    Dependency-injected (plater + preset bundle) so offline tests pass stubs
+    and never touch a real orca; production passes orca.host.plater() and
+    orca.host.preset_bundle(). Every host read is defensive — a missing
+    surface omits the card key, never null, never a guessed value."""
+    card = {}
+    try:
+        card.update(_plate_objects_summary(plater))
+    except Exception:  # noqa: BLE001 - no model surface -> objects omit
+        pass
+    eff = _effective_config(plater)
+    config = _card_config(eff, bundle)
+    if config:
+        card["config"] = config
+    filaments = _card_filaments(bundle, eff)
+    if filaments:
+        card["filaments"] = filaments
+    plate = _card_plate()
+    if plate:
+        card["plate"] = plate
+    state = _card_slice_state(plater)
+    if state:
+        card["slice_state"] = state
+    return card
+
+
+class _EnvCardCoalescer(object):
+    """v0.12 merge-window state machine — pure logic, offline-testable (no
+    orca, no clock, no I/O). The window coalesces the PUSH (the server
+    refresh), not the UI-thread assembly: assembly must happen while a
+    lifecycle event still holds the UI thread — the only place host reads
+    are safe (the flush timer runs on its own thread and must never touch
+    host state) — so each event refreshes the pending card and the window
+    bounds the network fan-out to ONE fire-and-forget POST per burst.
+
+      add_event()   UI thread, per card-relevant lifecycle event:
+                    "arm"  — first event of a new window: caller starts the
+                             flush timer that will ship the pending card
+                    "skip" — event inside an active window: no new timer
+      flush_fired() flush timer thread, when it ships: re-opens the window
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._armed = False
+
+    def add_event(self) -> str:
+        with self._lock:
+            if self._armed:
+                return "skip"
+            self._armed = True
+            return "arm"
+
+    def flush_fired(self) -> None:
+        with self._lock:
+            self._armed = False
+
+
+_ENV_CARD_WINDOW_S = 0.5  # spec §4: ~500ms merge window for event storms
+_env_card_state = {"coalescer": _EnvCardCoalescer(),
+                   "card": None, "event": None}
+
+
+def _post_env_card(card, event):
+    """Worker thread: fire-and-forget POST /api/env_card (the urllib
+    pattern of the upload workers, short timeout so pushes cannot pile up
+    against a hung server). Overflow/failure drops after ONE stderr line —
+    the card is an idempotent full refresh; the next event or the bootstrap
+    push heals (spec §4)."""
+    try:
+        port = _state["port"]
+        if not port or not card:
+            return
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/env_card" % port,
+            data=json.dumps({"card": card, "event": event}).encode("utf-8"),
+            headers={"X-Stratum-UI": "1", "Content-Type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp.read()
+    except Exception as exc:  # noqa: BLE001 - one line, then drop
+        sys.stderr.write("[stratum] env_card push dropped (%s): %s: %s\n"
+                         % (event, type(exc).__name__, exc))
+
+
+def _env_card_flush():
+    """Flush-timer thread: ship the latest pending card. Only coalescer
+    state and the pending dict are touched — NEVER the host model (host
+    reads happen on the UI thread at event time)."""
+    _env_card_state["coalescer"].flush_fired()
+    card = _env_card_state["card"]
+    event = _env_card_state["event"]
+    if card:
+        threading.Thread(target=_post_env_card, daemon=True,
+                         name="stratum-orca-env-card",
+                         args=(card, event or "lifecycle")).start()
+
+
+def _assemble_env_card_ui():
+    """Production dependencies for _assemble_env_card (UI thread, or the
+    one-shot bootstrap probe thread — see the racy-read note in
+    _probe_when_ready)."""
+    bundle = None
+    try:
+        bundle = orca.host.preset_bundle()
+    except Exception:  # noqa: BLE001 - bundle-less card: config degrades
+        pass
+    return _assemble_env_card(orca.host.plater(), bundle)
+
+
+def _note_env_event(code_text):
+    """UI thread (on_lifecycle_event): refresh the pending card NOW (while
+    the event still holds the UI thread — that is the freshness mechanism,
+    see _EnvCardCoalescer) and arm one flush timer per burst."""
+    try:
+        card = _assemble_env_card_ui()
+    except Exception as exc:  # noqa: BLE001 - one line, event dropped
+        sys.stderr.write("[stratum] env_card assembly failed: %s: %s\n"
+                         % (type(exc).__name__, exc))
+        return
+    _env_card_state["card"] = card
+    _env_card_state["event"] = code_text
+    if _env_card_state["coalescer"].add_event() == "arm":
+        # daemon: a pending flush must never block host shutdown
+        timer = threading.Timer(_ENV_CARD_WINDOW_S, _env_card_flush)
+        timer.daemon = True
+        timer.start()
+
+
+def _push_env_card_now(event):
+    """Assemble + push IMMEDIATELY, bypassing the merge window (bootstrap
+    fills an empty server cache; the refresh tool is a one-hop pull).
+    Returns the card for the caller's reply."""
+    try:
+        card = _assemble_env_card_ui()
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write("[stratum] env_card assembly failed (%s): %s: %s\n"
+                         % (event, type(exc).__name__, exc))
+        return None
+    _env_card_state["card"] = card
+    _env_card_state["event"] = event
+    if card:
+        threading.Thread(target=_post_env_card, daemon=True,
+                         name="stratum-orca-env-card",
+                         args=(card, event)).start()
+    return card
+
+
+# Card-relevant lifecycle filter. The event-code NAMES are 运行期核对
+# against orca.LifecycleEvent on a live host (API_REFERENCE §3; the host
+# probe logs the enum members to python_*.log so this mapping can be
+# tightened from evidence). Matching is keyword-based on the normalized
+# code text, so enum naming drift only over/under-includes a card refresh
+# — never a crash, never a wrong card. Include domains: preset changes,
+# object add/remove/modify, plate switch/create/delete, project
+# open/new/close. Exclude domains (spec §4): slicing/device/upload tasks.
+_ENV_EVENT_EXCLUDE = ("slic", "gcode", "device", "printer", "upload",
+                      "send", "task")
+_ENV_EVENT_INCLUDE = ("preset", "object", "plate", "project")
+
+
+def _env_card_event_text(evt) -> str:
+    """Normalize a lifecycle event payload (enum member / string / dict) to
+    filter text — never trust one shape across host builds."""
+    if isinstance(evt, str):
+        return evt
+    if isinstance(evt, dict):
+        for k in ("event", "code", "type", "name"):
+            v = evt.get(k)
+            if isinstance(v, str):
+                return v
+        return ""
+    for attr in ("value", "name", "code", "event"):
+        v = getattr(evt, attr, None)
+        if isinstance(v, str):
+            return v
+    return str(evt) if evt is not None else ""
+
+
+def _is_env_card_event(text) -> bool:
+    """True when the event code is card-relevant."""
+    t = (text or "").lower()
+    if not t:
+        return False
+    if any(x in t for x in _ENV_EVENT_EXCLUDE):
+        return False
+    return any(x in t for x in _ENV_EVENT_INCLUDE)
+
+
+def _host_refresh_env_card(args):
+    """sync host handler (v0.12): assemble + push NOW (event='refresh') and
+    return the card — the model's / server's no-card self-heal hop (spec
+    §5). Runs on the UI thread through the tool bridge; only the POST is a
+    worker thread."""
+    card = _push_env_card_now("refresh")
+    if not card:
+        raise ValueError("盘面环境卡组装失败（宿主读取面缺失）——详情见 python_*.log")
+    return {"card": card, "note": "盘面环境卡已组装并推送"}
+
+
 class StratumPanel(orca.script.ScriptPluginCapabilityBase):
     def get_name(self):
         return "Stratum"
@@ -1453,6 +1948,13 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
                     threading.Timer(2.0, lambda: _probe_when_ready(attempt + 1)).start()
                 return
             self._host_probe()
+            # v0.12 ambient grounding: one BOOTSTRAP card push once the
+            # plater is up — the server's card cache starts empty and this
+            # fills it before any lifecycle event fires (spec §4). Same
+            # accepted raciness as _host_probe above: a one-shot off-UI-
+            # thread read, before user interaction; the card self-heals on
+            # the next event regardless.
+            _push_env_card_now("bootstrap")
 
         threading.Timer(3.0, lambda: _probe_when_ready(0)).start()
 
@@ -1521,6 +2023,21 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
             return True
         step("preset-default-read", _preset_default_read)
 
+        # v0.12: WHICH lifecycle event codes exist on this host — the env
+        # card's keyword filter (see _ENV_EVENT_INCLUDE/_EXCLUDE) is
+        # tightened from this evidence (运行期核对 list for spec §4/§9).
+        def _lifecycle_surface():
+            ev = getattr(orca, "LifecycleEvent", None)
+            if ev is None:
+                sys.stderr.write("[stratum-probe] LifecycleEvent enum "
+                                 "absent — env-card keyword filter active\n")
+            else:
+                members = [n for n in dir(ev) if not n.startswith("_")]
+                sys.stderr.write("[stratum-probe] LifecycleEvent members: "
+                                 "%s\n" % ", ".join(members[:48]))
+            return True
+        step("lifecycle-surface", _lifecycle_surface)
+
         plater = step("plater()", lambda: orca.host.plater())
         if plater is None:
             return
@@ -1538,6 +2055,29 @@ class StratumPanel(orca.script.ScriptPluginCapabilityBase):
         if volumes:
             step("volumes[0].mesh().vertices()", lambda: volumes[0].mesh().vertices())
             step("volumes[0].mesh().triangles()", lambda: volumes[0].mesh().triangles())
+
+    def on_lifecycle_event(self, evt):
+        """v0.12 ambient grounding: host lifecycle hook — the env card's
+        event-driven entry (spec §4).
+
+        IMPLEMENTATION-PHASE VERIFICATION POINT (spec §4): whether
+        ScriptPluginCapabilityBase actually FORWARDS lifecycle dispatch to
+        this method must be asserted on a live host (the PythonPluginBase
+        contract includes it, API_VERSION 6 — the host probe logs the enum
+        members to python_*.log as the evidence trail). If a build does NOT
+        forward, registration must move; until then the bootstrap push and
+        the refresh_env_card tool keep the card alive (degrade, never
+        block). 结论回填 spec §4.
+
+        Only card-relevant events pass the filter (preset/object/plate/
+        project; slicing/device/upload tasks excluded — spec §4). The event
+        code is read defensively (enum member, plain string or dict payload
+        — no import of enum members that may not exist on this build).
+        """
+        text = _env_card_event_text(evt)
+        if not _is_env_card_event(text):
+            return
+        _note_env_event(text)
 
     def execute(self):
         return self.start()

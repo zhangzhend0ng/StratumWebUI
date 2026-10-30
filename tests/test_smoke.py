@@ -2433,6 +2433,178 @@ def main():
                   for p, _orig in zip(_pf, _srv108.PRESETS)),
               str([p.get("use") for p in _pf])[:160])
 
+        # ---------- v0.12 agent ambient grounding (env card + facts) ----------
+        import server as _srv110
+
+        # T110 — POST /api/env_card rides the shared do_POST origin gate:
+        # a headerless POST must be rejected like every other API POST.
+        st110, _raw110 = request(
+            port, "POST", "/api/env_card",
+            json.dumps({"card": {"material": "PLA"}, "event": "t"}).encode(),
+            {"Content-Type": "application/json"}, ui_header=False)
+        check("T110 /api/env_card rejects missing X-Stratum-UI",
+              st110 == 403, "st=%s" % st110)
+
+        # T110b — REAL endpoint wiring (routing + body parse + whole-replace
+        # cache) against an in-process ThreadingHTTPServer, so the cache is
+        # inspectable without an LLM roundtrip. Global cache is restored
+        # after (pytest-patterns: never leak module state).
+        import threading as _th110
+        from http.server import ThreadingHTTPServer as _THS110
+        _port110 = free_port()
+        _httpd110 = _THS110(("127.0.0.1", _port110), _srv110.StratumHandler)
+        _th110.Thread(target=_httpd110.serve_forever, daemon=True).start()
+        try:
+            _saved110 = _srv110._ENV_CARD
+            _srv110._ENV_CARD = None
+            st, resp = jrequest(_port110, "POST", "/api/env_card",
+                                {"card": {"material": "PLA",
+                                          "nozzle_temperature": "220"},
+                                 "event": "preset"})
+            _env1 = _srv110._get_env_card()
+            check("T110b env_card 200 + cache envelope written",
+                  st == 200 and resp.get("ok") is True and _env1 is not None
+                  and _env1.get("event") == "preset"
+                  and _env1.get("card", {}).get("material") == "PLA"
+                  and isinstance(_env1.get("received_at"), float),
+                  "st=%s env=%r" % (st, _env1))
+            st, resp = jrequest(_port110, "POST", "/api/env_card",
+                                {"card": {"material": "PETG"},
+                                 "event": "preset"})
+            _env2 = _srv110._get_env_card()
+            check("T110b env_card whole-replace (stale keys gone)",
+                  _env2 is not None
+                  and _env2.get("card", {}).get("material") == "PETG"
+                  and "nozzle_temperature" not in _env2.get("card", {}),
+                  "card=%r" % (_env2.get("card"),))
+            st, resp = jrequest(_port110, "POST", "/api/env_card",
+                                {"event": "preset"})
+            check("T110b env_card missing/non-dict card rejected 400",
+                  st == 400, "st=%s resp=%r" % (st, resp))
+            st, resp = jrequest(_port110, "POST", "/api/env_card",
+                                {"card": {}, "event": 7})
+            check("T110b env_card non-string event rejected 400",
+                  st == 400, "st=%s resp=%r" % (st, resp))
+            _srv110._ENV_CARD = _saved110
+        finally:
+            _httpd110.shutdown()
+            _httpd110.server_close()
+
+        # T111 — _chat_facts ambient block (盘面/环境已变/输入/可查分节).
+        # Depends on the C-line vocabularies (REPORT_SECTIONS / ENV_KEY_MAP /
+        # ENV_KEY_LABELS in agent_tools) — skip with a note until they land;
+        # integration re-runs for real.
+        if not hasattr(_srv110.agent_tools, "REPORT_SECTIONS"):
+            print("T111/T111b/T111c/T111d/T111e SKIP — C-line constants "
+                  "(REPORT_SECTIONS/ENV_KEY_MAP/ENV_KEY_LABELS) not landed "
+                  "yet; integration run re-exercises them")
+        else:
+            _rep110 = {
+                "schema_version": 4, "model": "beam.stl", "trust": {},
+                "input": {"material": "PLA", "nozzle_temperature_c": 220,
+                          "bed_temperature_c": 65, "tg_c": 25,
+                          "nozzle_mm": 0.4, "layer_height_mm": 0.16,
+                          "walls": 2, "infill_density": 15,
+                          "infill_pattern": "gyroid", "print_speed_mms": 50,
+                          "cooling_fan_pct": 100},
+                "phase_a": {"overhangs": []},
+                "phase_b": {"safety_factor": 2.5},
+                "warnings": [],
+                "custom_block": {"x": 1},
+            }
+            _card110 = {"config": {"material": "PETG",
+                                   "nozzle_temperature": "210",
+                                   "bed_temperature": "65",
+                                   "nozzle_diameter": "0.4",
+                                   "layer_height": "0.16", "walls": "2",
+                                   "infill_density": "15",
+                                   "infill_pattern": "gyroid",
+                                   "print_speed": "50", "cooling_fan": "100"},
+                        "objects": 3, "selected_count": 1,
+                        "plate": {"current": 1, "count": 2,
+                                  "objects_per_plate": [2, 1]},
+                        "slice_state": "slicing", "filaments": ["PLA"]}
+            _saved111 = _srv110._ENV_CARD
+            _srv110._ENV_CARD = {"card": _card110, "event": "preset",
+                                 "received_at": 0.0}
+            # warm + drift: card PETG/210 vs report PLA/220 -> both diffs
+            # surface (numeric for the temperature, string for the material)
+            _f111 = _srv110._chat_facts({"name": "beam.stl",
+                                         "last_report": _rep110})
+            check("T111 facts: 盘面 line + drift diff + input + directory",
+                  _f111.startswith("模型: beam.stl\n盘面(实时): 材料 PETG")
+                  and "（对象 3 选中 1，盘 1/2，切片中）" in _f111
+                  and "环境已变:" in _f111
+                  and "喷嘴温度 220→210" in _f111
+                  and "材料 PLA→PETG" in _f111
+                  and "输入(上次分析实收): 材料 PLA" in _f111
+                  and "tg_c 25" in _f111
+                  and "可查分节: input(" in _f111
+                  and "phase_a(" in _f111
+                  and "另有未编目分节: custom_block" in _f111
+                  and "schema_version" not in _f111,
+                  _f111[:400])
+            # no drift (card numerically equal to report input) -> no line
+            _card110["config"]["material"] = "PLA"
+            _card110["config"]["nozzle_temperature"] = "220"
+            _f111b = _srv110._chat_facts({"name": "beam.stl",
+                                          "last_report": _rep110})
+            check("T111b facts: aligned card -> no 环境已变 line",
+                  "环境已变" not in _f111b and "盘面(实时): 材料 PLA" in _f111b,
+                  _f111b[:200])
+            # directory derivation: drop phase_a + the uncataloged key ->
+            # the directory line changes accordingly (删一节 → 行变)
+            _rep110b = {k: v for k, v in _rep110.items()
+                        if k not in ("phase_a", "custom_block")}
+            _f111c = _srv110._chat_facts({"name": "beam.stl",
+                                          "last_report": _rep110b})
+            check("T111c facts: dropped section leaves the directory line",
+                  "可查分节: input(" in _f111c and "phase_a(" not in _f111c
+                  and "另有未编目分节" not in _f111c,
+                  [_l for _l in _f111c.split("\n")
+                   if _l.startswith("可查分节")][:1])
+            # cold start: card but NO report -> 盘面 answers, input/directory
+            # lines omitted (G1: zero tool calls to know the plate)
+            _f111d = _srv110._chat_facts({"name": "beam.stl"})
+            check("T111d cold-start facts: plate line only",
+                  "盘面(实时): 材料 PLA" in _f111d
+                  and "输入(上次分析实收)" not in _f111d
+                  and "可查分节" not in _f111d
+                  and "环境已变" not in _f111d, _f111d[:200])
+            # no card at all -> degrade hint line (standalone server rung)
+            _srv110._ENV_CARD = None
+            _f111e = _srv110._chat_facts({"name": "beam.stl"})
+            check("T111e no-card facts: degrade hint line",
+                  "盘面卡未上线（可调 refresh_env_card）" in _f111e,
+                  _f111e[:200])
+            _srv110._ENV_CARD = _saved111
+
+        # T112 — v0.12 twin-prompt rules anchor (spec §7 five rules; the
+        # agent_harness twin syncs on the C-line). "%d" absence proves the
+        # format string still applied cleanly after the renumbering.
+        _p112 = _srv110._ASSISTANT_INSTRUCTIONS
+        check("T112 twin prompt carries the five v0.12 rules",
+              "数据优先" in _p112 and "确认问题仅限使用意图类" in _p112
+              and "词汇防火墙" in _p112 and "自愈" in _p112
+              and "盘面(实时)" in _p112 and "环境已变" in _p112
+              and "冷启动" in _p112 and "%d" not in _p112
+              and "14." in _p112 and "15." not in _p112,
+              "len=%d" % len(_p112))
+
+        # T113 — v0.12 audit: closed-vocab jargon COUNT-ONLY (never
+        # stripped); number discipline unchanged. 9.9 is not in the facts
+        # base -> still stripped to □; the five jargon terms all survive.
+        _t113, _s113, _j113 = _srv110._audit_reply(
+            "事实块里 schema 显示引擎报告分节 9.9 处工具调用", "参考阈值: 70")
+        check("T113 audit counts jargon, strips numbers only",
+              _j113 == 5 and _s113 == 1 and "9.9" not in _t113
+              and "□" in _t113 and "事实块" in _t113 and "schema" in _t113,
+              "j=%s s=%s t=%r" % (_j113, _s113, _t113))
+        _a113 = _srv110._agent_audit_2tuple("事实块 70", "参考阈值: 70")
+        check("T113b TurnDeps audit adapter keeps the 2-tuple contract",
+              isinstance(_a113, tuple) and len(_a113) == 2
+              and _a113[0] == "事实块 70" and _a113[1] == 0, str(_a113))
+
     finally:
         proc.terminate()
         proc.wait(timeout=10)

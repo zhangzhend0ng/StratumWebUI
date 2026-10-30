@@ -268,23 +268,82 @@ def dispatch_host(call, reply):
         reply(tid, False, error="%s: %s" % (type(exc).__name__, exc))
 
 
+# ==== v0.12.0 ambient grounding: single-source tables (spec §6/§9) ==========
+# REPORT_SECTIONS is the ONE catalog of report sections: the
+# get_report_section enum derives from it and the facts-block「可查分节」
+# directory line imports the same dict (engine-adding-a-section becomes
+# self-disclosing instead of hand-maintained prose). Drift-guarded by
+# tests/test_agent.py (enum == REPORT_SECTIONS.keys()).
+REPORT_SECTIONS = {
+    "input": "材料/温度/工艺实值",
+    "phase_a": "几何风险（翘曲/悬垂/倾覆等风险点与总体风险）",
+    "phase_b": "结构强度（应力/变形/安全系数）",
+    "phase_d": "屈曲/疲劳/断裂复核",
+    "warnings": "警告列表",
+    "recommendations": "参数建议（改哪个参数/改成多少）",
+    "orca_suggestions": "Orca 参数建议（底边/支撑等具体设置项与推荐值）",
+    "calibration": "时间/质量估算的校准系数",
+    "machine_limits": "机器限制（哪些参数被设备上限压回）",
+    "process_optimization": "工艺优化（基线评分与候选参数方案）",
+}
+
+# Env-card craft keys -> engine report input keys (the explicit mapping the
+# server-side「环境已变」diff walks; spec §5/§9 — the diff is computed in
+# code, the model never compares). Key set is mirrored in ENV_KEY_LABELS;
+# target keys verified against test_data/real3mf-results/report-v3.json.
+ENV_KEY_MAP = {
+    "material": "material",
+    "nozzle_temperature": "nozzle_temperature_c",
+    "bed_temperature": "bed_temperature_c",
+    "nozzle_diameter": "nozzle_mm",
+    "layer_height": "layer_height_mm",
+    "walls": "walls",
+    "infill_density": "infill_density",
+    "infill_pattern": "infill_pattern",
+    "print_speed": "print_speed_mms",
+    "cooling_fan": "cooling_fan_pct",
+}
+
+# Same 10 keys -> user-facing labels (盘面 card / 环境已变 lines).
+ENV_KEY_LABELS = {
+    "material": "材料",
+    "nozzle_temperature": "喷嘴温度",
+    "bed_temperature": "热床温度",
+    "nozzle_diameter": "喷嘴径",
+    "layer_height": "层高",
+    "walls": "壁数",
+    "infill_density": "填充密度",
+    "infill_pattern": "填充图案",
+    "print_speed": "速度",
+    "cooling_fan": "风扇",
+}
+
+
 # ==== tool declarations ======================================================
 
-# -- the five v0.9 tools: descriptions VERBATIM from server.py v0.39
-#    ASSISTANT_TOOLS (byte-parity is test-asserted — the codex text track
-#    is frozen). Declaration order = the old dict order.
+# -- the five v0.9 tools. BYTE-PARITY DISCIPLINE: descriptions feed BOTH
+#    the FC declarations and the frozen codex text track (text_registry is
+#    test-asserted byte-exact against tests/test_agent.py's pinned copy).
+#    v0.12.0 ambient grounding intentionally THAWED the wording once ("何时
+#    用我" routing tone, spec §6) — the thaw updated both sides plus the
+#    parity expectations in the same change; the freeze itself stays.
+#    Declaration order = the old dict order.
 tool("get_print_context", "host",
-     "盘面对象清单（名称/实例/体积数/选中态）")
+     "盘面对象清单（名称/实例/体积数/选中态）。何时用：要核对盘上有哪些"
+     "对象、当前选中哪个时")
 
 tool("run_analysis", "host",
-     "对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）",
+     "对当前选中对象跑完整 Stratum 分析（真实引擎，重；每次提问至多调用 1 次）"
+     "。何时用：用户要检查/分析模型，或工具报「还没有报告/会话失效」时先补跑",
      per_turn_call_cap=1, host_mode="threaded")
 
 tool("get_analysis", "server",
-     "当前会话分析事实块（SF/结论/警告/建议/调优）")
+     "当前会话分析事实块（SF/结论/警告/建议/调优）。何时用：要上次分析的"
+     "结论/警告/建议现值时先看它")
 
 tool("read_gcode", "server",
-     "已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）",
+     "已挂载切片 G-code 的有界摘录，args={head_lines,tail_lines}（0-200）"
+     "。何时用：要引用切片文件原文行时",
      input_schema={
          "type": "object",
          "properties": {
@@ -295,7 +354,8 @@ tool("read_gcode", "server",
 
 tool("propose_settings", "host",
      "生成对象参数修改提案：args={values:{键:值}}。只读比对不写入；"
-     "面板向用户展示 diff，用户点「应用」后才真正写回",
+     "面板向用户展示 diff，用户点「应用」后才真正写回。何时用：要推荐"
+     "具体参数修改时",
      input_schema={
          "type": "object",
          "properties": {"values": {
@@ -309,9 +369,9 @@ tool("what_if", "server",
      "参数/服役条件假设重跑：args={params:{参数名:值}, env:{环境名:值}, quick:true?}"
      "，在最近一次分析的基线上叠加覆盖后真实重跑引擎（不是推算），返回前后"
      "对比（SF/结论/警告数）。quick=true 走估价档位（解析法，快，只判断"
-     "够/边界/不够，数值不精确——探索方向用；要精确数字用全跑）。改填充率/"
-     "壁数/疲劳周期/服役温度/湿度等「会怎样」的问题用它；params 键与 env 键"
-     "必须来自事实块或工具结果，不要虚构。",
+     "够/边界/不够，数值不精确——探索方向用；要精确数字用全跑）。何时用："
+     "改填充率/壁数/疲劳周期/服役温度/湿度等「会怎样」的问题；params 键与 "
+     "env 键必须来自事实块或工具结果，不要虚构。",
      input_schema={
          "type": "object",
          "properties": {
@@ -327,7 +387,8 @@ tool("gcode_score", "server",
      "对一份 G-code 做质量评分（19 维，gcode-diff 引擎）：args={token?}——"
      "挂载了切片 G-code 的模型会话 token（缺省=当前对话会话），或 G-code "
      "上传会话的 token。返回总分、已评分维度数与最弱维度；overall_score 为 "
-     "0 或 dimensions_scored 为 0 表示不可评估（fail-closed），不是低分。",
+     "0 或 dimensions_scored 为 0 表示不可评估（fail-closed），不是低分。"
+     "何时用：要给切片结果打分、找最弱维度时。",
      input_schema={
          "type": "object",
          "properties": {"token": {"type": "string"}},
@@ -339,7 +400,8 @@ tool("gcode_diff", "server",
      "structure?}（两个 G-code 上传会话的 token）。structure=true 额外跑"
      "双侧 FEM 结构对比（较慢；问「改完更结实/应力差多少」时才传）。数字"
      "逐字来自返回值；structure 里 sf 字段恰为 100.0 且 sf_degenerate="
-     "true 时是「已评估但无上界」哨兵，不是安全系数等于 100。",
+     "true 时是「已评估但无上界」哨兵，不是安全系数等于 100。何时用：要"
+     "对比两版切片差异（改参前后）时。",
      input_schema={
          "type": "object",
          "properties": {"token_a": {"type": "string"},
@@ -351,21 +413,19 @@ tool("gcode_diff", "server",
 
 tool("get_tier_comparison", "server",
      "四个基线档位（安全/均衡/高速/外观）的参数对比表：各档 walls/infill/"
-     "速度/层高等取值与适用场景。回答「安全档和均衡档差在哪/该选哪档」"
-     "用它，不要凭记忆报数。",
+     "速度/层高等取值与适用场景。何时用：回答「安全档和均衡档差在哪/该选"
+     "哪档」，不要凭记忆报数。",
      tracks=("fc",))
 
 tool("get_report_section", "server",
      "读取当前会话最近分析报告的指定分节原文：args={section}，可选 "
      "input/phase_a/phase_b/phase_d/warnings/recommendations/orca_suggestions/"
-     "calibration/machine_limits/process_optimization。需要事实块之外的"
-     "细节数据时用它，数字必须逐字引用返回值。",
+     "calibration/machine_limits/process_optimization。何时用：要查材料/温度/"
+     "工艺实值（input 节）或事实块之外的报告细节时，数字必须逐字引用返回值。",
      input_schema={
          "type": "object",
-         "properties": {"section": {"type": "string", "enum": [
-             "input", "phase_a", "phase_b", "phase_d", "warnings",
-             "recommendations", "orca_suggestions", "calibration",
-             "machine_limits", "process_optimization"]}},
+         "properties": {"section": {"type": "string",
+                                    "enum": list(REPORT_SECTIONS.keys())}},
          "required": ["section"], "additionalProperties": False},
      result_budget=4000, per_turn_call_cap=2,
      tracks=("fc",))
@@ -373,7 +433,8 @@ tool("get_report_section", "server",
 tool("read_object_config", "host",
      "读取选取对象当前的对象级参数配置：args={keys:[参数名]}（可选，缺省="
      "最近报告涉及的建议/非法键，至多 50 个）。返回 {键: 值}，null 表示该"
-     "键无对象级覆盖（继承预设）。只读，不写入。",
+     "键无对象级覆盖（继承预设）——预设解析后的实值看事实块「盘面/输入」行"
+     "或 get_report_section(input)。只读，不写入。",
      input_schema={
          "type": "object",
          "properties": {"keys": {
@@ -381,6 +442,17 @@ tool("read_object_config", "host",
              "minItems": 1, "maxItems": 50}},
          "additionalProperties": False},
      per_turn_call_cap=4,
+     tracks=("fc",))
+
+# v0.12.0 ambient grounding: one-hop env-card refresh (host handler is
+# registered by the plugin entry — same name; declaration + schema live
+# here). Read-only by construction (re-reads host state), capped at one
+# hop per turn; NOT gated on has_report — cold start is its whole point.
+tool("refresh_env_card", "host",
+     "盘面环境卡刷新：宿主预设/对象/盘面变化后一跳拉最新实值（材料/温度/"
+     "工艺）；服务端缓存缺失时也用它自愈。何时用：要确认当前盘面实值而"
+     "事实块「盘面(实时)」行缺失或可疑时",
+     per_turn_call_cap=1,
      tracks=("fc",))
 
 

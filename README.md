@@ -468,8 +468,8 @@ curl -F "" ...   # 或直接用浏览器上传 test_data/beam_100x10x4.stl
 
 ## 测试（v0.8 后）
 
-`python tests/test_smoke.py`（需 `bin/stratum.exe`）：158 检查（v0.41 起：
---capabilities 握手优先探针 + caps/schema 对拍 T64b），含三层渲染验证——
+`python tests/test_smoke.py`（需 `bin/stratum.exe`）：171 检查（v0.43 起：
+/api/env_card 端点 + 事实块 ambient 四行注入 T110-T113），含三层渲染验证——
 T56 node 桩解析器检查（stl_nan_check.js）、T57 真 helpers 注入渲染检查
 （report_render_check.js，含 numEnv v2/v3 双形态契约与 v0.8.1 全部新块），
 T58 无头 Chrome CDP 端到端

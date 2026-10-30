@@ -1172,6 +1172,48 @@
       engine_capabilities）；agent **122/122**（原 116+T8 6）；repair
       **20/20**（原 18+结构化解析 2）；selection **15/15**
 
+### 插件 v0.12.0 / UI 0.43.0 — agent ambient grounding：用户对引擎无感知（2026-10-30）
+
+> 事故驱动：AI 助手问用户「是不是 PLA」而引擎报告 input 节一直写着
+> material PLA。治本 = 事件驱动的盘面环境卡 + 派生可查目录 + prompt 五
+> 规则，让模型第一跳视野含实值、永不问数据可答的问题。spec：
+> docs/superpowers/specs/2026-10-30-agent-ambient-grounding-design.md。
+
+- [x] **插件侧事件推送**（`stratum_orca.py`）：`on_lifecycle_event`
+      关键词过滤（preset/object/plate/project）→ 500ms 合并窗（UI 线程
+      每事件刷新 pending 卡、窗只限网络扇出，风暴 N 事件恰 1 次 POST）→
+      `POST /api/env_card` fire-and-forget；`_assemble_env_card(plater,
+      bundle)` 依赖注入纯函数（get_effective_config 优先、preset_bundle
+      读侧兜底、多槽耗材、盘概览、slice_state 状态词）；启动引导推送；
+      `refresh_env_card` sync host 工具（无卡自愈一跳拉新）
+- [x] **服务端**（`server.py`）：全局卡片缓存 + `/api/env_card`（头校验
+      403/整体替换/400）；`_chat_facts` 四行注入——盘面(实时)/环境已变
+      （diff 代码算：float 数值比否则拼写比，方向=上次分析→当前盘面）/
+      输入(上次分析实收)/可查分节（报告实有键 ∩ REPORT_SECTIONS 派生，
+      未编目键浮出）；audit 术语**只计数不剥离**（jargon 字段随 final）
+- [x] **工具面单一源**（`agent_tools.py`）：REPORT_SECTIONS（enum 派生，
+      值集不变）/ENV_KEY_MAP/ENV_KEY_LABELS 三常量；11 个工具描述改
+      「何时用我」口吻；五个 v0.9 工具 parity **有意解冻**（双侧+测试
+      期望三方同变更，字节级断言纪律保留）；read_object_config 加指路牌
+      （null=继承预设，实值看盘面/输入行）
+- [x] **prompt 五规则**（fc_instructions 规则 4 扩写+新增 11-14；server
+      孪生同步）：数据优先（可答事实不得列为确认问题）/防火墙=翻译
+      （内部机制词不进回复，可用人话溯源）/自愈（缺报告先补跑 run_
+      analysis）/双源新鲜度（问现在引盘面、问结果引输入、分歧主动提
+      重跑）/冷启动（有卡直接答不跑分析）
+- [x] 运行期待核对（装插件后看 python_*.log 回填）：print_speed 与
+      cooling_fan 的 Orca effective-config 键名（现按最合理猜测）；
+      LifecycleEvent 事件码名与 ScriptPluginCapabilityBase 转发路径
+      （spec §4 验证点，探测步已产证据）
+- 验证：smoke **171/171**（原 158+T110-T113 13）；agent **157/157**
+      （原 122+T12 系列 15+版本钉 0.12.0 对齐，parity 解冻后双侧一致）；
+      plugin chain ALL GREEN ×2（风暴 25→1、10 键 verbatim/省略/兜底、
+      注册降级）；repair **20/20**；selection **15/15**
+- 后续方向（本批不做）：跨会话用户偏好画像；批量多对象任务模式
+      （run_analysis 每轮 1 次预算放宽+任务队列）；PrinterConnection 域
+      开放后环境卡扩打印机状态；上传/任务 lifecycle 事件消费（切片完成
+      →自动挂 G-code 会话，与 L145 融合）
+
 ### v1.0 — 方向四：3D 可视化（半数被引擎契约卡住，见 D2）
 
 
