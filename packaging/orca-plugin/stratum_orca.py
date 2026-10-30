@@ -6,10 +6,19 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.11.0"
+# version = "0.11.1"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.11.1 (L145 gcode companion fusion):
+  - the gcode companion (0.28-paired, ER-9 fields live: score carries
+    schema_version + assessable; diff carries structure sf_degenerate)
+    now rides the bundle in app/bin/gcode-diff/ — the agent gcode tools
+    are self-contained in the plugin
+  - gcode_diff gains structure=true (bilateral FEM pass) with the
+    sf_degenerate sentinel discipline in the tool description
+    (sf==100.0 exactly = assessed-but-unbounded, NOT a safety factor)
 
 v0.11.0 (engine 0.28.0 interface wiring):
   - what_if rides the engine SESSION (capabilities-gated): warm reruns —

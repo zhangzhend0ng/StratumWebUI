@@ -2375,7 +2375,7 @@ def run_programmatic_analyze(session, params, env, locks=(), persist=False,
     return True, report
 
 
-def run_gcode_tool(mode, files, lightweight=False):
+def run_gcode_tool(mode, files, lightweight=False, structure=False):
     """v0.42 (ER-8/ER-10): agent-facing gcode score/diff. Routes through
     the MAIN engine's facade flags (--gcode-score/--gcode-diff) when
     capabilities declare them (single binary entry, rc notes unified); the
@@ -2383,7 +2383,10 @@ def run_gcode_tool(mode, files, lightweight=False):
     passthrough (our layout is not one the facade auto-discovers, probed
     2026-10-29). Pre-facade engines fall back to the companion directly.
     rc=2 (fail-closed verdict) is a LEGAL outcome — the report returns
-    with ok=True, mirroring _gcode_score. Returns (ok, report|error)."""
+    with ok=True, mirroring _gcode_score. structure=True adds the diff's
+    --structure pass (bilateral FEM; L145 companion emits sf_degenerate —
+    sf==100.0 exactly is the "assessed, no upper bound" sentinel).
+    Returns (ok, report|error)."""
     if mode not in ("score", "diff"):
         return False, "mode 必须是 score|diff"
     caps = _SCHEMA_CACHE.get("caps") or {}
@@ -2408,8 +2411,11 @@ def run_gcode_tool(mode, files, lightweight=False):
             ["--json", json_path, "--html", html_path]
     if mode == "score":
         argv.append("--no-overhang-viz")  # keep the deep-link payload light
-    if mode == "diff" and lightweight:
-        argv.append("--lightweight-geometry")
+    if mode == "diff":
+        if lightweight:
+            argv.append("--lightweight-geometry")
+        if structure:
+            argv.append("--structure")  # bilateral FEM (L145 companion)
     try:
         with _engine_slot():
             proc = subprocess.run(argv, capture_output=True, timeout=180,

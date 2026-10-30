@@ -335,13 +335,16 @@ tool("gcode_score", "server",
      result_budget=2500, per_turn_call_cap=2, tracks=("fc",))
 
 tool("gcode_diff", "server",
-     "对比两份 G-code（如参数修改前后的两版切片）：args={token_a, token_b}"
-     "（两个 G-code 上传会话的 token）。返回 gcode-diff 引擎的差异报告"
-     "（逐维度对比）；数字逐字来自返回值。",
+     "对比两份 G-code（如参数修改前后的两版切片）：args={token_a, token_b, "
+     "structure?}（两个 G-code 上传会话的 token）。structure=true 额外跑"
+     "双侧 FEM 结构对比（较慢；问「改完更结实/应力差多少」时才传）。数字"
+     "逐字来自返回值；structure 里 sf 字段恰为 100.0 且 sf_degenerate="
+     "true 时是「已评估但无上界」哨兵，不是安全系数等于 100。",
      input_schema={
          "type": "object",
          "properties": {"token_a": {"type": "string"},
-                        "token_b": {"type": "string"}},
+                        "token_b": {"type": "string"},
+                        "structure": {"type": "boolean"}},
          "required": ["token_a", "token_b"],
          "additionalProperties": False},
      result_budget=3000, per_turn_call_cap=1, tracks=("fc",))
@@ -454,7 +457,8 @@ def _srv_gcode_score(ctx, args, token):
 def _srv_gcode_diff(ctx, args, token):
     pa = _gcode_file_for(ctx, args["token_a"], "token_a")
     pb = _gcode_file_for(ctx, args["token_b"], "token_b")
-    ok, rep = ctx["gcode_tool"]("diff", [pa, pb])
+    ok, rep = ctx["gcode_tool"]("diff", [pa, pb],
+                                structure=bool(args.get("structure")))
     if not ok:
         raise ValueError(rep)
     return rep

@@ -872,8 +872,8 @@ def test_host_dispatch():
               replies[-1]["ok"] is False and not started,
               str(replies[-1] if replies else None))
         # 7) 版本号
-        check("T7 插件版本 0.11.0",
-              re.search(r'^# version = "0\.11\.0"$',
+        check("T7 插件版本 0.11.1",
+              re.search(r'^# version = "0\.11\.1"$',
                         open(os.path.join(ROOT, "packaging", "orca-plugin",
                                           "stratum_orca.py"),
                              encoding="utf-8").read(), re.M) is not None)
@@ -1175,12 +1175,24 @@ def test_gcode_agent_tools():
     check("T11 gcode_score 门面评分返回",
           ok and isinstance(res.get("overall_score"), (int, float)),
           str(res)[:150] if ok else str(res))
-    # kind=gcode 上传会话 × 2 → diff
+    check("T11 gcode_score ER-9 字段（L145 伴生）",
+          ok and res.get("assessable") is True
+          and res.get("schema_version") == "gcode-score-report/v1",
+          str(res)[:120])
+    # kind=gcode 上传会话 × 2 → diff（--structure 路径，sf_degenerate 对拍）
     ta = _mk_gcode_upload_session(srv, "a.gcode")
     tb = _mk_gcode_upload_session(srv, "b.gcode")
     ok, res = srv_agent.run_server_tool(
         "gcode_diff", {"token_a": ta, "token_b": tb}, None)
     check("T11 gcode_diff 门面差异返回", ok and isinstance(res, dict),
+          str(res)[:150] if ok else str(res))
+    ok, res = srv_agent.run_server_tool(
+        "gcode_diff", {"token_a": _mk_gcode_upload_session(srv, "t_abs.gcode"),
+                       "token_b": _mk_gcode_upload_session(srv, "t_dual.gcode"),
+                       "structure": True}, None)
+    sa = (res or {}).get("structure_a") if ok else None
+    check("T11 gcode_diff --structure 带 sf_degenerate（L145）",
+          ok and isinstance(sa, dict) and "sf_degenerate" in sa,
           str(res)[:150] if ok else str(res))
 
 

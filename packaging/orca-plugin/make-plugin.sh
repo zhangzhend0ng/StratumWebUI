@@ -65,6 +65,15 @@ for whl in "$here"/vendor/*.whl; do
 done
 cp "$repo/sample/beam_100x10x4.stl" "$dest/app/sample/"
 cp "$repo/bin/stratum.exe" "$dest/app/bin/"
+# v0.11.1 (L145 fusion): the gcode companion rides the bundle — the agent
+# gcode_score/gcode_diff tools are self-contained in the plugin. exe+dll
+# stay in their own SUBDIR (keeps stratum_shared.dll away from stratum.exe's
+# DLL resolution; the facade finds it via the env the server sets).
+if [ -d "$repo/bin/gcode-diff" ]; then
+  mkdir -p "$dest/app/bin/gcode-diff"
+  cp "$repo"/bin/gcode-diff/gcode-diff.exe "$repo"/bin/gcode-diff/stratum_shared.dll \
+     "$dest/app/bin/gcode-diff/"
+fi
 
 # Build-time bridge injection: append the orca-session listener to the DIST
 # copy of index.html only — the repo source stays untouched. The listener is
