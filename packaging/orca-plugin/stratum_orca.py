@@ -6,10 +6,17 @@
 # name = "Stratum"
 # description = "Stratum 工艺参数调参台 — FDM 可打印性分析引擎的嵌入式 Web UI（插件内起本地服务，停靠面板内嵌 iframe；支持一键选取盘上选中模型送入分析）"
 # author = "Stratum-WebUI"
-# version = "0.12.0"
+# version = "0.12.1"
 # ///
 """Stratum Orca plugin — embeds the Stratum WebUI (server.py + zero-build web
 assets, vendored unchanged under app/) into an Orca dock panel.
+
+v0.12.1 (engine 0.29.0 re-pair):
+  - all three bundled binaries re-cut from stratum-sdk-0.29.0-win64-msvc
+    (stratum.exe + gcode-diff/{gcode-diff.exe, stratum_shared.dll}) — the
+    engine/companion version pair is a hard constraint and switches
+    together (ER-8 two-ship drift); report schema stays 4 (byte-compatible
+    for the consumer face), so the parsing layer is untouched
 
 v0.12.0 (agent ambient grounding, plugin side / A line):
   - the AI assistant no longer has to ASK "是不是 PLA?" — the plugin pushes

@@ -20,3 +20,5 @@ docs/
 
 # gcode-diff 伴随工具（兄弟仓库构建产物，不入库）
 bin/gcode-diff/
+# 本地回滚备份（换版时留的旧 companion，同样不入库）
+bin/gcode-diff.bak-*/

@@ -56,7 +56,11 @@ New-Item -ItemType Directory -Force -Path (Join-Path $app "bin") | Out-Null
 # not have it silently dropped from the layout. -Recurse covers the
 # bin\gcode-diff\ companion subdir (v0.23: without it Copy-Item creates the
 # folder but drops its contents — an empty dir ships a broken tool).
-Copy-Item (Join-Path $root "bin\*") (Join-Path $app "bin") -Force -Recurse
+# *.bak-* entries are local rollback copies of old companions (kept next to
+# bin\gcode-diff\ during engine version switches) — never ship them.
+Get-ChildItem (Join-Path $root "bin") -Exclude "*.bak-*" | ForEach-Object {
+    Copy-Item $_.FullName (Join-Path $app "bin") -Force -Recurse
+}
 Copy-Item (Join-Path $root "VERSION.txt") $app -Force
 # v0.23: the gcode-diff companion (bin\gcode-diff\gcode-diff.exe + its own
 # stratum_shared.dll) is OPTIONAL — a build without it still ships a fully

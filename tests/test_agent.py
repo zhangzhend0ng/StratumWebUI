@@ -942,8 +942,8 @@ def test_host_dispatch():
               replies[-1]["ok"] is False and not started,
               str(replies[-1] if replies else None))
         # 7) 版本号
-        check("T7 插件版本 0.12.0",
-              re.search(r'^# version = "0\.12\.0"$',
+        check("T7 插件版本 0.12.1",
+              re.search(r'^# version = "0\.12\.1"$',
                         open(os.path.join(ROOT, "packaging", "orca-plugin",
                                           "stratum_orca.py"),
                              encoding="utf-8").read(), re.M) is not None)
@@ -1184,7 +1184,7 @@ def test_report_section_tool():
 def test_engine_session_warm():
     srv = import_server()
     sess = srv.engine_session()
-    check("T11 会话可用（capabilities 门控通过，引擎 0.28.0）", sess is not None)
+    check("T11 会话可用（capabilities 门控通过，引擎 ≥0.28.0）", sess is not None)
     if sess is None:
         return
     r = sess.call("hello")
